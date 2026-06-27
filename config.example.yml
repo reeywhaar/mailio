@@ -1,0 +1,125 @@
+# mailio configuration
+# Copy this file to config.yml and fill in your values.
+
+# FQDN of this mail server. Must match the A record you've pointed to this host.
+# Also used as the SASL authentication realm — clients authenticate as
+# "<local_part>" against this hostname.
+hostname: mail.example-a.com
+
+# IP ranges allowed to relay mail without SASL authentication.
+# Include 127.0.0.0/8 (loopback) and any Docker bridge networks your apps run on.
+mynetworks:
+  - 127.0.0.0/8
+  - 172.20.0.0/16   # default Docker bridge; adjust to your compose network CIDR
+
+# Let's Encrypt TLS certificate via DNS-01 challenge.
+# Requires the hostname's parent domain to be listed under `domains` below.
+# On startup, a certificate is obtained (or renewed if expiring within 30 days).
+# Use `mailio cert renew` to renew manually; add `--force` to skip the expiry check.
+# Omit this section to use a self-signed certificate instead.
+# letsencrypt:
+#   email: admin@example-a.com   # ACME account contact address (required)
+#   staging: false               # Set true to use the LE staging server for testing
+
+# Outbound relay (smarthost). Optional.
+# Without this, Postfix delivers mail directly to recipient servers on port 25.
+# Many cloud/residential networks block outbound port 25, so relay all outgoing
+# mail through an authenticated SMTP server instead. Postfix forces TLS on the
+# relay connection so the credentials below are never sent over plaintext.
+#
+# Gmail example (consumer account):
+#   1. Enable 2-Step Verification on the Google account.
+#   2. Create an App Password (https://myaccount.google.com/apppasswords) and use
+#      it as `password` below — your normal account password will not work.
+#   3. Gmail sends mail as the authenticated address. To keep your own From
+#      addresses (e.g. user@example-a.com), add each as a verified alias under
+#      Gmail Settings -> Accounts -> "Send mail as"; otherwise Gmail rewrites the
+#      From header to the account address.
+#
+# This top-level relay is the default for all outgoing mail. It can be
+# overridden per-domain (relay: under a domain) and per-account (relay: under an
+# account); the most specific match wins, selected by the envelope sender. When
+# any per-domain/per-account relay is set, all relays must use STARTTLS (587) —
+# implicit TLS (465) is only available when this global relay is the only relay.
+# relay:
+#   host: smtp.gmail.com
+#   port: 587                 # 587 = STARTTLS (default), 465 = implicit TLS
+#   username: you@gmail.com
+#   password: "your-app-password"
+
+# List of domains this server signs and sends mail for.
+domains:
+    # The domain name (must be managed by the configured DNS API, e.g. doapi).
+  - name: example-a.com
+
+    # DKIM selector. Becomes the DNS record name: <selector>._domainkey.<domain>
+    # Change the selector to rotate keys (old selector keeps working until you
+    # delete its DNS record).
+    selector: mail
+
+    # SMTP AUTH accounts for this domain.
+    # Each account can submit mail as <local_part>@<domain>.
+    # Username for SMTP AUTH is the full address <local_part>@<domain>, so the
+    # same local_part can exist in multiple domains with separate passwords.
+    # An authenticated account may only send mail as its own address.
+    # local_user: maps incoming mail to a local system user's Maildir.
+    #   Mail is delivered to /var/mail/<local_user>/ as Maildir.
+    #   Omit to disable inbound delivery for this account.
+    # SPF policy. Auto-creates/updates the TXT record at @ in DNS.
+    # Generates: v=spf1 a:<hostname> <spf>
+    # Options:
+    #   ~all  — softfail (suspicious but accepted; safe default)
+    #   -all  — hardfail (reject mail not from this server)
+    #   ?all  — neutral  (no recommendation)
+    # Omit to skip SPF setup for this domain.
+    # spf: "~all"
+
+    # DMARC policy. Auto-creates/updates the _dmarc TXT record in DNS.
+    # Omit to skip DMARC setup for this domain.
+    # policy options:
+    #   none       — monitor only, no enforcement (good starting point)
+    #   quarantine — failing mail goes to spam
+    #   reject     — failing mail is dropped
+    # rua: address that receives aggregate reports (optional but recommended).
+    #   Can be any address you read, on any domain.
+    # dmarc:
+    #   policy: none
+    #   rua: inbox@example-a.com
+
+    # catchall: what to do with mail to unknown addresses on this domain.
+    # Omit (or leave commented) to hard-bounce with 550 No such user.
+    # Options:
+    #   <local_part>  — forward to that account on this domain
+    #                   e.g. "user" delivers all unknowns to user@example-a.com
+    #   discard       — silently accept and drop (no bounce to sender)
+    # catchall: user
+
+    # Per-domain relay override. Applies to all mail sent from this domain,
+    # unless an account below sets its own relay. Same fields as the top-level
+    # relay. `port` is optional and defaults to 587 (STARTTLS); you may set
+    # another STARTTLS port, but 465 (implicit TLS) is not allowed on a
+    # per-domain/per-account relay. Omit this block to use the global relay.
+    # relay:
+    #   host: smtp.gmail.com
+    #   username: domain-sender@gmail.com
+    #   password: "your-app-password"
+
+    accounts:
+      - local_part: user
+        password: "changeme"
+        local_user: root
+
+        # Per-account relay override. Applies only to mail whose envelope sender
+        # is user@example-a.com, taking precedence over the domain/global relay.
+        # `port` defaults to 587 (STARTTLS); 465 is not allowed here.
+        # relay:
+        #   host: smtp.gmail.com
+        #   username: user@gmail.com
+        #   password: "your-app-password"
+
+  - name: example-b.com
+    selector: mail
+    accounts:
+      - local_part: user
+        password: "changeme"
+        local_user: root

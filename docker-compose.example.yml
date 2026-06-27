@@ -1,0 +1,44 @@
+services:
+  mailio:
+    image: ghcr.io/reeywhaar/mailio:latest
+    container_name: mailio
+    restart: unless-stopped
+    hostname: mail.example-a.com
+    ports:
+      - "25:25"
+      - "587:587"
+    volumes:
+      # Config file (source of truth). Bind-mounted read-write so `mailio
+      # add-account` / `delete-account` can edit it in place.
+      - ./config.yml:/etc/mailio/config.yml
+      # DKIM private signing keys. Must persist: losing them invalidates the
+      # published DKIM DNS records (a new key would need a DNS update).
+      - dkim_keys:/etc/opendkim/keys
+      # Postfix mail queue. Persist so in-flight/deferred mail survives restarts.
+      - postfix_spool:/var/spool/postfix
+      # Delivered mail (per-user Maildirs). Persist to keep received mail.
+      - mail_data:/var/mail # or bind-mount: - /var/mail:/var/mail
+      # TLS certificate + key (Let's Encrypt or self-signed). Persist to avoid
+      # re-issuing on every start and hitting Let's Encrypt rate limits.
+      - tls_certs:/etc/postfix/tls
+      # ACME account key for Let's Encrypt. Persist to reuse the same account.
+      - letsencrypt_acct:/etc/letsencrypt
+    networks:
+      - doapi-net
+    environment:
+      # Base URL of the DNS API used to manage records (DKIM/SPF/DMARC + ACME
+      # challenges). Required — DNS operations fail if unset. Must implement the
+      # REST /dns interface (GET to list, POST to create, DELETE to remove);
+      # doapi is one such service.
+      - DNS_API_URL=http://doapi:8433
+
+networks:
+  doapi-net:
+    external: true
+
+volumes:
+  dkim_keys:
+  postfix_spool:
+  mail_data:
+  tls_certs:
+  letsencrypt_acct:
