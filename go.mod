@@ -1,12 +1,11 @@
 module mailio
 
-go 1.26
-
-require gopkg.in/yaml.v3 v3.0.1
+go 1.27
 
 require (
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/crypto v0.53.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (

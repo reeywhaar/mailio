@@ -1,4 +1,4 @@
-FROM golang:1.26-alpine AS builder
+FROM golang:1.27-alpine AS builder
 
 # Stamped into the binary so a pulled image can say which commit it is. "dev" is
 # what a local build says, and it is true.
