@@ -1,11 +1,12 @@
+// Command mailio configures and runs a Postfix mail server from one YAML file.
 package main
 
 import (
 	"os"
 
-	"mailio/cli"
+	"mailio/internal/cli"
 )
 
 func main() {
-	cli.Run(os.Args)
+	os.Exit(cli.Execute())
 }

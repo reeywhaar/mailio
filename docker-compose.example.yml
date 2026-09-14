@@ -9,7 +9,7 @@ services:
       - "587:587"
     volumes:
       # Config file (source of truth). Bind-mounted read-write so `mailio
-      # add-account` / `delete-account` can edit it in place.
+      # account add` / `account delete` can edit it in place.
       - ./config.yml:/etc/mailio/config.yml
       # DKIM private signing keys. Must persist: losing them invalidates the
       # published DKIM DNS records (a new key would need a DNS update).

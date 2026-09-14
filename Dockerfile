@@ -1,12 +1,15 @@
 FROM golang:1.26-alpine AS builder
 
+# Stamped into the binary so a pulled image can say which commit it is. "dev" is
+# what a local build says, and it is true.
+ARG VERSION=dev
+
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/ ./cmd/
-COPY cli/ ./cli/
 COPY internal/ ./internal/
-RUN CGO_ENABLED=0 go build -o /mailio ./cmd/mailio
+RUN CGO_ENABLED=0 go build -ldflags "-X mailio/internal/app.Version=$VERSION" -o /mailio ./cmd/mailio
 
 FROM alpine:latest
 
@@ -44,5 +47,14 @@ COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 EXPOSE 25 587
+
+# All three daemons, not just Postfix: milter_default_action=accept means a dead
+# OpenDKIM is invisible from outside — mail keeps flowing, unsigned, until
+# recipients start filing it as spam.
+#
+# start-period covers the first boot, where DKIM keygen, an ACME order and the
+# DNS round trips all happen before Postfix binds.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD ["/usr/local/bin/mailio", "healthcheck"]
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

@@ -167,14 +167,23 @@ docker compose restart mailio
 
 ## CLI commands
 
-The `mailio` binary supports subcommands in addition to the default setup run:
+Run `mailio` with no arguments (or `mailio help <command>`) for the full listing; anything it does not recognise is refused rather than acted on.
 
-### `mailio config`
+| Command | Does |
+| --- | --- |
+| `mailio setup` | make the container match `config.yml` — what the entrypoint runs on every start |
+| `mailio account add\|list\|delete` | manage accounts, applying the change to the running server |
+| `mailio config show\|mutt\|monit` | print client configuration for the accounts |
+| `mailio cert renew` | renew the Let's Encrypt certificate |
+| `mailio healthcheck` | check Postfix, OpenDKIM and OpenDMARC are answering |
+| `mailio version` | print the build this binary is |
+
+### `mailio config show`
 
 Prints the SMTP credentials for every account, one block per account:
 
 ```bash
-docker exec mailio mailio config
+docker exec mailio mailio config show
 ```
 
 ```
@@ -183,25 +192,41 @@ smtp_url: smtp://user%40example-a.com@mail.example-a.com:587/
 password: changeme
 ```
 
-The username embedded in `smtp_url` is the full address (`@` shown as `%40`).
+The username embedded in `smtp_url` is the full address (`@` shown as `%40`). Add `--json` for the same thing in a shape a script can read.
 
-### `mailio add-account` / `mailio delete-account`
+### `mailio account list`
+
+Lists every account with where its mail is delivered and which smarthost it leaves through, resolved account -> domain -> global:
+
+```bash
+docker exec mailio mailio account list
+```
+
+```
+ADDRESS                DELIVERY            RELAY
+user@example-a.com     /var/mail/root      direct
+noreply@example-a.com  send-only           smtp.gmail.com:587
+```
+
+`--json` prints the same rows as JSON, with `send_only` as a boolean.
+
+### `mailio account add` / `mailio account delete`
 
 Add or remove an account in `config.yml`. The file is edited in place through a YAML round-trip, so **comments are preserved** (only whitespace/indentation may be normalized).
 
 ```bash
 # Add an account; a strong password is generated unless --password is given.
-docker exec mailio mailio add-account example-b.com user2 [--password <pw>] [--local_user <user>]
+docker exec mailio mailio account add example-b.com user2 [--password <pw>] [--local-user <user>]
 
 # Remove an account (revokes the login; the mailbox is kept).
-docker exec mailio mailio delete-account example-b.com user2
+docker exec mailio mailio account delete example-b.com user2
 ```
 
-`add-account` prints the new credentials (same format as `mailio config`) on success. The target domain must already exist in `config.yml`.
+`account add` prints the new credentials (same format as `mailio config show`) on success. The target domain must already exist in `config.yml`.
 
-Both commands edit `config.yml` in place (it's bind-mounted read-write) and, **when run inside the running container, apply live** — `add-account` provisions the SASL login, routing maps, and Maildir then reloads Postfix; `delete-account` revokes the login and refreshes the maps. No restart needed. Run outside the container (where Postfix/SASL aren't reachable), they only edit the config and tell you to `docker compose restart mailio` to apply — which works too, because:
+Both commands edit `config.yml` in place (it's bind-mounted read-write) and, **when run inside the running container, apply live** — `account add` provisions the SASL login, routing maps, and Maildir then reloads Postfix; `account delete` revokes the login and refreshes the maps. No restart needed. Run outside the container (where Postfix/SASL aren't reachable), they only edit the config and tell you to `docker compose restart mailio` to apply — which works too, because:
 
-**Config is the source of truth.** On each start, setup **rebuilds** the SASL database and regenerates the routing maps (`vmailbox`, `sender_login`) entirely from `config.yml`. So an account removed from config — whether by `delete-account` or by hand — has its **login and routing dropped on the next restart**; there's nothing to prune manually.
+**Config is the source of truth.** On each start, setup **rebuilds** the SASL database and regenerates the routing maps (`vmailbox`, `sender_login`) entirely from `config.yml`. So an account removed from config — whether by `account delete` or by hand — has its **login and routing dropped on the next restart**; there's nothing to prune manually.
 
 **Mail data is kept.** Pruning never touches mailboxes — an account's stored mail stays under `/var/mail/<local_user>` (the `mail_data` volume) even after the account is removed. Delete the directory by hand if you also want the stored mail gone.
 
@@ -274,6 +299,26 @@ docker exec mailio mailio cert renew --force
 Without `--force`, renewal is skipped if the certificate has more than 30 days remaining. Use this command in a cron job to keep the certificate up to date (Let's Encrypt certificates are valid for 90 days).
 
 ---
+
+
+### `mailio healthcheck`
+
+Checks that Postfix is greeting on 25 and that the OpenDKIM and OpenDMARC milter sockets are answering, exiting non-zero naming the first one that is not. This is what the image's `HEALTHCHECK` runs.
+
+All three matter, not just Postfix: `milter_default_action = accept` means a dead OpenDKIM is invisible from outside — mail keeps flowing, unsigned, and the first you hear of it is recipients filing it as spam.
+
+```bash
+docker exec mailio mailio healthcheck
+docker inspect --format '{{.State.Health.Status}}' mailio
+```
+
+### `mailio version`
+
+Prints the commit the image was built from, or `dev` for a local build.
+
+```bash
+docker exec mailio mailio version
+```
 
 ## Sending mail from an app
 

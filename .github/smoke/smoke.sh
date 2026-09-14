@@ -53,7 +53,7 @@ docker network rm "$NET" >/dev/null 2>&1 || true
 # shellcheck disable=SC2086
 docker volume rm $VOLUMES >/dev/null 2>&1 || true
 
-# add-account edits the config in place, so it runs against a copy.
+# account add edits the config in place, so it runs against a copy.
 cp "$HERE/config.yml" "$WORK/config.yml"
 chmod 666 "$WORK/config.yml"
 
@@ -129,14 +129,51 @@ FIRST_OPS=$(ops | jq -c .)
 echo "ok: DNS writes on first boot: $FIRST_OPS"
 
 say "the credential commands read the running config"
-creds=$(docker exec "$MAILIO" mailio config)
+creds=$(docker exec "$MAILIO" mailio config show)
 grep -qF 'alice@smoke.test' <<<"$creds" || die "mailio config does not list alice"
 grep -qF 'alice-smoke-pw' <<<"$creds" || die "mailio config does not print the password"
 grep -qF 'set mailserver localhost port 587' <<<"$(docker exec "$MAILIO" mailio config monit)" \
   || die "mailio config monit did not render"
 grep -qF 'smtp://alice%40smoke.test@mail.smoke.test:587/' <<<"$(docker exec "$MAILIO" mailio config mutt)" \
   || die "mailio config mutt did not render"
-echo "ok: config, config monit and config mutt all render"
+jq -e '.accounts[] | select(.address=="alice@smoke.test") | select(.password=="alice-smoke-pw")' >/dev/null \
+  <<<"$(docker exec "$MAILIO" mailio config show --json)" || die "config show --json did not render"
+echo "ok: config show, monit, mutt and --json all render"
+
+say "the account listing"
+accounts=$(docker exec "$MAILIO" mailio account list)
+grep -qF '/var/mail/alice' <<<"$accounts" || die "account list does not show alice's mailbox"
+grep -qE 'noreply@smoke.test +send-only' <<<"$accounts" || die "account list does not mark noreply send-only"
+json=$(docker exec "$MAILIO" mailio account list --json)
+jq -e '.[] | select(.address=="noreply@smoke.test") | select(.send_only==true)' >/dev/null <<<"$json" \
+  || die "account list --json does not mark noreply send-only"
+jq -e '.[] | select(.address=="alice@smoke.test") | select(.send_only==false)' >/dev/null <<<"$json" \
+  || die "account list --json marks alice send-only"
+echo "ok: account list names every mailbox and every send-only account"
+
+say "the command line refuses what it does not understand"
+# This is what the cobra rewrite is for. The old hand-rolled dispatch fell
+# through to setup() on anything it did not recognise, so a typo rewrote the
+# Postfix configuration and republished DNS records. Both halves are asserted:
+# a non-zero exit, and a DNS write log that did not move.
+before_ops=$(ops | jq -c .)
+for bad in "add-acount smoke.test dave" "accounts list" "--nonsense" "cert bogus" "account add onlyonearg"; do
+  # shellcheck disable=SC2086
+  if docker exec "$MAILIO" mailio $bad >/dev/null 2>&1; then
+    die "\`mailio $bad\` was accepted"
+  fi
+done
+[ "$(ops | jq -c .)" = "$before_ops" ] || die "a refused command still wrote to DNS"
+# A bare command group lists what it offers rather than erroring, and — the
+# point — rather than doing anything.
+grep -qF 'Available Commands:' <<<"$(docker exec "$MAILIO" mailio)" || die "bare mailio did not print help"
+grep -qF 'renew' <<<"$(docker exec "$MAILIO" mailio cert)" || die "bare cert did not list its subcommands"
+[ -n "$(docker exec "$MAILIO" mailio version)" ] || die "mailio version printed nothing"
+echo "ok: unknown commands are refused, and refusing them changes nothing"
+
+say "healthcheck"
+docker exec "$MAILIO" mailio healthcheck || die "healthcheck failed on a healthy container"
+echo "ok: healthcheck passes while all three daemons are up"
 
 say "an untrusted client cannot relay"
 # Senders live under .test, which is reserved and never resolves, so no check
@@ -199,13 +236,13 @@ grep -q 'DKIM-Signature:.*d=smoke.test' <<<"$(tr -d '\r' <<<"$raw" | tr '\n' ' '
 echo "ok: submitted mail is DKIM-signed with d=smoke.test"
 
 say "account changes apply without a restart"
-docker exec "$MAILIO" mailio add-account smoke.test carol --password carol-smoke-pw >/dev/null
+docker exec "$MAILIO" mailio account add smoke.test carol --password carol-smoke-pw >/dev/null
 check auth carol@smoke.test carol-smoke-pw
-grep -q 'local_part: carol' "$WORK/config.yml" || die "add-account did not write the config"
-docker exec "$MAILIO" mailio delete-account smoke.test carol >/dev/null
+grep -q 'local_part: carol' "$WORK/config.yml" || die "account add did not write the config"
+docker exec "$MAILIO" mailio account delete smoke.test carol >/dev/null
 check auth-refused carol@smoke.test carol-smoke-pw
-if grep -q 'local_part: carol' "$WORK/config.yml"; then die "delete-account did not update the config"; fi
-echo "ok: add-account and delete-account both took effect live"
+if grep -q 'local_part: carol' "$WORK/config.yml"; then die "account delete did not update the config"; fi
+echo "ok: account add and account delete both took effect live"
 
 say "the uids the persisted volumes depend on"
 # The Dockerfile pins opendmarc to 900 so the package's post-install cannot take
@@ -238,5 +275,14 @@ echo "ok: the second boot reused the cert and published nothing new"
 check submit alice@smoke.test alice-smoke-pw alice@smoke.test bob@smoke.test submitted-2
 delivered bob submitted-2
 echo "ok: mail still flows after a restart"
+
+# Last, because it kills a daemon the container does not come back from: the
+# entrypoint waits on opendkim and shuts down when it exits.
+say "the healthcheck notices a daemon that is gone"
+docker exec "$MAILIO" pkill -f opendkim
+if docker exec "$MAILIO" mailio healthcheck 2>/dev/null; then
+  die "healthcheck passed with opendkim dead"
+fi
+echo "ok: healthcheck fails when a milter is down"
 
 say "smoke test passed"

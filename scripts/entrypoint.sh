@@ -8,7 +8,7 @@ rsyslogd
 tail -f /var/log/syslog &
 
 echo "[entrypoint] running setup..."
-/usr/local/bin/mailio
+/usr/local/bin/mailio setup
 
 echo "[entrypoint] starting opendkim..."
 opendkim -f -x /etc/opendkim.conf &
