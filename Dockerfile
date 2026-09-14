@@ -1,15 +1,24 @@
-FROM golang:1.27-alpine AS builder
+# Pinned to the platform doing the building, not the one being built for. Go
+# cross-compiles, so the compiler runs natively for both targets; without this
+# the whole builder stage runs under QEMU for linux/arm64 and the build goes
+# from seconds to minutes.
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS builder
 
-# Stamped into the binary so a pulled image can say which commit it is. "dev" is
-# what a local build says, and it is true.
-ARG VERSION=dev
+# TARGETOS/TARGETARCH are filled in by buildkit, once per platform being built.
+# VERSION is stamped into the binary so a pulled image can say which commit it
+# is; "dev" is what a local build says, and it is true.
+ARG TARGETOS TARGETARCH VERSION=dev
 
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
-RUN CGO_ENABLED=0 go build -ldflags "-X mailio/internal/app.Version=$VERSION" -o /mailio ./cmd/mailio
+# CGO off because there is nothing to link against, which is both what makes the
+# cross-compile free and what keeps this a static binary in an image carrying no
+# Go toolchain.
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -trimpath -ldflags "-s -w -X mailio/internal/app.Version=$VERSION" -o /mailio ./cmd/mailio
 
 FROM alpine:latest
 
