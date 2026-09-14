@@ -117,6 +117,17 @@ domains:
         #   username: user@gmail.com
         #   password: "your-app-password"
 
+      # A send-only account: omitting local_user gives it an SMTP login and
+      # nothing to deliver to, so mail addressed to it is refused with
+      # "550 User unknown in virtual mailbox table". This is what an application
+      # sender wants — the address exists to send from, not to collect mail.
+      # Note that this also refuses bounces: if a message it sent cannot be
+      # delivered, the failure notice has nowhere to go and is discarded, so
+      # watch the mail log rather than an inbox. Point the envelope sender at a
+      # mailbox-backed account instead if you need to see them.
+      - local_part: noreply
+        password: "changeme"
+
   - name: example-b.com
     selector: mail
     accounts:

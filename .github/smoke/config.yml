@@ -1,0 +1,32 @@
+# Config for the smoke test. Not an example to copy — see config.example.yml for
+# that. This one exists to exercise the paths the image has to get right:
+# two mailboxes so sender/login binding and local delivery can be told apart,
+# SPF and DMARC set so both DNS upserts run, and no letsencrypt block so the
+# container falls back to a self-signed cert instead of reaching out to ACME.
+hostname: mail.smoke.test
+
+# Deliberately loopback only. The test connects from the host through published
+# ports, which postfix sees as the bridge gateway — outside mynetworks — so
+# every relay and sender check is made as an untrusted client.
+mynetworks:
+  - 127.0.0.0/8
+
+domains:
+  - name: smoke.test
+    selector: mail
+    spf: "~all"
+    dmarc:
+      policy: none
+      rua: inbox@smoke.test
+    accounts:
+      - local_part: alice
+        password: "alice-smoke-pw"
+        local_user: alice
+      - local_part: bob
+        password: "bob-smoke-pw"
+        local_user: bob
+      # Send-only: no local_user, so nothing is written to the virtual mailbox
+      # table for it and inbound mail to the address is refused, while the SASL
+      # identity and the sender/login binding are provisioned as usual.
+      - local_part: noreply
+        password: "noreply-smoke-pw"

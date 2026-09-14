@@ -68,6 +68,8 @@ domains:
       - local_part: user
         password: "secret"
         local_user: root    # mail delivered to /var/mail/root/ (Maildir)
+      - local_part: noreply
+        password: "secret"  # no local_user → send-only, see below
 
   - name: example-b.com
     selector: mail
@@ -79,7 +81,7 @@ domains:
 
 - SASL username is the **full address** `local_part@domain` (e.g. `user@example-a.com`), authenticated against the domain as the realm. This lets the same `local_part` exist in several domains with independent passwords.
 - An authenticated account may only send mail **as its own address** — Postfix rejects a `From` belonging to another configured account (`reject_sender_login_mismatch`). See [the note below](#sender-identity-binding).
-- `local_user` maps inbound mail to `/var/mail/<local_user>/` in Maildir format. Omit to disable inbound delivery for that account.
+- `local_user` maps inbound mail to `/var/mail/<local_user>/` in Maildir format. Omit to make the account **send-only**: it gets an SMTP login and can submit mail as its own address, but nothing is written to the virtual mailbox table for it, so mail addressed to it is refused with `550 User unknown in virtual mailbox table`. Bounces are refused along with everything else — a send-only sender never sees its own delivery failures, so watch the mail log, or use a mailbox-backed address as the envelope sender when you need them.
 - `spf`, `dmarc`, `catchall`, `letsencrypt`, and `relay` are all optional.
 
 ### Outbound relay (smarthost)
