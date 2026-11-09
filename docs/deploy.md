@@ -109,6 +109,53 @@ Everything after `#` stays in the browser; no request carries it. Caddy's access
 every URL whole, query included, so a `?token=` would sit in it, live, until somebody used the
 link. The page posts the token in a body instead.
 
+## Every wrong password is one line, for fail2ban
+
+mailio bans nobody itself. Each refused password is logged as
+
+```
+{"time":"…","level":"WARN","msg":"password refused","ip":"203.0.113.7","via":"admin"}
+```
+
+and fail2ban, reading the container's log as a file, does the banning. `via` says where the
+password was tried; the mail ports log the same line when they arrive, so one filter and one jail
+cover all of them.
+
+```ini
+# filter.d/mailio.local
+[Definition]
+failregex = ^\{.*"msg":"password refused".*"ip":"<ADDR>"
+ignoreregex =
+```
+
+```ini
+# jail.d/mailio.local
+[mailio]
+enabled   = true
+filter    = mailio
+logpath   = /remotelogs/docker/mailio.log
+banaction = iptables-allports[chain=DOCKER-USER]
+findtime  = 600
+bantime   = 1d
+maxretry  = 5
+```
+
+**All ports, in `DOCKER-USER`.** Traffic to a published container port never passes `INPUT`, and
+a guesser refused on IMAP should not get to carry on at submission or the admin interface.
+
+**The line names neither the address tried nor the password.** A password typed into the address
+field is common enough that logging the address would log passwords.
+
+## The caller is Caddy's last `X-Forwarded-For` hop, believed only from a private address
+
+Caddy connects from the Docker network, so the peer mailio sees is Caddy. The last
+`X-Forwarded-For` hop is the one Caddy wrote; anything before it is whatever the caller sent.
+
+The header is believed only when the peer is a private or loopback address, where a proxy on the
+same host connects from. From anywhere else it is the caller's own claim, and believing it would
+let a stranger choose the address fail2ban bans — yours, say. `X-Real-IP` is never read: Caddy
+neither sets nor strips it, so it is always the caller's.
+
 ## Ports
 
 `:80` inside the container for the admin interface, reached by Caddy and published nowhere. The
