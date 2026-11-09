@@ -9,26 +9,44 @@ import (
 
 // clientIP is who sent the request: the address fail2ban bans.
 //
-// Behind Caddy that is the last X-Forwarded-For hop, the one Caddy wrote; anything before it is
-// whatever the caller sent. The header is believed only from a private or loopback peer, which is
-// where a proxy on the same host connects from. From anywhere else it is the caller's own claim,
-// and believing it would let a stranger name the address that gets banned. See docs/deploy.md.
-func clientIP(r *http.Request) string {
+// X-Forwarded-For is read only from a trusted peer, right to left: each proxy appends who it
+// accepted, so the first hop that is not a trusted proxy is the caller, and everything left of it
+// is whatever the caller sent. From any other peer it is the caller's own claim, and believing it
+// would let a stranger name the address that gets banned. X-Real-IP is never read, since a proxy
+// that does not set it passes the caller's along. See docs/deploy.md.
+func (s *Server) clientIP(r *http.Request) string {
+	peer, ok := peerOf(r)
+	if !ok {
+		return r.RemoteAddr
+	}
+	trusted := s.cfg.TrustedProxies
+	if !trusted.Trusts(peer) {
+		return peer.String()
+	}
+	client := peer
+	hops := strings.Split(strings.Join(r.Header.Values("X-Forwarded-For"), ","), ",")
+	for i := len(hops) - 1; i >= 0; i-- {
+		hop, err := netip.ParseAddr(strings.TrimSpace(hops[i]))
+		if err != nil {
+			break
+		}
+		client = hop.Unmap()
+		if !trusted.Trusts(client) {
+			break
+		}
+	}
+	return client.String()
+}
+
+// peerOf is the address the connection itself came from.
+func peerOf(r *http.Request) (netip.Addr, bool) {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
 	}
-	peer, err := netip.ParseAddr(host)
+	addr, err := netip.ParseAddr(host)
 	if err != nil {
-		return host
+		return netip.Addr{}, false
 	}
-	peer = peer.Unmap()
-	if !peer.IsPrivate() && !peer.IsLoopback() {
-		return peer.String()
-	}
-	hops := strings.Split(strings.Join(r.Header.Values("X-Forwarded-For"), ","), ",")
-	if last, err := netip.ParseAddr(strings.TrimSpace(hops[len(hops)-1])); err == nil {
-		return last.Unmap().String()
-	}
-	return peer.String()
+	return addr.Unmap(), true
 }

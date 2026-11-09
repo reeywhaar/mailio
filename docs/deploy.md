@@ -14,6 +14,7 @@ ghcr.io/reeywhaar/mailio:latest
 | `MAILIO_DATA_DIR` | `/data` | Where `mailio.db` lives. Fixed in the image; a variable for local runs |
 | `MAILIO_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `MAILIO_BACKUP_URL` | — | A backio agent's `POST /backup`. Unset, mailio takes no backups |
+| `MAILIO_TRUSTED_PROXIES` | `private` | Whose `X-Forwarded-For` is believed: addresses, ranges, `private`, or `none` |
 
 ## There is no config file
 
@@ -146,15 +147,50 @@ a guesser refused on IMAP should not get to carry on at submission or the admin 
 **The line names neither the address tried nor the password.** A password typed into the address
 field is common enough that logging the address would log passwords.
 
-## The caller is Caddy's last `X-Forwarded-For` hop, believed only from a private address
+## The caller is the first `X-Forwarded-For` hop that is not a trusted proxy
 
-Caddy connects from the Docker network, so the peer mailio sees is Caddy. The last
-`X-Forwarded-For` hop is the one Caddy wrote; anything before it is whatever the caller sent.
+The admin interface sits behind a proxy, so the connection mailio sees is the proxy's. Each proxy
+appends who it accepted to `X-Forwarded-For`, so mailio reads the header right to left, stepping
+over hops that are trusted proxies; the first one that is not is the caller. Everything left of
+it is whatever the caller sent.
 
-The header is believed only when the peer is a private or loopback address, where a proxy on the
-same host connects from. From anywhere else it is the caller's own claim, and believing it would
-let a stranger choose the address fail2ban bans — yours, say. `X-Real-IP` is never read: Caddy
-neither sets nor strips it, so it is always the caller's.
+The header is read at all only when the connection comes from a trusted proxy. From anywhere else
+it is the caller's own claim, and believing it would let a stranger choose the address fail2ban
+bans — yours, say. `X-Real-IP` is never read: a proxy that does not set it passes the caller's
+along.
+
+`MAILIO_TRUSTED_PROXIES` names the trusted proxies: addresses, ranges, `private`, or `none`,
+separated by commas or spaces.
+
+| setup | value |
+| --- | --- |
+| Proxy on the same host or Docker network | `private`, the default |
+| Proxy on another machine | its address, e.g. `198.51.100.3` |
+| A CDN in front of that proxy | `private` plus the CDN's published ranges |
+| No proxy, or the port is reachable without it | `none` |
+
+Caddy and Traefik set the header by default; nginx needs
+`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for`. In a chain, every proxy has to
+trust the one before it too, or it replaces the header rather than appending to it: Caddy behind
+Cloudflare needs Cloudflare's ranges in its own `trusted_proxies`.
+
+`private` is 10/8, 172.16/12, 192.168/16, fc00::/7 and loopback. It assumes every caller with
+such an address is yours — on a shared Docker network, every other container; where that is not
+so, name the proxy itself instead.
+
+Rootless Docker and Podman can deliver every connection from one private address, so a caller
+reaching the port directly looks like the proxy. Keep that port unpublished, or set `none`.
+
+### Behind a CDN, an `iptables` ban does nothing
+
+The banned address never connects to this host; the CDN does. A jail there needs the CDN's own
+ban, such as fail2ban's `cloudflare` action, in place of `iptables-allports`.
+
+### The mail ports take the connection's own address
+
+SMTP and IMAP are published straight from mailio, so the peer is the client and no header is
+read. A TCP proxy in front of them would put every client behind one address, and one ban would
+lock everybody out.
 
 ## Ports
 

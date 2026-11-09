@@ -80,7 +80,7 @@ func (s *Server) signIn(w http.ResponseWriter, r *http.Request) {
 	}
 	u, err := s.st.Authenticate(r.Context(), req.Address, req.Password)
 	if errors.Is(err, store.ErrNotFound) {
-		s.log.Warn(PasswordRefused, "ip", clientIP(r), "via", "admin")
+		s.log.Warn(PasswordRefused, "ip", s.clientIP(r), "via", "admin")
 		refuse(w, http.StatusUnauthorized, CodeUnauthenticated, "That address and password do not match.")
 		return
 	}
