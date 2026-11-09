@@ -60,6 +60,7 @@ func (s *Store) CreateDomain(ctx context.Context, name string) (*Domain, error) 
 	if err := insertDomain(ctx, s.writer, d); err != nil {
 		return nil, err
 	}
+	s.changed()
 	return d, nil
 }
 
@@ -145,15 +146,21 @@ func (s *Store) SetUnknown(ctx context.Context, domainID string, u Unknown, user
 		}
 		target = userID
 	}
+	// The comparison is what makes saving the same choice no change, and nothing for the backup
+	// loop to count.
 	res, err := s.writer.ExecContext(ctx,
-		`UPDATE domains SET unknown = ?, unknown_user_id = ? WHERE id = ?`, u, target, domainID)
+		`UPDATE domains SET unknown = ?, unknown_user_id = ?
+		  WHERE id = ? AND (unknown <> ? OR unknown_user_id IS NOT ?)`,
+		u, target, domainID, u, target)
 	if err != nil {
 		return fmt.Errorf("set unknown: %w", err)
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return NotFound("There is no such domain.")
+	if n, _ := res.RowsAffected(); n > 0 {
+		s.changed()
+		return nil
 	}
-	return nil
+	_, err = s.DomainByID(ctx, domainID)
+	return err
 }
 
 // DeleteDomain stops receiving for a domain. Its users go first, so deleting a domain never
@@ -179,5 +186,9 @@ func (s *Store) DeleteDomain(ctx context.Context, id string) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM domains WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("delete domain: %w", err)
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("delete domain: %w", err)
+	}
+	s.changed()
+	return nil
 }

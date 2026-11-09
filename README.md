@@ -49,6 +49,9 @@ added with it. Locked out later:
 docker compose exec mailio mailio admin reset
 ```
 
+Backups go to a [backio agent](https://github.com/reeywhaar/backio/tree/main/agent): set
+`MAILIO_BACKUP_URL` to its `POST /backup`.
+
 More in [docs/deploy.md](docs/deploy.md). Where mail to an address goes is in
 [docs/addresses.md](docs/addresses.md), the API in [docs/api.md](docs/api.md), and how the code is
 written in [docs/conventions.md](docs/conventions.md).

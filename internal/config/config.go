@@ -21,6 +21,10 @@ const (
 
 	// LogLevelEnv sets the slog level: debug, info, warn or error.
 	LogLevelEnv = "MAILIO_LOG_LEVEL"
+
+	// BackupURLEnv is a backio agent's POST endpoint, whole address rather than a host: the path
+	// is the agent's to name. Unset, nothing is backed up.
+	BackupURLEnv = "MAILIO_BACKUP_URL"
 )
 
 const DefaultDataDir = "/data"
@@ -35,6 +39,9 @@ type Config struct {
 
 	// Secure is PublicURL being https, derived once rather than at each Set-Cookie.
 	Secure bool
+
+	// BackupURL is where an archive is posted, or empty for no backups at all.
+	BackupURL string
 }
 
 // Link builds an absolute URL into this instance.
@@ -66,6 +73,7 @@ func Load() (*Config, error) {
 	if dir := strings.TrimSpace(os.Getenv(DataDirEnv)); dir != "" {
 		cfg.DataDir = dir
 	}
+	cfg.BackupURL = strings.TrimSpace(os.Getenv(BackupURLEnv))
 	// A startup error rather than a fall back to info: a level that quietly works is one
 	// nobody finds until the log lacks what they came for.
 	if v := strings.TrimSpace(os.Getenv(LogLevelEnv)); v != "" {

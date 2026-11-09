@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -36,6 +37,11 @@ type Store struct {
 
 	// now is injectable so expiry is driven rather than slept through.
 	now func() time.Time
+
+	// changes counts writes that changed content, which is what the backup loop watches.
+	// Sessions and admin links are the process noticing itself, not somebody setting something
+	// up, so they do not bump it.
+	changes atomic.Uint64
 }
 
 const readers = 4
@@ -137,6 +143,14 @@ func verify(db *sql.DB) error {
 	}
 	return nil
 }
+
+// changed records a write that changed content. Called after the commit, and only when the write
+// changed something, which for an update means a non-zero RowsAffected from a statement carrying
+// its own comparison.
+func (s *Store) changed() { s.changes.Add(1) }
+
+// Changes is the counter the backup loop compares against what the agent last accepted.
+func (s *Store) Changes() uint64 { return s.changes.Load() }
 
 // SetClock replaces the clock. Tests drive expiry with it.
 func (s *Store) SetClock(now func() time.Time) { s.now = now }

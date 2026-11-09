@@ -100,6 +100,7 @@ func (s *Store) CreateUser(ctx context.Context, addr, password string, admin boo
 	if err := insertUser(ctx, s.writer, u, hash); err != nil {
 		return nil, err
 	}
+	s.changed()
 	return u, nil
 }
 
@@ -202,7 +203,11 @@ func (s *Store) SetPassword(ctx context.Context, id, password string) error {
 	if err := setPassword(ctx, tx, id, hash); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("set password: %w", err)
+	}
+	s.changed()
+	return nil
 }
 
 func setPassword(ctx context.Context, tx *sql.Tx, id, hash string) error {
@@ -234,7 +239,11 @@ func (s *Store) SetAdmin(ctx context.Context, id string, admin bool) error {
 	if err != nil {
 		return err
 	}
-	if u.Admin && !admin {
+	// Already so: no write, no sign-out, and nothing for the backup loop to count.
+	if u.Admin == admin {
+		return nil
+	}
+	if u.Admin {
 		if err := otherAdmins(ctx, tx, id); err != nil {
 			return err
 		}
@@ -247,7 +256,11 @@ func (s *Store) SetAdmin(ctx context.Context, id string, admin bool) error {
 			return fmt.Errorf("set admin: %w", err)
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("set admin: %w", err)
+	}
+	s.changed()
+	return nil
 }
 
 func otherAdmins(ctx context.Context, tx *sql.Tx, id string) error {
@@ -289,7 +302,11 @@ func (s *Store) DeleteUser(ctx context.Context, id string) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("delete user: %w", err)
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("delete user: %w", err)
+	}
+	s.changed()
+	return nil
 }
 
 // ValidatePassword refuses what bcrypt would silently truncate.

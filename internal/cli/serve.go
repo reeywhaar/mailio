@@ -16,6 +16,7 @@ import (
 
 	"mailio/internal/api"
 	"mailio/internal/app"
+	"mailio/internal/backup"
 	"mailio/internal/config"
 	"mailio/internal/store"
 )
@@ -56,10 +57,11 @@ func serveCmd() *cobra.Command {
 			// Waited on below, so nothing is still writing when the database closes.
 			var background sync.WaitGroup
 			background.Go(func() { sweep(ctx, st, log) })
+			background.Go(func() { backup.Run(ctx, st, cfg.BackupURL, cfg.DataDir, log) })
 
 			errc := make(chan error, 1)
 			go func() {
-				log.Info("listening", "addr", srv.Addr)
+				log.Info("listening", "addr", srv.Addr, "backups", cfg.BackupURL != "")
 				errc <- srv.ListenAndServe()
 			}()
 

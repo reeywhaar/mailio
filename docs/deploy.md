@@ -13,6 +13,7 @@ ghcr.io/reeywhaar/mailio:latest
 | `MAILIO_PUBLIC_URL` | *required* | The address the admin interface is opened at |
 | `MAILIO_DATA_DIR` | `/data` | Where `mailio.db` lives. Fixed in the image; a variable for local runs |
 | `MAILIO_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| `MAILIO_BACKUP_URL` | — | A backio agent's `POST /backup`. Unset, mailio takes no backups |
 
 ## There is no config file
 
@@ -113,6 +114,75 @@ link. The page posts the token in a body instead.
 `:80` inside the container for the admin interface, reached by Caddy and published nowhere. The
 mail ports are published straight from mailio, since Caddy speaks only HTTP; they arrive, with
 their own certificate, alongside the code that listens on them.
+
+## Backups go to a backio agent
+
+Set `MAILIO_BACKUP_URL` to a [backio-agent] and mailio posts it a gzipped `VACUUM INTO` snapshot
+of the database. Leave it unset and mailio takes no backups at all. The snapshot is written to a
+`backup-*` folder in the data directory and removed once sent; one left by a process killed
+mid-pass is removed on the next start.
+
+```
+mailio ──POST archive──▶ agent ──▶ wherever the agent was told
+       (no credential)    (holds the token, names the file, prunes old ones)
+```
+
+```yaml
+services:
+  mailio:
+    image: ghcr.io/reeywhaar/mailio:latest
+    environment:
+      MAILIO_PUBLIC_URL: https://mail.example.com
+      MAILIO_BACKUP_URL: http://backup:8080/backup
+    volumes:
+      - data:/data
+
+  backup:
+    image: ghcr.io/reeywhaar/backio-agent:latest
+    restart: unless-stopped
+    environment:
+      # …destination and credential, which are the agent's business
+```
+
+Behind Caddy, mailio is on both networks, `networks: [default, caddy]`: Caddy reaches it on one
+and it reaches the agent on the other.
+
+**mailio holds no credential, no provider, no bucket and no retention policy.** It decides when
+to back up and what goes in the archive; everything after that belongs to the agent. A
+compromised mailio container cannot read, overwrite or delete a single existing backup. It can
+only hand over one more archive.
+
+[backio-agent]: https://github.com/reeywhaar/backio/tree/main/agent
+
+### A copy goes out when content changed, and at no other time
+
+The loop looks every half hour and sends only when something was written since the last archive
+the agent accepted: a domain, a user, a password, an admin, what a domain does with unknown mail.
+Saving what is already there is not a change. Sessions and admin links are the process noticing
+itself and do not count either.
+
+A restart sends one archive, because a process that has just started may be on a volume nobody
+has a copy of yet. There is no heartbeat: an instance nobody touched sends nothing, and whether
+it is running is `/healthz`'s question.
+
+### The snapshot is read, never written
+
+`VACUUM INTO` runs on a reader connection. A WAL reader sees one moment and blocks nobody, so mail
+keeps committing while a large copy is written; on the one writer connection, every delivery would
+wait for the copy to finish.
+
+### Waiting as long as the agent does
+
+The agent answers once the archive is on the remote. mailio waits up to 30 minutes, the agent's
+own `UPLOAD_TIMEOUT` default, because giving up sooner records a failure for an archive that is
+stored anyway.
+
+### Restoring
+
+Stop the container, extract the archive into the data directory, start it again. Admins stay
+signed in, because sessions are in the same file.
+
+The archive carries every password hash, so it is worth the same care as the directory itself.
 
 ## The image
 

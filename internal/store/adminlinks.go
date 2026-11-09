@@ -136,6 +136,7 @@ func (s *Store) UseAdminLink(ctx context.Context, token, addr, password string) 
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("use admin link: %w", err)
 	}
+	s.changed()
 	return u, nil
 }
 

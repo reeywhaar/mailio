@@ -29,7 +29,8 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags "-s -w -X mailio/internal/app.Version=$VERSION" -o /out/mailio .
 
 FROM alpine:latest
-# Outbound mail is delivered over TLS, checked against the system's roots.
+# Outbound mail, and a backup agent given as https, are reached over TLS, checked against the
+# system's roots.
 RUN apk add --no-cache ca-certificates
 COPY --from=build /out/mailio /usr/local/bin/mailio
 COPY --from=web /src/dist /srv/web

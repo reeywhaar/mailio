@@ -3,8 +3,8 @@
 ## One SQLite file holds everything
 
 `mailio.db` in the data directory: domains, users, sessions, and — as it arrives — the mail
-itself. A backup is one file, and a stopped instance leaves exactly one, because closing
-checkpoints the write-ahead log into it.
+itself. A backup is one file — see [deploy.md](deploy.md#backups-go-to-a-backio-agent) — and a
+stopped instance leaves exactly one, because closing checkpoints the write-ahead log into it.
 
 ## Commits are synchronous=FULL
 
