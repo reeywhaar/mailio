@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <style>
+    .body { fill: #ef6500 }
+    .flap { stroke: #fff }
+    @media (prefers-color-scheme: dark) {
+      .body { fill: #818cf8 }
+      .flap { stroke: #111113 }
+    }
+  </style>
+  <rect class="body" x="2" y="6" width="28" height="20" rx="5"/>
+  <path class="flap" d="M7 12l9 6 9-6" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

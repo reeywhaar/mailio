@@ -1,0 +1,78 @@
+@import "tailwindcss";
+
+/*
+ * Semantic tokens, not colors, and the same ones emguio uses. Components name what a color is
+ * for; this is the only file that says what those are.
+ *
+ * Light is the base; dark is an override, so no className needs a dark: variant.
+ */
+@theme {
+  --color-bg: #ffffff;
+  --color-page: #fafafa;
+  --color-surface: #f4f4f5;
+  --color-fg: #1f2329;
+  --color-muted: #5f6672;
+  --color-faint: #80868f;
+  --color-line: #e3e5e8;
+  --color-fill: #f0f1f3;
+  --color-brand: #ef6500;
+  --color-brand-ink: #ffffff;
+  --color-accent: #b91c1c;
+  --color-ok: #15803d;
+}
+
+/* A plain override rather than a second @theme: @theme is hoisted to the top level whatever it
+   is nested in, so one inside a media query replaces the light values for everybody. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #202226;
+    --color-page: #17181b;
+    --color-surface: #1c1d21;
+    --color-fg: #e7e9ee;
+    --color-muted: #a2a8b4;
+    --color-faint: #7d8490;
+    --color-line: #31343a;
+    --color-fill: #2a2c31;
+    --color-brand: #818cf8;
+    --color-brand-ink: #111113;
+    --color-accent: #f87171;
+    --color-ok: #4ade80;
+  }
+}
+
+:where(a, button, summary, [role="button"]):focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+/* Without this a light page renders a dark-mode select, and the first paint flashes. */
+:root {
+  color-scheme: light dark;
+  accent-color: var(--color-brand);
+}
+
+body {
+  background: var(--color-page);
+  color: var(--color-fg);
+}
+
+/* Under 16px iOS Safari zooms the page on focus. */
+input,
+select,
+textarea {
+  font-size: 16px;
+}
+
+@media (min-width: 40rem) {
+  input,
+  select,
+  textarea {
+    font-size: 14px;
+  }
+}
+
+/* Labels are small caps. */
+@utility caps {
+  font-variant-caps: all-small-caps;
+  letter-spacing: 0.04em;
+}

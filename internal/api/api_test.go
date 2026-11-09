@@ -1,0 +1,265 @@
+package api
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/cookiejar"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"strings"
+	"testing"
+
+	"golang.org/x/crypto/bcrypt"
+
+	"mailio/internal/config"
+	"mailio/internal/store"
+)
+
+func TestMain(m *testing.M) {
+	store.SetBcryptCost(bcrypt.MinCost)
+	os.Exit(m.Run())
+}
+
+type harness struct {
+	t   *testing.T
+	st  *store.Store
+	srv *httptest.Server
+	c   *http.Client
+}
+
+func newHarness(t *testing.T) *harness {
+	t.Helper()
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	u, _ := url.Parse("http://mail.example.com")
+	cfg := &config.Config{PublicURL: u}
+	srv := httptest.NewServer(New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), st, nil))
+	t.Cleanup(srv.Close)
+	jar, _ := cookiejar.New(nil)
+	return &harness{t: t, st: st, srv: srv, c: &http.Client{Jar: jar}}
+}
+
+// fresh is another browser: the same server, no cookies.
+func (h *harness) fresh() *harness {
+	jar, _ := cookiejar.New(nil)
+	return &harness{t: h.t, st: h.st, srv: h.srv, c: &http.Client{Jar: jar}}
+}
+
+func (h *harness) do(method, path string, body any) (int, map[string]any) {
+	h.t.Helper()
+	var r io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		r = bytes.NewReader(b)
+	}
+	req, _ := http.NewRequest(method, h.srv.URL+path, r)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := h.c.Do(req)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var out map[string]any
+	if len(raw) > 0 && raw[0] == '{' {
+		json.Unmarshal(raw, &out)
+	}
+	return resp.StatusCode, out
+}
+
+func (h *harness) list(path string) []map[string]any {
+	h.t.Helper()
+	resp, err := h.c.Get(h.srv.URL + path)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		h.t.Fatalf("GET %s: %s", path, resp.Status)
+	}
+	var out []map[string]any
+	json.NewDecoder(resp.Body).Decode(&out)
+	return out
+}
+
+// signedIn is a browser that has used the first admin link.
+func signedIn(t *testing.T) *harness {
+	t.Helper()
+	h := newHarness(t)
+	token, _, err := h.st.CreateAdminLink(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, body := h.do("POST", "/api/admin-link", map[string]any{"token": token, "address": "inbox@reey.ru", "password": "correct horse"}); code != http.StatusNoContent {
+		t.Fatalf("admin link: %d %v", code, body)
+	}
+	return h
+}
+
+func TestAnAdminLinkIsCheckedThenSpentAndSignsIn(t *testing.T) {
+	h := newHarness(t)
+	token, _, _ := h.st.CreateAdminLink(context.Background())
+
+	if code, body := h.do("POST", "/api/admin-link/check", map[string]any{"token": token}); code != http.StatusOK || body["expires_at"] == nil {
+		t.Fatalf("check: %d %v", code, body)
+	}
+	if code, _ := h.do("GET", "/api/me", nil); code != http.StatusUnauthorized {
+		t.Fatalf("me before: %d", code)
+	}
+	if code, body := h.do("POST", "/api/admin-link", map[string]any{"token": token, "address": "inbox@reey.ru", "password": "correct horse"}); code != http.StatusNoContent {
+		t.Fatalf("use: %d %v", code, body)
+	}
+	code, me := h.do("GET", "/api/me", nil)
+	if code != http.StatusOK || me["address"] != "inbox@reey.ru" || me["admin"] != true {
+		t.Fatalf("me after: %d %v", code, me)
+	}
+	if code, _ := h.do("POST", "/api/admin-link/check", map[string]any{"token": token}); code != http.StatusNotFound {
+		t.Errorf("a spent link checks as %d", code)
+	}
+}
+
+func TestOnlyAnAdminCanSignIn(t *testing.T) {
+	h := signedIn(t)
+	if code, body := h.do("POST", "/api/users", map[string]any{"address": "misha@reey.ru", "password": "another one"}); code != http.StatusCreated {
+		t.Fatalf("create: %d %v", code, body)
+	}
+
+	b := h.fresh()
+	if code, _ := b.do("POST", "/api/session", map[string]any{"address": "misha@reey.ru", "password": "wrong password"}); code != http.StatusUnauthorized {
+		t.Errorf("wrong password: %d", code)
+	}
+	if code, _ := b.do("POST", "/api/session", map[string]any{"address": "misha@reey.ru", "password": "another one"}); code != http.StatusForbidden {
+		t.Errorf("not an admin: %d", code)
+	}
+	if code, _ := b.do("POST", "/api/session", map[string]any{"address": "Inbox@Reey.ru", "password": "correct horse"}); code != http.StatusNoContent {
+		t.Errorf("an admin: %d", code)
+	}
+	if code, _ := b.do("GET", "/api/me", nil); code != http.StatusOK {
+		t.Errorf("me: %d", code)
+	}
+}
+
+func TestSigningOutEndsTheSession(t *testing.T) {
+	h := signedIn(t)
+	if code, _ := h.do("DELETE", "/api/session", nil); code != http.StatusNoContent {
+		t.Fatalf("sign out: %d", code)
+	}
+	if code, _ := h.do("GET", "/api/me", nil); code != http.StatusUnauthorized {
+		t.Errorf("me after sign out: %d", code)
+	}
+}
+
+func TestEveryAdminRouteNeedsASession(t *testing.T) {
+	h := newHarness(t)
+	for _, c := range [][2]string{
+		{"GET", "/api/domains"}, {"POST", "/api/domains"}, {"PATCH", "/api/domains/dm_x"}, {"DELETE", "/api/domains/dm_x"},
+		{"GET", "/api/users"}, {"POST", "/api/users"}, {"PATCH", "/api/users/u_x"}, {"DELETE", "/api/users/u_x"},
+		{"GET", "/api/me"}, {"DELETE", "/api/session"},
+	} {
+		if code, _ := h.do(c[0], c[1], map[string]any{}); code != http.StatusUnauthorized {
+			t.Errorf("%s %s: %d", c[0], c[1], code)
+		}
+	}
+}
+
+func TestAnAdminManagesDomainsAndUsers(t *testing.T) {
+	h := signedIn(t)
+
+	code, d := h.do("POST", "/api/domains", map[string]any{"name": "Vyrtsev.com"})
+	if code != http.StatusCreated || d["name"] != "vyrtsev.com" || d["unknown"] != "reject" {
+		t.Fatalf("create domain: %d %v", code, d)
+	}
+	code, u := h.do("POST", "/api/users", map[string]any{"address": "inbox@vyrtsev.com", "password": "correct horse"})
+	if code != http.StatusCreated || u["admin"] != false {
+		t.Fatalf("create user: %d %v", code, u)
+	}
+
+	domainID, userID := d["id"].(string), u["id"].(string)
+	code, d = h.do("PATCH", "/api/domains/"+domainID, map[string]any{"unknown": "junk", "unknown_user_id": userID})
+	if code != http.StatusOK || d["unknown"] != "junk" || d["unknown_user_id"] != userID {
+		t.Fatalf("set junk: %d %v", code, d)
+	}
+	if code, _ := h.do("DELETE", "/api/users/"+userID, nil); code != http.StatusConflict {
+		t.Errorf("deleting the junk user: %d", code)
+	}
+	if code, _ := h.do("PATCH", "/api/domains/"+domainID, map[string]any{"unknown": "drop"}); code != http.StatusOK {
+		t.Errorf("set drop: %d", code)
+	}
+
+	code, u = h.do("PATCH", "/api/users/"+userID, map[string]any{"admin": true, "password": "a new password"})
+	if code != http.StatusOK || u["admin"] != true {
+		t.Fatalf("update user: %d %v", code, u)
+	}
+	if len(h.list("/api/users")) != 2 || len(h.list("/api/domains")) != 2 {
+		t.Error("the lists do not have what was made")
+	}
+
+	if code, _ := h.do("DELETE", "/api/users/"+userID, nil); code != http.StatusNoContent {
+		t.Errorf("delete user: %d", code)
+	}
+	if code, _ := h.do("DELETE", "/api/domains/"+domainID, nil); code != http.StatusNoContent {
+		t.Errorf("delete domain: %d", code)
+	}
+}
+
+func TestAMalformedIdIsABadRequest(t *testing.T) {
+	h := signedIn(t)
+	if code, _ := h.do("DELETE", "/api/users/nope", nil); code != http.StatusBadRequest {
+		t.Errorf("got %d", code)
+	}
+}
+
+func TestABodyMustBeJSON(t *testing.T) {
+	h := signedIn(t)
+	resp, err := h.c.Post(h.srv.URL+"/api/domains", "application/x-www-form-urlencoded", strings.NewReader("name=x.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnsupportedMediaType {
+		t.Errorf("got %s", resp.Status)
+	}
+}
+
+func TestAnUnknownAPIPathIsJSON(t *testing.T) {
+	h := newHarness(t)
+	code, body := h.do("GET", "/api/nope", nil)
+	if code != http.StatusNotFound || body["code"] != CodeNotFound {
+		t.Errorf("got %d %v", code, body)
+	}
+}
+
+func TestEveryOtherPathIsTheApp(t *testing.T) {
+	h := newHarness(t)
+	resp, err := h.c.Get(h.srv.URL + "/admin/password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") {
+		t.Errorf("got %s %s", resp.Status, resp.Header.Get("Content-Type"))
+	}
+}
+
+func TestAnAdminLinkSendsNoServerItsToken(t *testing.T) {
+	u, err := url.Parse("https://mail.example.com" + AdminLinkPath("s3cret-_token"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Path != "/admin/password" || u.RawQuery != "" {
+		t.Errorf("a server would see %s?%s", u.Path, u.RawQuery)
+	}
+	if got, _ := url.ParseQuery(u.Fragment); got.Get("token") != "s3cret-_token" {
+		t.Errorf("fragment %q", u.Fragment)
+	}
+}
