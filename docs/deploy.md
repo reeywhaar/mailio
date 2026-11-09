@@ -3,8 +3,14 @@
 One image, one directory.
 
 ```
-ghcr.io/reeywhaar/mailio:latest
+ghcr.io/reeywhaar/mailio:v2
 ```
+
+| tag | what it is |
+| --- | --- |
+| `:v2` | this mailio, fixes included: what a deployment pins to |
+| `:latest` | whatever was published last; a pin to nothing |
+| `:v1` | the Postfix-based mailio's last image, never published over |
 
 ## Environment
 
@@ -59,7 +65,7 @@ and terminates TLS, reaching mailio over its network, so nothing is published fo
 ```yaml
 services:
   mailio:
-    image: ghcr.io/reeywhaar/mailio:latest
+    image: ghcr.io/reeywhaar/mailio:v2
     restart: unless-stopped
     environment:
       MAILIO_PUBLIC_URL: https://mail.example.com
@@ -96,7 +102,7 @@ docker run -d --name mailio \
   -e MAILIO_SECRET_KEY=$(openssl rand -base64 32) \
   -v mailio-data:/data \
   -p 8080:80 \
-  ghcr.io/reeywhaar/mailio:latest
+  ghcr.io/reeywhaar/mailio:v2
 ```
 
 The image declares no `VOLUME`, and a missing directory refuses to start. A `VOLUME` makes docker
@@ -105,8 +111,8 @@ everything when the container is replaced.
 
 ## An admin exists because somebody with a shell opened a link
 
-There is no sign-up page and no default password. When nobody is an admin — a new database, or
-the last admin gone — `serve` logs a link at startup:
+When nobody is an admin — a new database, or the last admin gone — `serve` logs a link at
+startup:
 
 ```sh
 docker logs mailio
@@ -309,7 +315,7 @@ mailio ──POST archive──▶ agent ──▶ wherever the agent was told
 ```yaml
 services:
   mailio:
-    image: ghcr.io/reeywhaar/mailio:latest
+    image: ghcr.io/reeywhaar/mailio:v2
     environment:
       MAILIO_PUBLIC_URL: https://mail.example.com
       MAILIO_SECRET_KEY: …

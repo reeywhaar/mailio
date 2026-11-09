@@ -40,8 +40,40 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # With no frontend build present: the bundle is read at startup, so a missing one is the
+      # placeholder page rather than a compile error.
       - name: Test
         run: go test ./... -count=1
+
+      - name: Set up Node
+        # `current` rather than a pinned major: the image pins node:26 because a build that ships
+        # has to be reproducible, and this job only checks.
+        uses: actions/setup-node@v7
+        with:
+          node-version: current
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: web
+
+      - name: Check frontend formatting
+        run: npm run format:check
+        working-directory: web
+
+      - name: Lint
+        run: npm run lint
+        working-directory: web
+
+      - name: Typecheck
+        run: npm run typecheck
+        working-directory: web
+
+      # The image builds the bundle but never runs its tests; this is where they run.
+      - name: Test the frontend
+        run: npm test
+        working-directory: web
 
   publish:
     needs: test
@@ -58,9 +90,8 @@ jobs:
       - name: Check out
         uses: actions/checkout@v7
 
-      # The Dockerfile's builder stage is not pinned to $BUILDPLATFORM, so the arm64 Go
-      # build runs under emulation. Slow, but correct; the layer cache below keeps it off
-      # the critical path on most runs.
+      # The bundle and the binary are built on the runner's own platform, cross-compiled for
+      # the other; only the runtime stage's `apk add` runs under emulation for arm64.
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
 
@@ -85,11 +116,12 @@ jobs:
           context: .
           push: true
           # Two names for one image. latest is what a `docker run` with no tag gets, and is a
-          # pin to nothing. v1 is this line, the Postfix-based mailio, fixes included: what a
-          # deployment that stays on it pins to, and what v2 leaves alone.
+          # pin to nothing. v2 is this line, the mailio that is its own mail server, fixes
+          # included: what a deployment pins to. v1, the Postfix-based mailio, keeps its last
+          # image under its own tag and is never published over.
           tags: |
             ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:v1
+            ghcr.io/${{ github.repository }}:v2
           build-args: |
             VERSION=${{ steps.sha.outputs.short }}
           platforms: linux/amd64,linux/arm64
@@ -104,7 +136,7 @@ jobs:
       # its own image.
       #
       # The script is in the repo rather than inline here so the same checks can be run
-      # against a local build while changing the Dockerfile or the entrypoint:
+      # against a local build while changing the Dockerfile:
       #   docker build -t mailio:smoke . && IMAGE=mailio:smoke .github/smoke/smoke.sh
       - name: Smoke-test the image
         env:
@@ -145,7 +177,7 @@ jobs:
           subject: "${{ github.repository }} published"
           body-type: md
           body: |
-            🔔 Published `ghcr.io/${{ github.repository }}:latest` and `:v1`
+            🔔 Published `ghcr.io/${{ github.repository }}:latest` and `:v2`
 
             - version `${{ needs.publish.outputs.version }}` by ${{ github.actor }}
             - [${{ github.sha }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
