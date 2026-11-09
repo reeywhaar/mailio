@@ -108,7 +108,9 @@ func TestOnlyContentCountsAsAChange(t *testing.T) {
 	moved("a domain", func() (err error) { d, err = st.CreateDomain(ctx, "vyrtsev.com"); return })
 	var u *store.User
 	moved("a user", func() (err error) { u, err = st.CreateUser(ctx, "inbox@vyrtsev.com", "correct horse"); return })
-	moved("a password", func() error { return st.SetPassword(ctx, u.ID, "battery staple") })
+	moved("a password", func() error { _, err := st.AddPassword(ctx, u.ID, "phone", "battery staple"); return err })
+	moved("no-reply", func() error { return st.SetIncoming(ctx, u.ID, store.IncomingReject, "") })
+	still("no-reply again", func() error { return st.SetIncoming(ctx, u.ID, store.IncomingReject, "") })
 	moved("junk", func() error { return st.SetUnknown(ctx, d.ID, store.UnknownJunk, u.ID) })
 	still("the same junk again", func() error { return st.SetUnknown(ctx, d.ID, store.UnknownJunk, u.ID) })
 	moved("dropping instead", func() error { return st.SetUnknown(ctx, d.ID, store.UnknownDrop, "") })

@@ -173,7 +173,8 @@ func TestEveryAdminRouteNeedsASession(t *testing.T) {
 	h := newHarness(t)
 	for _, c := range [][2]string{
 		{"GET", "/api/domains"}, {"POST", "/api/domains"}, {"PATCH", "/api/domains/dm_x"}, {"DELETE", "/api/domains/dm_x"},
-		{"GET", "/api/users"}, {"POST", "/api/users"}, {"PATCH", "/api/users/u_x"}, {"DELETE", "/api/users/u_x"}, {"GET", "/api/users/u_x/password"},
+		{"GET", "/api/users"}, {"POST", "/api/users"}, {"PATCH", "/api/users/u_x"}, {"DELETE", "/api/users/u_x"},
+		{"POST", "/api/users/u_x/passwords"}, {"DELETE", "/api/users/u_x/passwords/pw_x"},
 		{"GET", "/api/admins"}, {"POST", "/api/admins"}, {"PATCH", "/api/admins/ad_x"}, {"DELETE", "/api/admins/ad_x"},
 		{"GET", "/api/me"}, {"DELETE", "/api/session"},
 	} {
@@ -207,12 +208,6 @@ func TestAnAdminManagesDomainsAndUsers(t *testing.T) {
 		t.Errorf("set drop: %d", code)
 	}
 
-	if code, u := h.do("PATCH", "/api/users/"+userID, map[string]any{"password": "a new password"}); code != http.StatusOK {
-		t.Fatalf("update user: %d %v", code, u)
-	}
-	if code, body := h.do("GET", "/api/users/"+userID+"/password", nil); code != http.StatusOK || body["password"] != "a new password" {
-		t.Errorf("look up the password: %d %v", code, body)
-	}
 	if len(h.list("/api/users")) != 1 || len(h.list("/api/domains")) != 1 {
 		t.Error("the lists do not have what was made")
 	}
@@ -369,5 +364,59 @@ func TestADomainShowsTheRecordsItNeeds(t *testing.T) {
 	want := "MX reey.ru,TXT reey.ru,TXT _dmarc.reey.ru,TXT mailio._domainkey.reey.ru"
 	if strings.Join(types, ",") != want {
 		t.Errorf("records: %v", types)
+	}
+}
+
+func TestAUserHasPasswordsEachWithItsLogin(t *testing.T) {
+	h := signedIn(t)
+	h.do("POST", "/api/domains", map[string]any{"name": "reey.ru"})
+	_, u := h.do("POST", "/api/users", map[string]any{"address": "inbox@reey.ru", "password": "correct horse"})
+	id := u["id"].(string)
+	list := u["passwords"].([]any)
+	if len(list) != 1 || list[0].(map[string]any)["label"] != "default" || list[0].(map[string]any)["login"] != "inbox@reey.ru" {
+		t.Fatalf("a new user's passwords: %v", list)
+	}
+
+	code, p := h.do("POST", "/api/users/"+id+"/passwords", map[string]any{"label": "iPhone", "password": "phone password"})
+	if code != http.StatusCreated || p["label"] != "iPhone" || p["password"] != nil {
+		t.Fatalf("add: %d %v", code, p)
+	}
+	login := p["login"].(string)
+	if !strings.HasPrefix(login, "inbox+") || !strings.HasSuffix(login, "@reey.ru") {
+		t.Errorf("login %q", login)
+	}
+	if _, err := h.st.Authenticate(context.Background(), login, "phone password"); err != nil {
+		t.Errorf("the new login does not sign in: %v", err)
+	}
+	pid := p["id"].(string)
+	if code, _ := h.do("DELETE", "/api/users/"+id+"/passwords/"+pid, nil); code != http.StatusNoContent {
+		t.Errorf("delete: %d", code)
+	}
+	if _, err := h.st.Authenticate(context.Background(), login, "phone password"); err == nil {
+		t.Error("a deleted password still signs in")
+	}
+	if code, _ := h.do("DELETE", "/api/users/"+id+"/passwords/"+pid, nil); code != http.StatusNotFound {
+		t.Errorf("deleting it twice: %d", code)
+	}
+}
+
+func TestAUserRefusesOrForwardsItsMail(t *testing.T) {
+	h := signedIn(t)
+	h.do("POST", "/api/domains", map[string]any{"name": "reey.ru"})
+	_, inbox := h.do("POST", "/api/users", map[string]any{"address": "inbox@reey.ru", "password": "correct horse"})
+	_, billing := h.do("POST", "/api/users", map[string]any{"address": "billing@reey.ru", "password": "correct horse"})
+	if billing["incoming"] != "keep" || billing["forward_user_id"] != nil {
+		t.Errorf("a new user: %v", billing)
+	}
+	code, u := h.do("PATCH", "/api/users/"+billing["id"].(string), map[string]any{"incoming": "forward", "forward_user_id": inbox["id"]})
+	if code != http.StatusOK || u["incoming"] != "forward" || u["forward_user_id"] != inbox["id"] {
+		t.Errorf("forward: %d %v", code, u)
+	}
+	code, u = h.do("PATCH", "/api/users/"+billing["id"].(string), map[string]any{"incoming": "reject"})
+	if code != http.StatusOK || u["incoming"] != "reject" || u["forward_user_id"] != nil {
+		t.Errorf("reject: %d %v", code, u)
+	}
+	if code, _ := h.do("PATCH", "/api/users/"+billing["id"].(string), map[string]any{"incoming": "forward"}); code != http.StatusBadRequest {
+		t.Errorf("forward to nobody: %d", code)
 	}
 }

@@ -352,3 +352,51 @@ func TestAWrongIMAPPasswordIsALineFail2banBansOn(t *testing.T) {
 		t.Errorf("no fail2ban line in:\n%s", r.log.String())
 	}
 }
+
+func TestASecondPasswordSignsInWithItsOwnLogin(t *testing.T) {
+	r := newRig(t)
+	p, err := r.st.AddPassword(context.Background(), r.user.ID, "laptop", "laptop password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	login := p.LoginAddress(r.user)
+	dial := func(user, password string) error {
+		c, err := imapclient.DialTLS(r.imap, &imapclient.Options{TLSConfig: &tls.Config{InsecureSkipVerify: true}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		return c.Login(user, password).Wait()
+	}
+	if err := dial(login, "laptop password"); err != nil {
+		t.Errorf("the laptop's login: %v", err)
+	}
+	if err := dial("inbox@reey.ru", "laptop password"); err == nil {
+		t.Error("the laptop's password signed in under the plain address")
+	}
+	if err := dial("inbox@reey.ru", "correct horse"); err != nil {
+		t.Errorf("the default: %v", err)
+	}
+}
+
+func TestANoReplyAddressRefusesMailAndAForwardDeliversElsewhere(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	noreply, _ := r.st.CreateUser(ctx, "noreply@reey.ru", "correct horse")
+	billing, _ := r.st.CreateUser(ctx, "billing@reey.ru", "correct horse")
+	r.st.SetIncoming(ctx, noreply.ID, store.IncomingReject, "")
+	r.st.SetIncoming(ctx, billing.ID, store.IncomingForward, r.user.ID)
+
+	err := r.send("anna@example.com", "noreply@reey.ru", letter)
+	if err == nil || !strings.Contains(err.Error(), "550") || !strings.Contains(err.Error(), "does not receive mail") {
+		t.Errorf("no-reply: %v", err)
+	}
+	if err := r.send("anna@example.com", "billing+invoice@reey.ru", letter); err != nil {
+		t.Fatal(err)
+	}
+	c := r.client(nil)
+	st, _ := c.Status("INBOX", &imap.StatusOptions{NumMessages: true}).Wait()
+	if *st.NumMessages != 1 {
+		t.Errorf("the forward's target has %d", *st.NumMessages)
+	}
+}

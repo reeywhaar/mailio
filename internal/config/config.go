@@ -30,8 +30,7 @@ const (
 	// is the agent's to name. Unset, nothing is backed up.
 	BackupURLEnv = "MAILIO_BACKUP_URL"
 
-	// SecretKeyEnv is 32 random bytes, base64, that seal users' passwords and the relay's.
-	// Required.
+	// SecretKeyEnv is 32 random bytes, base64, that seal the relay's password. Required.
 	SecretKeyEnv = "MAILIO_SECRET_KEY"
 
 	// MailHostEnv is the mail server's own name: what it greets other servers with, what MX
@@ -219,7 +218,7 @@ func parsePublicURL(raw string) (*url.URL, error) {
 func parseSecretKey(raw string) ([]byte, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return nil, fmt.Errorf("%s is required: it seals users' passwords. Generate one with `openssl rand -base64 32` and keep it apart from the database's backups", SecretKeyEnv)
+		return nil, fmt.Errorf("%s is required: it seals the relay's password. Generate one with `openssl rand -base64 32` and keep it apart from the database's backups", SecretKeyEnv)
 	}
 	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
 		if key, err := enc.DecodeString(raw); err == nil {

@@ -28,20 +28,39 @@ func SetBcryptCost(cost int) {
 // would otherwise authenticate against any prefix of itself.
 const passwordMaxBytes = 72
 
-// User is an address mail is delivered to, and the password that signs in as it: to read the
-// mail and to send as it. Never to the admin interface, which is an Admin's.
+// User is an address mail is delivered to, and the passwords that sign in as it: to read the mail
+// and to send as it. Never to the admin interface, which is an Admin's.
 type User struct {
 	ID        string
 	Local     string
 	Domain    string
 	DomainID  string
 	CreatedAt time.Time
+	// Incoming is what mail to the user does; ForwardUserID is set exactly when it forwards.
+	Incoming      Incoming
+	ForwardUserID string
+}
+
+// Incoming is what a user does with mail sent to it.
+type Incoming string
+
+const (
+	// IncomingKeep delivers it to the user's own mailbox.
+	IncomingKeep Incoming = "keep"
+	// IncomingReject refuses it while the sender is still connected: an address that only sends.
+	IncomingReject Incoming = "reject"
+	// IncomingForward delivers it to another user's mailbox instead.
+	IncomingForward Incoming = "forward"
+)
+
+func (i Incoming) valid() bool {
+	return i == IncomingKeep || i == IncomingReject || i == IncomingForward
 }
 
 // Address is what the user signs in with and receives at.
 func (u *User) Address() string { return u.Local + "@" + u.Domain }
 
-const userColumns = `u.id, u.local_part, d.name, u.domain_id, u.created_at`
+const userColumns = `u.id, u.local_part, d.name, u.domain_id, u.created_at, u.incoming, coalesce(u.forward_user_id, '')`
 const userFrom = ` FROM users u JOIN domains d ON d.id = u.domain_id`
 
 func scanUser(row interface{ Scan(...any) error }) (*User, error) {
@@ -49,7 +68,7 @@ func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 		u       User
 		created int64
 	)
-	if err := row.Scan(&u.ID, &u.Local, &u.Domain, &u.DomainID, &created); err != nil {
+	if err := row.Scan(&u.ID, &u.Local, &u.Domain, &u.DomainID, &created, &u.Incoming, &u.ForwardUserID); err != nil {
 		return nil, err
 	}
 	u.CreatedAt = fromUnix(created)
@@ -77,7 +96,8 @@ func hashPassword(password string) (string, error) {
 	return string(h), err
 }
 
-// CreateUser makes a user at a domain mailio already receives for.
+// CreateUser makes a user at a domain mailio already receives for, with one password labelled
+// "default".
 func (s *Store) CreateUser(ctx context.Context, addr, password string) (*User, error) {
 	a, err := address.ParseUser(addr)
 	if err != nil {
@@ -95,13 +115,17 @@ func (s *Store) CreateUser(ctx context.Context, addr, password string) (*User, e
 		return nil, err
 	}
 	now := s.Now()
-	u := &User{ID: ids.New(ids.User, now.UnixMilli()), Local: a.Local, Domain: d.Name, DomainID: d.ID, CreatedAt: now}
+	u := &User{ID: ids.New(ids.User, now.UnixMilli()), Local: a.Local, Domain: d.Name, DomainID: d.ID, CreatedAt: now,
+		Incoming: IncomingKeep}
 	tx, err := s.writer.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create user: %w", err)
 	}
 	defer tx.Rollback()
-	if err := insertUser(ctx, tx, u, hash, s.sealPassword(u.ID, password)); err != nil {
+	if err := insertUser(ctx, tx, u); err != nil {
+		return nil, err
+	}
+	if _, err := insertPassword(ctx, tx, u.ID, DefaultPasswordLabel, "", hash, now); err != nil {
 		return nil, err
 	}
 	if err := createStandardMailboxes(ctx, tx, u.ID, now); err != nil {
@@ -114,10 +138,10 @@ func (s *Store) CreateUser(ctx context.Context, addr, password string) (*User, e
 	return u, nil
 }
 
-func insertUser(ctx context.Context, db execer, u *User, hash string, sealed []byte) error {
+func insertUser(ctx context.Context, db execer, u *User) error {
 	_, err := db.ExecContext(ctx,
-		`INSERT INTO users (id, domain_id, local_part, password_hash, password_sealed, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		u.ID, u.DomainID, u.Local, hash, sealed, unix(u.CreatedAt))
+		`INSERT INTO users (id, domain_id, local_part, created_at) VALUES (?, ?, ?, ?)`,
+		u.ID, u.DomainID, u.Local, unix(u.CreatedAt))
 	if isUnique(err) {
 		return Conflict("%s is taken.", u.Address())
 	}
@@ -127,37 +151,40 @@ func insertUser(ctx context.Context, db execer, u *User, hash string, sealed []b
 	return nil
 }
 
-// Authenticate checks a password.
+// Authenticate signs in with a login and its password. The login is the user's address, plain
+// for the "default" password and tagged for each other: inbox+k3x9@reey.ru names exactly one
+// password, so a sign-in checks one hash however many the user has.
 //
-// The same refusal for a wrong password and a missing user, and a real hash is compared against
-// when no user matched, so the two take the same time. Without that, response latency alone is a
-// list of which addresses exist.
-func (s *Store) Authenticate(ctx context.Context, addr, password string) (*User, error) {
-	a, err := address.ParseUser(addr)
+// The same refusal for a wrong password, a missing user and a missing login, and a real hash is
+// compared against when nothing matched, so they take the same time. Without that, response
+// latency alone is a list of which addresses exist.
+func (s *Store) Authenticate(ctx context.Context, login, password string) (*User, error) {
+	a, err := address.Parse(login)
 	if err != nil {
 		bcrypt.CompareHashAndPassword(decoyHash, []byte(password))
 		return nil, ErrNotFound
 	}
-	var hash string
-	row := s.reader.QueryRowContext(ctx,
-		`SELECT u.password_hash, `+userColumns+userFrom+` WHERE d.name = ? AND u.local_part = ?`, a.Domain, a.Local)
-	var (
-		u       User
-		created int64
-	)
-	err = row.Scan(&hash, &u.ID, &u.Local, &u.Domain, &u.DomainID, &created)
-	if errors.Is(err, sql.ErrNoRows) {
+	u, err := userWhere(ctx, s.reader, "d.name = ? AND u.local_part = ?", a.Domain, a.Name())
+	if errors.Is(err, ErrNotFound) {
 		bcrypt.CompareHashAndPassword(decoyHash, []byte(password))
 		return nil, ErrNotFound
 	}
 	if err != nil {
-		return nil, fmt.Errorf("authenticate: %w", err)
+		return nil, err
+	}
+	id, hash, lastUsed, err := s.passwordFor(ctx, u.ID, a.Tag())
+	if errors.Is(err, ErrNotFound) {
+		bcrypt.CompareHashAndPassword(decoyHash, []byte(password))
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
 	}
 	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
 		return nil, ErrNotFound
 	}
-	u.CreatedAt = fromUnix(created)
-	return &u, nil
+	s.touchPassword(ctx, id, lastUsed)
+	return u, nil
 }
 
 // decoyHash is a real bcrypt hash at the same cost, so a missing user costs what a present one
@@ -190,24 +217,6 @@ func (s *Store) Users(ctx context.Context) ([]User, error) {
 	return out, rows.Err()
 }
 
-// SetPassword replaces a user's password.
-func (s *Store) SetPassword(ctx context.Context, id, password string) error {
-	hash, err := hashPassword(password)
-	if err != nil {
-		return err
-	}
-	res, err := s.writer.ExecContext(ctx, `UPDATE users SET password_hash = ?, password_sealed = ? WHERE id = ?`,
-		hash, s.sealPassword(id, password), id)
-	if err != nil {
-		return fmt.Errorf("set password: %w", err)
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return NotFound("There is no such user.")
-	}
-	s.changed()
-	return nil
-}
-
 // DeleteUser removes a user.
 func (s *Store) DeleteUser(ctx context.Context, id string) error {
 	tx, err := s.writer.BeginTx(ctx, nil)
@@ -228,6 +237,13 @@ func (s *Store) DeleteUser(ctx context.Context, id string) error {
 	if !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("delete user: %w", err)
 	}
+	from, err := userWhere(ctx, tx, "u.forward_user_id = ? ORDER BY d.name, u.local_part LIMIT 1", id)
+	if err == nil {
+		return Conflict("%s forwards to %s. Change that first.", from.Address(), u.Address())
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("delete user: %w", err)
 	}
@@ -238,26 +254,53 @@ func (s *Store) DeleteUser(ctx context.Context, id string) error {
 	return nil
 }
 
-// UserPassword opens a user's sealed password. ErrNotFound for a user whose password was set
-// before passwords were kept, or by a store without the key.
-func (s *Store) UserPassword(ctx context.Context, id string) (string, error) {
-	var sealed []byte
-	err := s.reader.QueryRowContext(ctx, `SELECT password_sealed FROM users WHERE id = ?`, id).Scan(&sealed)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", NotFound("There is no such user.")
+// SetIncoming decides what mail to a user does. forwardTo names the user it goes to for
+// IncomingForward, and is empty otherwise.
+func (s *Store) SetIncoming(ctx context.Context, id string, in Incoming, forwardTo string) error {
+	if !in.valid() {
+		return Invalid("Incoming mail is kept, rejected, or forwarded.")
 	}
+	if (in == IncomingForward) != (forwardTo != "") {
+		if in == IncomingForward {
+			return Invalid("Choose who gets the mail.")
+		}
+		return Invalid("Only forwarded mail goes to another user.")
+	}
+	var target any
+	if forwardTo != "" {
+		if forwardTo == id {
+			return Invalid("A user cannot forward to itself.")
+		}
+		// Following the target's own forwards back here would be a circle.
+		next := forwardTo
+		for hops := 0; next != ""; hops++ {
+			t, err := s.UserByID(ctx, next)
+			if err != nil {
+				return err
+			}
+			if t.ID == id || hops > maxForwards {
+				return Conflict("That would forward in a circle.")
+			}
+			next = t.ForwardUserID
+		}
+		target = forwardTo
+	}
+	res, err := s.writer.ExecContext(ctx,
+		`UPDATE users SET incoming = ?, forward_user_id = ?
+		  WHERE id = ? AND (incoming <> ? OR forward_user_id IS NOT ?)`, in, target, id, in, target)
 	if err != nil {
-		return "", fmt.Errorf("user password: %w", err)
+		return fmt.Errorf("set incoming: %w", err)
 	}
-	if sealed == nil || s.sealer == nil {
-		return "", NotFound("That password was set before mailio kept passwords. Set a new one to see it.")
+	if n, _ := res.RowsAffected(); n > 0 {
+		s.changed()
+		return nil
 	}
-	plain, err := s.sealer.Open(sealed, []byte("user-password:"+id))
-	if err != nil {
-		return "", NotFound("That password was sealed with another MAILIO_SECRET_KEY. Set a new one to see it.")
-	}
-	return string(plain), nil
+	_, err = s.UserByID(ctx, id)
+	return err
 }
+
+// maxForwards bounds how far mail follows forwards, so a circle made some other way ends.
+const maxForwards = 5
 
 // ValidatePassword refuses what bcrypt would silently truncate.
 func ValidatePassword(password string) error {

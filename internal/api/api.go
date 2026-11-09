@@ -78,7 +78,8 @@ func New(cfg *config.Config, log *slog.Logger, st *store.Store, mail Mail, web f
 	s.mux.Handle("GET /api/users", s.requireAdmin(s.listUsers))
 	s.mux.Handle("POST /api/users", s.requireAdmin(s.createUser))
 	s.mux.Handle("PATCH /api/users/{id}", s.requireAdmin(s.updateUser))
-	s.mux.Handle("GET /api/users/{id}/password", s.requireAdmin(s.userPassword))
+	s.mux.Handle("POST /api/users/{id}/passwords", s.requireAdmin(s.addPassword))
+	s.mux.Handle("DELETE /api/users/{id}/passwords/{pid}", s.requireAdmin(s.deletePassword))
 	s.mux.Handle("DELETE /api/users/{id}", s.requireAdmin(s.deleteUser))
 
 	s.mux.Handle("GET /api/mail", s.requireAdmin(s.mailStatus))

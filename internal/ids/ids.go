@@ -21,6 +21,8 @@ const (
 	Domain = "dm_"
 	User   = "u_"
 	Admin  = "ad_"
+	// Password is one of a user's passwords.
+	Password = "pw_"
 )
 
 const ulidLen = 26

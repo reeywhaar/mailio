@@ -19,6 +19,8 @@ type Recipient struct {
 	Junk bool
 	// Drop is mail accepted and kept nowhere.
 	Drop bool
+	// Refused is a user who takes no mail, or forwards it to one who does not.
+	Refused bool
 	// Tag is what followed the + in the address.
 	Tag string
 }
@@ -37,8 +39,7 @@ func (s *Store) Resolve(ctx context.Context, a address.Address) (*Recipient, err
 	r := &Recipient{Ours: true, Tag: a.Tag()}
 	u, err := userWhere(ctx, s.reader, "u.domain_id = ? AND u.local_part = ?", d.ID, a.Name())
 	if err == nil {
-		r.User = u
-		return r, nil
+		return r, s.follow(ctx, r, u)
 	}
 	if !errors.Is(err, ErrNotFound) {
 		return nil, err
@@ -48,10 +49,33 @@ func (s *Store) Resolve(ctx context.Context, a address.Address) (*Recipient, err
 	case UnknownDrop:
 		r.Drop = true
 	case UnknownJunk:
-		if r.User, err = s.UserByID(ctx, d.UnknownUserID); err != nil {
+		u, err := s.UserByID(ctx, d.UnknownUserID)
+		if err != nil {
 			return nil, err
 		}
 		r.Junk = true
+		return r, s.follow(ctx, r, u)
 	}
 	return r, nil
+}
+
+// follow settles which user gets mail meant for u: u itself, whoever it forwards to, or nobody
+// when one of them refuses mail.
+func (s *Store) follow(ctx context.Context, r *Recipient, u *User) error {
+	for hops := 0; ; hops++ {
+		switch {
+		case u.Incoming == IncomingReject || hops > maxForwards:
+			r.User, r.Refused = nil, true
+			return nil
+		case u.Incoming == IncomingForward:
+			next, err := s.UserByID(ctx, u.ForwardUserID)
+			if err != nil {
+				return err
+			}
+			u = next
+		default:
+			r.User = u
+			return nil
+		}
+	}
 }

@@ -11,7 +11,7 @@ ghcr.io/reeywhaar/mailio:latest
 | variable | default | meaning |
 | --- | --- | --- |
 | `MAILIO_PUBLIC_URL` | *required* | The address the admin interface is opened at |
-| `MAILIO_SECRET_KEY` | *required* | 32 random bytes, base64. Seals users' passwords and the relay's |
+| `MAILIO_SECRET_KEY` | *required* | 32 random bytes, base64. Seals the relay's password |
 | `MAILIO_MAIL_HOST` | the public URL's host | The mail server's name: MX target, greeting, certificate |
 | `MAILIO_DNS_API_URL` | — | A DNS API (doapi). Publishes DKIM, SPF, DMARC, and gets the certificate |
 | `MAILIO_DATA_DIR` | `/data` | Where `mailio.db` lives. Fixed in the image; a variable for local runs |
@@ -32,15 +32,16 @@ is trimmed; a path is refused, because mailio serves from the root.
 
 ## `MAILIO_SECRET_KEY`
 
-Required. It seals each user's password, so an admin can look it up again, and the relay's:
+Required. It seals the relay's password, the one secret mailio has to read back, since it hands
+it to the relay:
 
 ```sh
 openssl rand -base64 32
 ```
 
 **Keep it apart from the data directory and its backups**, which is the point of it: a copied
-database is not a list of passwords. **And keep it**: with a new key, mail still flows and
-everyone still signs in, but no stored password can be shown until it is set again.
+database does not hold the relay's credential. Users' passwords are only ever hashed, and need no
+key. **And keep it**: with a new key, the relay's password has to be entered again.
 
 ## `MAILIO_MAIL_HOST` is the name the world reaches mail at
 

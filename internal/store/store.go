@@ -50,8 +50,8 @@ type Store struct {
 	appendMu sync.Mutex
 	listener MailListener
 
-	// sealer keeps a readable copy of each user's password. Nil in tests that do not need one,
-	// and then only the hash is kept.
+	// sealer keeps the relay's password readable, which mailio has to hand to the relay. Nil in
+	// tests that do not set a relay.
 	sealer *seal.Sealer
 }
 
@@ -163,16 +163,8 @@ func (s *Store) changed() { s.changes.Add(1) }
 // Changes is the counter the backup loop compares against what the agent last accepted.
 func (s *Store) Changes() uint64 { return s.changes.Load() }
 
-// SetSealer gives the store the key users' passwords are sealed with.
+// SetSealer gives the store the key the relay's password is sealed with.
 func (s *Store) SetSealer(sealer *seal.Sealer) { s.sealer = sealer }
-
-// sealPassword is a user's password sealed to that user's row, or nil without a sealer.
-func (s *Store) sealPassword(userID, password string) []byte {
-	if s.sealer == nil {
-		return nil
-	}
-	return s.sealer.Seal([]byte(password), []byte("user-password:"+userID))
-}
 
 // SetClock replaces the clock. Tests drive expiry with it.
 func (s *Store) SetClock(now func() time.Time) { s.now = now }

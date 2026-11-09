@@ -49,10 +49,29 @@ export type Queued = {
 };
 
 /** An address mail is delivered to. Never signs in here. */
+/** What a user does with mail sent to it. */
+export type Incoming = "keep" | "reject" | "forward";
+
+/**
+ * One of a user's passwords, without the password itself. Its login is the address, tagged for
+ * every password but the default.
+ */
+export type Password = {
+  id: string;
+  label: string;
+  login: string;
+  created_at: number;
+  last_used_at: number | null;
+};
+
 export type User = {
   id: string;
   address: string;
   domain_id: string;
+  incoming: Incoming;
+  /** Who gets the mail, set exactly when incoming is "forward". */
+  forward_user_id: string | null;
+  passwords: Password[];
   created_at: number;
 };
 
@@ -112,11 +131,24 @@ export const createUser = (address: string, password: string) =>
     body: { address, password },
   });
 
-export const setUserPassword = (id: string, password: string) =>
-  request<User>(`/api/users/${id}`, { method: "PATCH", body: { password } });
+export const setIncoming = (
+  id: string,
+  incoming: Incoming,
+  forwardUserID: string | null,
+) =>
+  request<User>(`/api/users/${id}`, {
+    method: "PATCH",
+    body: { incoming, forward_user_id: forwardUserID },
+  });
 
-export const getUserPassword = (id: string) =>
-  request<{ password: string }>(`/api/users/${id}/password`);
+export const addPassword = (userID: string, label: string, password: string) =>
+  request<Password>(`/api/users/${userID}/passwords`, {
+    method: "POST",
+    body: { label, password },
+  });
+
+export const deletePassword = (userID: string, id: string) =>
+  request<void>(`/api/users/${userID}/passwords/${id}`, { method: "DELETE" });
 
 export const deleteUser = (id: string) =>
   request<void>(`/api/users/${id}`, { method: "DELETE" });

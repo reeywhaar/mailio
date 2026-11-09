@@ -20,10 +20,11 @@ CSRF defense; the `SameSite=Lax` cookie is the other.
 | `PATCH /api/domains/{id}` | `{unknown, unknown_user_id}` — see [addresses.md](addresses.md) |
 | `DELETE /api/domains/{id}` | `409` while it has users |
 | `GET /api/users` | every user |
-| `POST /api/users` | `{address, password}` |
-| `PATCH /api/users/{id}` | `{password}` |
-| `DELETE /api/users/{id}` | `409` for a user getting a domain's junk |
-| `GET /api/users/{id}/password` | `{password}`, sealed copy opened. `404` for one set before passwords were kept |
+| `POST /api/users` | `{address, password}`: the password is the `default`, whose login is the address |
+| `PATCH /api/users/{id}` | `{incoming, forward_user_id}`: `keep`, `reject`, or `forward` to a user |
+| `DELETE /api/users/{id}` | `409` for a user getting a domain's junk, or forwarded to |
+| `POST /api/users/{id}/passwords` | `{label, password}` → `{id, label, login, …}`, the login newly tagged. Never the password |
+| `DELETE /api/users/{id}/passwords/{pid}` | the last may go too |
 | `GET /api/mail` | `{host, dns_api, certificate}` |
 | `GET /api/relay` | the relay without its password, `{…, has_password}`, or `null` |
 | `PUT /api/relay` | `{host, port, security, username, password}`. An empty password keeps the stored one |

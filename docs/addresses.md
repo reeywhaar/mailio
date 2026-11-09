@@ -3,11 +3,40 @@
 Where mail sent to an address goes. Decided once here; [internal/address](../internal/address)
 and `store.Resolve` are the code.
 
-## A user is an address and a password
+## A user is an address and its passwords
 
-A user is what mail is delivered to, and the same address and password sign in to read it and to
-send as it. There is no list of extra addresses on a user: an address that should receive mail is
-a user.
+A user is what mail is delivered to. There is no list of extra addresses on a user: an address
+that should receive mail is a user.
+
+## Each password has its own login
+
+A user has passwords, each with a label, one per phone or laptop. Each signs in with its own
+login, the address with a tag: `inbox+k3x9@reey.ru` and that password, and no other password. The
+one the user is created with is labelled `default`, and its login is the plain address. Any of
+them can be deleted, `default` too; with none left, the user still receives mail and nobody signs
+in as it.
+
+**A login names one password**, so a sign-in checks one hash however many the user has, a wrong
+guess costs the same, and the log can say which password signed in. A login cannot clash with
+another user: no user's address has a `+`, and the name before it is always the login's own user.
+Mail sent to a login address arrives like any tagged mail.
+
+**A password is shown once, when it is made, and only its hash is kept.** A device that needs one
+gets its own, and a lost one is deleted and replaced, never looked up. Nor is one changed in
+place: a device still using the old one stops, rather than silently holding a password that is no
+longer its.
+
+## A user keeps, refuses or forwards its mail
+
+| incoming | mail sent to the user |
+| --- | --- |
+| `keep` | is delivered to its own mailboxes |
+| `reject` | is refused at `RCPT TO`, `550 5.2.1`: an address that only sends, such as `noreply@` |
+| `forward` | is delivered to another user's INBOX instead |
+
+A forward follows the target's own setting, so forwarding into an address that rejects rejects.
+Saving one that would come back round is refused, and a user others forward to cannot be deleted
+until they stop.
 
 ## An admin is not a user
 
@@ -48,6 +77,6 @@ is somebody innocent.
 
 ## Mail is only delivered to users here
 
-There is no forwarding to outside addresses. Forwarding means rewriting the envelope sender (SRS)
+Forwarding goes to another user, never outside. Forwarding means rewriting the envelope sender (SRS)
 and, for senders that publish DMARC `p=reject`, signing what was forwarded (ARC); none of the
 addresses here need it.

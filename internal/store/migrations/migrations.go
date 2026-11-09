@@ -25,6 +25,8 @@ var all = []Migration{
 	sealedPasswords,
 	sending,
 	adminsApart,
+	userPasswords,
+	incoming,
 }
 
 func exec(sqlText string) func(context.Context, *sql.Tx) error {

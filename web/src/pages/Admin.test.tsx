@@ -14,6 +14,17 @@ const inbox: User = {
   id: "u_1",
   address: "inbox@reey.ru",
   domain_id: "dm_1",
+  incoming: "keep",
+  forward_user_id: null,
+  passwords: [
+    {
+      id: "pw_1",
+      label: "default",
+      login: "inbox@reey.ru",
+      created_at: 1,
+      last_used_at: null,
+    },
+  ],
   created_at: 1,
 };
 
@@ -156,21 +167,71 @@ test("a new admin's password is shown once, to be handed over", async () => {
   expect(screen.getByText(/not shown again/)).toBeTruthy();
 });
 
-test("a user's password can be shown again", async () => {
-  fakeServer({
+test("a new password gets its own login, shown once with it", async () => {
+  const { sent } = fakeServer({
     ...server,
     "GET /api/me": () => ({ body: misha }),
     "GET /api/domains": () => ({ body: [reey] }),
     "GET /api/users": () => ({ body: [inbox] }),
     "GET /api/admins": () => ({ body: [misha] }),
-    "GET /api/users/u_1/password": () => ({
-      body: { password: "correct horse" },
+    "POST /api/users/u_1/passwords": () => ({
+      status: 201,
+      body: {
+        id: "pw_2",
+        label: "iPhone",
+        login: "inbox+k3x9@reey.ru",
+        created_at: 2,
+        last_used_at: null,
+      },
     }),
   });
   mount();
-  fireEvent.click(await screen.findByRole("button", { name: "Show password" }));
-  expect(await screen.findByText("correct horse")).toBeTruthy();
-  expect(screen.queryByText(/not shown again/)).toBeNull();
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Passwords (1)…" }),
+  );
+  // Listed, and nothing to reveal: only the hash is kept.
+  expect(await screen.findByText("default")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Show" })).toBeNull();
+
+  fireEvent.change(screen.getByLabelText("Label"), {
+    target: { value: "iPhone" },
+  });
+  fireEvent.change(screen.getAllByLabelText("Password").at(0)!, {
+    target: { value: "phone password" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Add password" }));
+  await waitFor(() =>
+    expect(
+      sent.find((r) => r.method === "POST" && r.path.endsWith("/passwords"))
+        ?.body,
+    ).toEqual({ label: "iPhone", password: "phone password" }),
+  );
+  expect(await screen.findByText("inbox+k3x9@reey.ru")).toBeTruthy();
+  expect(screen.getByText("phone password")).toBeTruthy();
+  expect(screen.getByText(/not shown again/)).toBeTruthy();
+});
+
+test("forwarding a user's mail sends it to somebody else", async () => {
+  const billing: User = { ...inbox, id: "u_2", address: "billing@reey.ru" };
+  const { sent } = fakeServer({
+    ...server,
+    "GET /api/me": () => ({ body: misha }),
+    "GET /api/domains": () => ({ body: [reey] }),
+    "GET /api/users": () => ({ body: [billing, inbox] }),
+    "GET /api/admins": () => ({ body: [misha] }),
+    "PATCH /api/users/u_2": () => ({
+      body: { ...billing, incoming: "forward" },
+    }),
+  });
+  mount();
+  const select = (await screen.findAllByLabelText("Incoming mail"))[0]!;
+  fireEvent.change(select, { target: { value: "forward" } });
+  await waitFor(() =>
+    expect(sent.find((r) => r.method === "PATCH")?.body).toEqual({
+      incoming: "forward",
+      forward_user_id: "u_1",
+    }),
+  );
 });
 
 test("a domain shows the records it needs", async () => {

@@ -8,12 +8,38 @@ import (
 	"mailio/internal/store"
 )
 
-func userJSON(u *store.User) map[string]any {
+func userJSON(u *store.User, passwords []store.Password) map[string]any {
+	var forwardTo any
+	if u.ForwardUserID != "" {
+		forwardTo = u.ForwardUserID
+	}
+	list := make([]map[string]any, len(passwords))
+	for i := range passwords {
+		list[i] = passwordJSON(u, &passwords[i])
+	}
 	return map[string]any{
-		"id":         u.ID,
-		"address":    u.Address(),
-		"domain_id":  u.DomainID,
-		"created_at": u.CreatedAt.Unix(),
+		"id":              u.ID,
+		"address":         u.Address(),
+		"domain_id":       u.DomainID,
+		"incoming":        u.Incoming,
+		"forward_user_id": forwardTo,
+		"passwords":       list,
+		"created_at":      u.CreatedAt.Unix(),
+	}
+}
+
+// passwordJSON never carries the password: only its hash is kept.
+func passwordJSON(u *store.User, p *store.Password) map[string]any {
+	var used any
+	if !p.LastUsedAt.IsZero() {
+		used = p.LastUsedAt.Unix()
+	}
+	return map[string]any{
+		"id":           p.ID,
+		"label":        p.Label,
+		"login":        p.LoginAddress(u),
+		"created_at":   p.CreatedAt.Unix(),
+		"last_used_at": used,
 	}
 }
 
@@ -43,7 +69,11 @@ func (s *Server) domainJSON(d *store.Domain) map[string]any {
 // pathID reads {id} and refuses one that cannot be an id, so a typo is a 400 rather than a 404
 // that looks like a missing row.
 func pathID(w http.ResponseWriter, r *http.Request, prefix string) (string, bool) {
-	id := r.PathValue("id")
+	return pathParam(w, r, "id", prefix)
+}
+
+func pathParam(w http.ResponseWriter, r *http.Request, key, prefix string) (string, bool) {
+	id := r.PathValue(key)
 	if !ids.Valid(prefix, id) {
 		refuse(w, http.StatusBadRequest, CodeInvalid, "That is not an id.")
 		return "", false
@@ -129,11 +159,31 @@ func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	passwords, err := s.st.Passwords(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	out := make([]map[string]any, len(list))
 	for i := range list {
-		out[i] = userJSON(&list[i])
+		out[i] = userJSON(&list[i], passwords[list[i].ID])
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// writeUser answers with one user as the list has it.
+func (s *Server) writeUser(w http.ResponseWriter, r *http.Request, status int, id string) {
+	u, err := s.st.UserByID(r.Context(), id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	passwords, err := s.st.Passwords(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, status, userJSON(u, passwords[id]))
 }
 
 func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
@@ -150,49 +200,75 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("user created", "user", u.ID, "by", adminOf(r).ID)
-	writeJSON(w, http.StatusCreated, userJSON(u))
+	s.writeUser(w, r, http.StatusCreated, u.ID)
 }
 
-// updateUser sets a password, the one thing about a user that changes.
+// updateUser sets what mail to the user does: kept, refused, or forwarded to another user.
 func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, ids.User)
 	if !ok {
 		return
 	}
 	var req struct {
+		Incoming      store.Incoming `json:"incoming"`
+		ForwardUserID *string        `json:"forward_user_id"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	var to string
+	if req.ForwardUserID != nil {
+		to = *req.ForwardUserID
+	}
+	if err := s.st.SetIncoming(r.Context(), id, req.Incoming, to); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.log.Info("incoming mail changed", "user", id, "incoming", req.Incoming, "by", adminOf(r).ID)
+	s.writeUser(w, r, http.StatusOK, id)
+}
+
+func (s *Server) addPassword(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, ids.User)
+	if !ok {
+		return
+	}
+	var req struct {
+		Label    string `json:"label"`
 		Password string `json:"password"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
-	if err := s.st.SetPassword(r.Context(), id, req.Password); err != nil {
+	p, err := s.st.AddPassword(r.Context(), id, req.Label, req.Password)
+	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	s.log.Info("password changed", "user", id, "by", adminOf(r).ID)
 	u, err := s.st.UserByID(r.Context(), id)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, userJSON(u))
+	s.log.Info("password added", "user", id, "password", p.ID, "by", adminOf(r).ID)
+	writeJSON(w, http.StatusCreated, passwordJSON(u, p))
 }
 
-// userPassword shows a user's password again, to copy into a mail client. Logged, since reading
-// one is worth an operator knowing about.
-func (s *Server) userPassword(w http.ResponseWriter, r *http.Request) {
+func (s *Server) deletePassword(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, ids.User)
 	if !ok {
 		return
 	}
-	pw, err := s.st.UserPassword(r.Context(), id)
-	if err != nil {
+	pid, ok := pathParam(w, r, "pid", ids.Password)
+	if !ok {
+		return
+	}
+	if err := s.st.DeletePassword(r.Context(), id, pid); err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	s.log.Info("password viewed", "user", id, "by", adminOf(r).ID)
-	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, map[string]any{"password": pw})
+	s.log.Info("password deleted", "user", id, "password", pid, "by", adminOf(r).ID)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {

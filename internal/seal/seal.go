@@ -1,5 +1,5 @@
-// Package seal encrypts what mailio has to be able to read back: users' passwords, so an admin
-// can look one up, and the relay's. See docs/deploy.md.
+// Package seal encrypts what mailio has to be able to read back: the relay's password, which it
+// hands to the relay. See docs/deploy.md.
 package seal
 
 import (

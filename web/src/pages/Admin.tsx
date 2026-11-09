@@ -2,17 +2,18 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  addPassword,
   createAdmin,
   createDomain,
   createUser,
   deleteAdmin,
   deleteDomain,
+  deletePassword,
   deleteRelay,
   deleteUser,
   getMail,
   getMe,
   getRelay,
-  getUserPassword,
   listAdmins,
   listDomains,
   listQueue,
@@ -21,12 +22,14 @@ import {
   setAdminPassword,
   setRelay,
   setUnknown,
-  setUserPassword,
+  setIncoming,
   signOut,
   testRelay,
   type Admin as AdminT,
   type DNSRecord,
   type Domain,
+  type Incoming,
+  type Password,
   type MailStatus,
   type Queued,
   type Relay,
@@ -279,6 +282,14 @@ function Records({ records }: { records: DNSRecord[] }) {
 
 const day = 24 * 60 * 60;
 
+/** A moment in the viewer's own zone, to the minute: last use is recorded to the hour. */
+function when(unix: number) {
+  return new Date(unix * 1000).toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
 /** The server itself: its name, its certificate, and whether DNS looks after itself. */
 function MailServer({ mail }: { mail: MailStatus }) {
   const cert = mail.certificate;
@@ -440,11 +451,8 @@ function Sending({ relay, queue }: { relay: Relay | null; queue: Queued[] }) {
   );
 }
 
-/**
- * A password on screen until dismissed. Once means an admin's: only its hash is kept, so nothing
- * can show it again. A user's can be looked up later.
- */
-type Shown = { who: string; password: string; once?: boolean };
+/** A password just made, on screen until dismissed: only its hash is kept, so nothing shows it again. */
+type Shown = { who: string; login?: string; password: string; once?: boolean };
 
 function Users({ users }: { users: User[] }) {
   const { act, busy, error } = useAct();
@@ -455,7 +463,8 @@ function Users({ users }: { users: User[] }) {
   const add = async (e: FormEvent) => {
     e.preventDefault();
     if (await act(() => createUser(address, password))) {
-      setShown({ who: address.trim().toLowerCase(), password });
+      const who = address.trim().toLowerCase();
+      setShown({ who: `${who} (default)`, login: who, password, once: true });
       setAddress("");
       setPassword("");
     }
@@ -469,22 +478,13 @@ function Users({ users }: { users: User[] }) {
       {users.length ? (
         <ul className="divide-y divide-line rounded-md border border-line bg-bg">
           {users.map((u) => (
-            <Row
+            <UserRow
               key={u.id}
-              label={u.address}
+              user={u}
+              users={users}
+              act={act}
               busy={busy}
-              onShow={() =>
-                void act(async () => {
-                  const found = await getUserPassword(u.id);
-                  setShown({ who: u.address, password: found.password });
-                })
-              }
-              onPassword={async (pw) => {
-                if (!(await act(() => setUserPassword(u.id, pw)))) return false;
-                setShown({ who: u.address, password: pw });
-                return true;
-              }}
-              onDelete={() => void act(() => deleteUser(u.id))}
+              onShown={setShown}
             />
           ))}
         </ul>
@@ -506,6 +506,177 @@ function Users({ users }: { users: User[] }) {
       </form>
       {error ? <p className="text-sm text-accent">{error}</p> : null}
     </Section>
+  );
+}
+
+const incomingLabels: Record<Incoming, string> = {
+  keep: "Keep",
+  reject: "Reject",
+  forward: "Forward to…",
+};
+
+/** One user: what its mail does, its passwords, and a delete. */
+function UserRow({
+  user,
+  users,
+  act,
+  busy,
+  onShown,
+}: {
+  user: User;
+  users: User[];
+  act: Act;
+  busy: boolean;
+  onShown: (shown: Shown) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const others = users.filter((u) => u.id !== user.id);
+
+  const choose = (incoming: Incoming) => {
+    if (incoming !== "forward") {
+      void act(() => setIncoming(user.id, incoming, null));
+    } else if (others[0]) {
+      void act(() => setIncoming(user.id, "forward", others[0]!.id));
+    }
+  };
+
+  return (
+    <li className="flex flex-col gap-2 px-3 py-2">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <span className="font-medium">{user.address}</span>
+        <span className="flex flex-wrap items-center gap-2 text-sm text-muted">
+          <label className="flex items-center gap-2">
+            Incoming mail
+            <Select
+              size="bar"
+              value={user.incoming}
+              disabled={busy}
+              onChange={(e) => choose(e.target.value as Incoming)}
+            >
+              {(Object.keys(incomingLabels) as Incoming[]).map((i) => (
+                <option
+                  key={i}
+                  value={i}
+                  disabled={i === "forward" && !others.length}
+                >
+                  {incomingLabels[i]}
+                </option>
+              ))}
+            </Select>
+          </label>
+          {user.incoming === "forward" ? (
+            <Select
+              size="bar"
+              aria-label="Who gets the mail"
+              value={user.forward_user_id ?? ""}
+              disabled={busy}
+              onChange={(e) =>
+                void act(() => setIncoming(user.id, "forward", e.target.value))
+              }
+            >
+              {others.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.address}
+                </option>
+              ))}
+            </Select>
+          ) : null}
+        </span>
+        {/* One group, so on a narrow screen the controls wrap together to the right. */}
+        <span className="ml-auto flex items-center gap-x-4">
+          <Button size="bar" onClick={() => setOpen(!open)}>
+            Passwords ({user.passwords.length})…
+          </Button>
+          <DeleteButton
+            disabled={busy}
+            onConfirm={() => void act(() => deleteUser(user.id))}
+          />
+        </span>
+      </div>
+      {open ? (
+        <Passwords user={user} act={act} busy={busy} onShown={onShown} />
+      ) : null}
+    </li>
+  );
+}
+
+/**
+ * A user's passwords. Each signs in with its own login, the address tagged, so one device's can
+ * be deleted without the others; the default's login is the address itself.
+ */
+function Passwords({
+  user,
+  act,
+  busy,
+  onShown,
+}: {
+  user: User;
+  act: Act;
+  busy: boolean;
+  onShown: (shown: Shown) => void;
+}) {
+  const [label, setLabel] = useState("");
+  const [password, setPassword] = useState("");
+
+  const add = async (e: FormEvent) => {
+    e.preventDefault();
+    let made: Password | undefined;
+    const ok = await act(async () => {
+      made = await addPassword(user.id, label, password);
+    });
+    if (ok && made) {
+      onShown({
+        who: `${user.address} (${made.label})`,
+        login: made.login,
+        password,
+        once: true,
+      });
+      setLabel("");
+      setPassword("");
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-2 border-t border-line pt-2 text-sm">
+      {user.passwords.length ? (
+        user.passwords.map((p) => (
+          <div
+            key={p.id}
+            className="flex flex-wrap items-center gap-x-3 gap-y-1"
+          >
+            <span className="font-medium">{p.label}</span>
+            <code className="font-mono text-xs text-muted">{p.login}</code>
+            <span className="text-faint">
+              {p.last_used_at ? `used ${when(p.last_used_at)}` : "never used"}
+            </span>
+            <span className="ml-auto flex items-center gap-x-3">
+              <DeleteButton
+                disabled={busy}
+                onConfirm={() => void act(() => deletePassword(user.id, p.id))}
+              />
+            </span>
+          </div>
+        ))
+      ) : (
+        <p className="text-faint">
+          No passwords: nobody can sign in as this user.
+        </p>
+      )}
+      <form className="flex flex-wrap gap-2" onSubmit={add}>
+        <TextField
+          aria-label="Label"
+          placeholder="Label, e.g. iPhone"
+          autoComplete="off"
+          className="w-40"
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+        />
+        <PasswordField value={password} onChange={setPassword} />
+        <Button type="submit" disabled={busy || !label.trim() || !password}>
+          Add password
+        </Button>
+      </form>
+    </div>
   );
 }
 
@@ -570,19 +741,17 @@ function Admins({ admins, me }: { admins: AdminT[]; me: AdminT }) {
   );
 }
 
-/** A user or an admin: its name, a new password, and a delete. A user's password shows again. */
+/** An admin: a name, a new password, and a delete. */
 function Row({
   label,
   you = false,
   busy,
-  onShow,
   onPassword,
   onDelete,
 }: {
   label: string;
   you?: boolean;
   busy: boolean;
-  onShow?: () => void;
   onPassword: (password: string) => Promise<boolean>;
   onDelete: () => void;
 }) {
@@ -606,11 +775,6 @@ function Row({
         </span>
         {/* One group, so on a narrow screen the controls wrap together to the right. */}
         <span className="ml-auto flex items-center gap-x-4">
-          {onShow ? (
-            <Button size="bar" disabled={busy} onClick={onShow}>
-              Show password
-            </Button>
-          ) : null}
           <Button
             size="bar"
             disabled={busy}
@@ -675,7 +839,16 @@ function ShownPassword({
       <span>
         Password for <span className="font-medium">{shown.who}</span>:
       </span>
-      <code className="font-mono select-all">{shown.password}</code>
+      {shown.login ? (
+        <span>
+          <span className="text-muted">login </span>
+          <code className="font-mono select-all">{shown.login}</code>
+        </span>
+      ) : null}
+      <span>
+        {shown.login ? <span className="text-muted">password </span> : null}
+        <code className="font-mono select-all">{shown.password}</code>
+      </span>
       {shown.once ? (
         <span className="text-muted">Copy it now: it is not shown again.</span>
       ) : null}

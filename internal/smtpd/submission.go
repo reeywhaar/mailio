@@ -131,6 +131,14 @@ func (s *subSession) Rcpt(to string, _ *smtp.RcptOptions) error {
 	if err != nil {
 		return &smtp.SMTPError{Code: 501, EnhancedCode: smtp.EnhancedCode{5, 1, 3}, Message: "That is not an address"}
 	}
+	// A local address that takes no mail is refused now, while the sender's client can say so.
+	res, err := s.sub.st.Resolve(context.Background(), a)
+	if err != nil {
+		return errTemporary
+	}
+	if res.Refused {
+		return errNoMail
+	}
 	s.rcpts = append(s.rcpts, a.String())
 	return nil
 }

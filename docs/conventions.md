@@ -10,7 +10,9 @@ One name per thing, in identifiers, the API, the docs and the interface.
 | word | means | in code |
 | --- | --- | --- |
 | domain | a domain mailio receives mail for | `Domain`, `domains`, `domain_id` |
-| user | an address mail is delivered to, and the password that signs in as it | `User`, `users`, `user_id` |
+| user | an address mail is delivered to, and the passwords that sign in as it | `User`, `users`, `user_id` |
+| password | one of a user's passwords, with a label and its own login | `Password`, `user_passwords` |
+| login | what signs in with one password: the address, tagged unless it is the default | `Login` |
 | admin | a name and a password that sign in to the admin interface; never a user | `Admin`, `admins` |
 | admin link | the one-time link that makes an admin | `AdminLink`, `admin_links` |
 | address | `local@domain`, lowercased | `address.Address` |
@@ -82,6 +84,7 @@ A software-only identifier is a ULID: a prefix, then 26 Crockford characters ove
 | `dm_` | domain |
 | `u_` | user |
 | `ad_` | admin |
+| `pw_` | a user's password |
 
 A new prefix is added to this table in the change that introduces it. Ids are opaque and never
 parsed back. A malformed one is refused before it reaches a query, so a typo is a `400` rather

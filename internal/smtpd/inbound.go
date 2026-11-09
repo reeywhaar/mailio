@@ -91,6 +91,9 @@ func (s *inSession) Rcpt(to string, _ *smtp.RcptOptions) error {
 	case !r.Ours:
 		s.in.log.Info("mail refused: not a domain mailio receives for", "ip", s.ip.String())
 		return &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 7, 1}, Message: "Relaying denied"}
+	case r.Refused:
+		s.in.log.Info("mail refused: the address takes no mail", "ip", s.ip.String())
+		return errNoMail
 	case r.User == nil && !r.Drop:
 		s.in.log.Info("mail refused: no such user", "ip", s.ip.String())
 		return &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 1, 1}, Message: "No such user here"}
@@ -98,6 +101,9 @@ func (s *inSession) Rcpt(to string, _ *smtp.RcptOptions) error {
 	s.rcpts = append(s.rcpts, r)
 	return nil
 }
+
+// errNoMail is an address that exists and takes no mail: one that only sends.
+var errNoMail = &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 2, 1}, Message: "This address does not receive mail"}
 
 var errTemporary = &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 3, 0}, Message: "Temporary failure, try again later"}
 

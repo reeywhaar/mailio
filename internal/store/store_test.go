@@ -5,13 +5,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
 	"mailio/internal/address"
-	"mailio/internal/seal"
 )
 
 // The suite makes users by the dozen and is not testing bcrypt.
@@ -437,35 +437,124 @@ func TestADomainWithUsersCannotBeDeleted(t *testing.T) {
 	}
 }
 
-func TestAUsersPasswordCanBeLookedUpAgain(t *testing.T) {
+func TestEachPasswordHasItsOwnLoginAndOnlyThatOne(t *testing.T) {
 	st := openStore(t)
 	ctx := context.Background()
-	key := make([]byte, seal.KeySize)
-	key[0] = 1
-	sealer, _ := seal.New(key)
-
-	before := user(t, st, "old@reey.ru")
-	if _, err := st.UserPassword(ctx, before.ID); !errors.Is(err, ErrNotFound) {
-		t.Errorf("a password set without a key: %v", err)
-	}
-
-	st.SetSealer(sealer)
 	u := user(t, st, "inbox@reey.ru")
-	if got, err := st.UserPassword(ctx, u.ID); err != nil || got != pw {
-		t.Errorf("got %q, %v", got, err)
-	}
-	if err := st.SetPassword(ctx, u.ID, "battery staple"); err != nil {
+
+	phone, err := st.AddPassword(ctx, u.ID, "iPhone", "phone password")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := st.UserPassword(ctx, u.ID); got != "battery staple" {
-		t.Errorf("after a change: %q", got)
+	if len(phone.Login) != loginLen {
+		t.Fatalf("login %q", phone.Login)
+	}
+	login := phone.LoginAddress(u)
+	if login != "inbox+"+phone.Login+"@reey.ru" {
+		t.Errorf("login address %q", login)
 	}
 
-	// Another key opens nothing.
-	key[0] = 2
-	other, _ := seal.New(key)
-	st.SetSealer(other)
-	if _, err := st.UserPassword(ctx, u.ID); !errors.Is(err, ErrNotFound) {
-		t.Errorf("another key: %v", err)
+	for _, c := range []struct {
+		login, password string
+		ok              bool
+	}{
+		{"inbox@reey.ru", pw, true},     // default: the plain address
+		{login, "phone password", true}, // its own login
+		{strings.ToUpper(login), "phone password", true},
+		{"inbox@reey.ru", "phone password", false}, // another password's login
+		{login, pw, false},
+		{"inbox+zzzz@reey.ru", pw, false}, // a login nobody has
+	} {
+		got, err := st.Authenticate(ctx, c.login, c.password)
+		if c.ok && (err != nil || got.ID != u.ID) {
+			t.Errorf("%s with %q: %v", c.login, c.password, err)
+		}
+		if !c.ok && err != ErrNotFound {
+			t.Errorf("%s with %q signed in: %v", c.login, c.password, err)
+		}
+	}
+
+	if _, err := st.AddPassword(ctx, u.ID, "iphone ", "another one"); err != nil {
+		t.Errorf("labels compare as typed, so iphone is not iPhone: %v", err)
+	}
+	if _, err := st.AddPassword(ctx, u.ID, "iPhone", "another one"); !errors.Is(err, ErrConflict) {
+		t.Errorf("a taken label: %v", err)
+	}
+
+	// The default goes like any other, and the plain address stops signing in.
+	all, _ := st.Passwords(ctx)
+	for _, p := range all[u.ID] {
+		if p.Label == DefaultPasswordLabel {
+			if err := st.DeletePassword(ctx, u.ID, p.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, err := st.Authenticate(ctx, "inbox@reey.ru", pw); err != ErrNotFound {
+		t.Errorf("the deleted default still signs in: %v", err)
+	}
+	if _, err := st.Authenticate(ctx, login, "phone password"); err != nil {
+		t.Errorf("deleting the default took the phone's with it: %v", err)
+	}
+}
+
+func TestAPasswordRecordsWhenItWasLastUsed(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	u := user(t, st, "inbox@reey.ru")
+	before := st.Changes()
+	if _, err := st.Authenticate(ctx, "inbox@reey.ru", pw); err != nil {
+		t.Fatal(err)
+	}
+	all, _ := st.Passwords(ctx)
+	if all[u.ID][0].LastUsedAt.IsZero() {
+		t.Error("a sign-in left no trace")
+	}
+	if st.Changes() != before {
+		t.Error("a sign-in counted as a change, which would schedule a backup")
+	}
+}
+
+func TestIncomingMailIsKeptRefusedOrForwarded(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	inbox := user(t, st, "inbox@reey.ru")
+	noreply := user(t, st, "noreply@reey.ru")
+	billing := user(t, st, "billing@reey.ru")
+
+	if err := st.SetIncoming(ctx, noreply.ID, IncomingReject, ""); err != nil {
+		t.Fatal(err)
+	}
+	if r := resolve(t, st, "noreply+x@reey.ru"); !r.Ours || r.User != nil || !r.Refused || r.Drop {
+		t.Errorf("reject: %+v", r)
+	}
+	if err := st.SetIncoming(ctx, billing.ID, IncomingForward, inbox.ID); err != nil {
+		t.Fatal(err)
+	}
+	if r := resolve(t, st, "billing@reey.ru"); r.User == nil || r.User.ID != inbox.ID || r.Refused {
+		t.Errorf("forward: %+v", r)
+	}
+	// Forwarding into an address that refuses mail refuses it.
+	if err := st.SetIncoming(ctx, inbox.ID, IncomingForward, noreply.ID); err != nil {
+		t.Fatal(err)
+	}
+	if r := resolve(t, st, "billing@reey.ru"); r.User != nil || !r.Refused {
+		t.Errorf("forward to a refusing user: %+v", r)
+	}
+	// A circle is refused when it would be made.
+	if err := st.SetIncoming(ctx, noreply.ID, IncomingForward, billing.ID); !errors.Is(err, ErrConflict) {
+		t.Errorf("a circle: %v", err)
+	}
+	for _, c := range []struct {
+		in Incoming
+		to string
+	}{{IncomingForward, ""}, {IncomingKeep, inbox.ID}, {"bounce", ""}, {IncomingForward, billing.ID}} {
+		if err := st.SetIncoming(ctx, billing.ID, c.in, c.to); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s to %q: %v", c.in, c.to, err)
+		}
+	}
+	// A user others forward to stays while they do.
+	if err := st.DeleteUser(ctx, inbox.ID); !errors.Is(err, ErrConflict) {
+		t.Errorf("deleting a forward's target: %v", err)
 	}
 }
