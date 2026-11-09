@@ -84,7 +84,12 @@ jobs:
         with:
           context: .
           push: true
-          tags: ghcr.io/${{ github.repository }}:latest
+          # Two names for one image. latest is what a `docker run` with no tag gets, and is a
+          # pin to nothing. v1 is this line, the Postfix-based mailio, fixes included: what a
+          # deployment that stays on it pins to, and what v2 leaves alone.
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:v1
           build-args: |
             VERSION=${{ steps.sha.outputs.short }}
           platforms: linux/amd64,linux/arm64
@@ -140,7 +145,7 @@ jobs:
           subject: "${{ github.repository }} published"
           body-type: md
           body: |
-            🔔 Published `ghcr.io/${{ github.repository }}:latest`
+            🔔 Published `ghcr.io/${{ github.repository }}:latest` and `:v1`
 
             - version `${{ needs.publish.outputs.version }}` by ${{ github.actor }}
             - [${{ github.sha }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
