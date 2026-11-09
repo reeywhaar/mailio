@@ -13,11 +13,13 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
 
+	"mailio/internal/seal"
 	"mailio/internal/store/migrations"
 )
 
@@ -42,6 +44,15 @@ type Store struct {
 	// Sessions and admin links are the process noticing itself, not somebody setting something
 	// up, so they do not bump it.
 	changes atomic.Uint64
+
+	// appendMu orders every write that adds a message, through to telling the listener, so a
+	// mailbox's new UIDs are announced in the order they were given.
+	appendMu sync.Mutex
+	listener MailListener
+
+	// sealer keeps a readable copy of each user's password. Nil in tests that do not need one,
+	// and then only the hash is kept.
+	sealer *seal.Sealer
 }
 
 const readers = 4
@@ -151,6 +162,17 @@ func (s *Store) changed() { s.changes.Add(1) }
 
 // Changes is the counter the backup loop compares against what the agent last accepted.
 func (s *Store) Changes() uint64 { return s.changes.Load() }
+
+// SetSealer gives the store the key users' passwords are sealed with.
+func (s *Store) SetSealer(sealer *seal.Sealer) { s.sealer = sealer }
+
+// sealPassword is a user's password sealed to that user's row, or nil without a sealer.
+func (s *Store) sealPassword(userID, password string) []byte {
+	if s.sealer == nil {
+		return nil
+	}
+	return s.sealer.Seal([]byte(password), []byte("user-password:"+userID))
+}
 
 // SetClock replaces the clock. Tests drive expiry with it.
 func (s *Store) SetClock(now func() time.Time) { s.now = now }

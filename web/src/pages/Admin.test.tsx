@@ -24,7 +24,24 @@ const reey: Domain = {
   name: "reey.ru",
   unknown: "reject",
   unknown_user_id: null,
+  records: [
+    {
+      type: "TXT",
+      name: "_dmarc.reey.ru",
+      data: "v=DMARC1; p=none",
+      kept: false,
+    },
+  ],
   created_at: 1,
+};
+
+/** The server's own routes, which every page load reads and these tests are not about. */
+const server = {
+  "GET /api/mail": () => ({
+    body: { host: "mail.reey.ru", dns_api: true, certificate: null },
+  }),
+  "GET /api/relay": () => ({ body: null }),
+  "GET /api/queue": () => ({ body: [] }),
 };
 
 function mount() {
@@ -40,6 +57,7 @@ function mount() {
 
 test("the domains, users and admins are listed", async () => {
   fakeServer({
+    ...server,
     "GET /api/me": () => ({ body: misha }),
     "GET /api/admins": () => ({ body: [misha] }),
     "GET /api/domains": () => ({ body: [reey] }),
@@ -56,6 +74,7 @@ test("the domains, users and admins are listed", async () => {
 test("choosing junk sends unknown mail to somebody at the same domain", async () => {
   let domain = reey;
   const { sent } = fakeServer({
+    ...server,
     "GET /api/me": () => ({ body: misha }),
     "GET /api/admins": () => ({ body: [misha] }),
     "GET /api/domains": () => ({ body: [domain] }),
@@ -81,6 +100,7 @@ test("choosing junk sends unknown mail to somebody at the same domain", async ()
 
 test("a refused change shows the server's sentence", async () => {
   fakeServer({
+    ...server,
     "GET /api/me": () => ({ body: misha }),
     "GET /api/admins": () => ({ body: [misha] }),
     "GET /api/domains": () => ({ body: [reey] }),
@@ -106,6 +126,7 @@ test("a refused change shows the server's sentence", async () => {
 test("a new admin's password is shown once, to be handed over", async () => {
   let admins = [misha];
   const { sent } = fakeServer({
+    ...server,
     "GET /api/me": () => ({ body: misha }),
     "GET /api/domains": () => ({ body: [] }),
     "GET /api/users": () => ({ body: [] }),
@@ -133,4 +154,82 @@ test("a new admin's password is shown once, to be handed over", async () => {
   );
   expect(await screen.findByText("correct horse")).toBeTruthy();
   expect(screen.getByText(/not shown again/)).toBeTruthy();
+});
+
+test("a user's password can be shown again", async () => {
+  fakeServer({
+    ...server,
+    "GET /api/me": () => ({ body: misha }),
+    "GET /api/domains": () => ({ body: [reey] }),
+    "GET /api/users": () => ({ body: [inbox] }),
+    "GET /api/admins": () => ({ body: [misha] }),
+    "GET /api/users/u_1/password": () => ({
+      body: { password: "correct horse" },
+    }),
+  });
+  mount();
+  fireEvent.click(await screen.findByRole("button", { name: "Show password" }));
+  expect(await screen.findByText("correct horse")).toBeTruthy();
+  expect(screen.queryByText(/not shown again/)).toBeNull();
+});
+
+test("a domain shows the records it needs", async () => {
+  fakeServer({
+    ...server,
+    "GET /api/me": () => ({ body: misha }),
+    "GET /api/domains": () => ({ body: [reey] }),
+    "GET /api/users": () => ({ body: [inbox] }),
+    "GET /api/admins": () => ({ body: [misha] }),
+  });
+  mount();
+  fireEvent.click(await screen.findByRole("button", { name: "DNS…" }));
+  expect(await screen.findByText("v=DMARC1; p=none")).toBeTruthy();
+});
+
+test("the relay is saved with its password, which is never shown again", async () => {
+  let relay: unknown = null;
+  const { sent } = fakeServer({
+    ...server,
+    "GET /api/relay": () => ({ body: relay }),
+    "PUT /api/relay": () => {
+      relay = {
+        host: "smtp.relay.example",
+        port: 587,
+        security: "starttls",
+        username: "me",
+        has_password: true,
+      };
+      return { body: relay };
+    },
+    "GET /api/me": () => ({ body: misha }),
+    "GET /api/domains": () => ({ body: [] }),
+    "GET /api/users": () => ({ body: [] }),
+    "GET /api/admins": () => ({ body: [misha] }),
+  });
+  mount();
+  fireEvent.change(await screen.findByLabelText("Relay host"), {
+    target: { value: "smtp.relay.example" },
+  });
+  fireEvent.change(screen.getByLabelText("Username"), {
+    target: { value: "me" },
+  });
+  fireEvent.change(screen.getByLabelText("Relay password"), {
+    target: { value: "relay secret" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save relay" }));
+  await waitFor(() =>
+    expect(sent.find((r) => r.method === "PUT")?.body).toEqual({
+      host: "smtp.relay.example",
+      port: 587,
+      security: "starttls",
+      username: "me",
+      password: "relay secret",
+    }),
+  );
+  expect(
+    await screen.findByText("Outbound mail goes through smtp.relay.example."),
+  ).toBeTruthy();
+  expect(
+    (screen.getByLabelText("Relay password") as HTMLInputElement).value,
+  ).toBe("");
 });

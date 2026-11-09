@@ -5,6 +5,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -27,12 +28,21 @@ func AdminLinkPath(token string) string {
 	return "/admin/password#token=" + url.QueryEscape(token)
 }
 
+// Mail is the running mail server, as far as the admin interface needs it. Nil in tests about
+// something else.
+type Mail interface {
+	Certificate() *store.Certificate
+	TestRelay(ctx context.Context, r *store.Relay) error
+	Wake()
+}
+
 // Server is the HTTP handler.
 type Server struct {
-	cfg *config.Config
-	log *slog.Logger
-	st  *store.Store
-	mux *http.ServeMux
+	cfg  *config.Config
+	log  *slog.Logger
+	st   *store.Store
+	mail Mail
+	mux  *http.ServeMux
 
 	// Two buckets with two jobs: the global one bounds bcrypt on unauthenticated endpoints, the
 	// per-name one stops somebody working through a password list against one admin.
@@ -41,11 +51,12 @@ type Server struct {
 }
 
 // New builds the handler. web is the built bundle, or nil for a checkout that never built it.
-func New(cfg *config.Config, log *slog.Logger, st *store.Store, web fs.FS) *Server {
+func New(cfg *config.Config, log *slog.Logger, st *store.Store, mail Mail, web fs.FS) *Server {
 	s := &Server{
 		cfg:        cfg,
 		log:        log,
 		st:         st,
+		mail:       mail,
 		mux:        http.NewServeMux(),
 		signInAll:  newLimiter(30, 2*time.Second),
 		signInName: newLimiter(5, 12*time.Second),
@@ -67,7 +78,16 @@ func New(cfg *config.Config, log *slog.Logger, st *store.Store, web fs.FS) *Serv
 	s.mux.Handle("GET /api/users", s.requireAdmin(s.listUsers))
 	s.mux.Handle("POST /api/users", s.requireAdmin(s.createUser))
 	s.mux.Handle("PATCH /api/users/{id}", s.requireAdmin(s.updateUser))
+	s.mux.Handle("GET /api/users/{id}/password", s.requireAdmin(s.userPassword))
 	s.mux.Handle("DELETE /api/users/{id}", s.requireAdmin(s.deleteUser))
+
+	s.mux.Handle("GET /api/mail", s.requireAdmin(s.mailStatus))
+	s.mux.Handle("GET /api/relay", s.requireAdmin(s.getRelay))
+	s.mux.Handle("PUT /api/relay", s.requireAdmin(s.putRelay))
+	s.mux.Handle("DELETE /api/relay", s.requireAdmin(s.deleteRelay))
+	s.mux.Handle("POST /api/relay/test", s.requireAdmin(s.testRelay))
+	s.mux.Handle("GET /api/queue", s.requireAdmin(s.listQueue))
+	s.mux.Handle("POST /api/queue/retry", s.requireAdmin(s.retryQueue))
 
 	s.mux.Handle("GET /api/admins", s.requireAdmin(s.listAdmins))
 	s.mux.Handle("POST /api/admins", s.requireAdmin(s.createAdmin))

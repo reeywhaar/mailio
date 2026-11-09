@@ -11,6 +11,9 @@ ghcr.io/reeywhaar/mailio:latest
 | variable | default | meaning |
 | --- | --- | --- |
 | `MAILIO_PUBLIC_URL` | *required* | The address the admin interface is opened at |
+| `MAILIO_SECRET_KEY` | *required* | 32 random bytes, base64. Seals users' passwords and the relay's |
+| `MAILIO_MAIL_HOST` | the public URL's host | The mail server's name: MX target, greeting, certificate |
+| `MAILIO_DNS_API_URL` | — | A DNS API (doapi). Publishes DKIM, SPF, DMARC, and gets the certificate |
 | `MAILIO_DATA_DIR` | `/data` | Where `mailio.db` lives. Fixed in the image; a variable for local runs |
 | `MAILIO_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `MAILIO_BACKUP_URL` | — | A backio agent's `POST /backup`. Unset, mailio takes no backups |
@@ -27,6 +30,26 @@ admin interface. The environment is only for what must be true before the proces
 a stranger controls. It also decides whether the session cookie carries `Secure`. A trailing slash
 is trimmed; a path is refused, because mailio serves from the root.
 
+## `MAILIO_SECRET_KEY`
+
+Required. It seals each user's password, so an admin can look it up again, and the relay's:
+
+```sh
+openssl rand -base64 32
+```
+
+**Keep it apart from the data directory and its backups**, which is the point of it: a copied
+database is not a list of passwords. **And keep it**: with a new key, mail still flows and
+everyone still signs in, but no stored password can be shown until it is set again.
+
+## `MAILIO_MAIL_HOST` is the name the world reaches mail at
+
+Every domain's MX points at it, other servers are greeted with it, and the mail ports'
+certificate is for it; mail clients use it as their IMAP and SMTP server, whatever the domain.
+Unset, it is the host of `MAILIO_PUBLIC_URL`, so one name serves both. Set it when the admin
+interface lives elsewhere. The server's IP should have it as its reverse DNS, or the mail it
+sends looks suspect.
+
 ## Caddy does the admin interface's TLS
 
 mailio speaks plain HTTP on `:80` inside the container. [caddy-docker-proxy] gets the certificate
@@ -39,6 +62,8 @@ services:
     restart: unless-stopped
     environment:
       MAILIO_PUBLIC_URL: https://mail.example.com
+      MAILIO_SECRET_KEY: … # openssl rand -base64 32
+    ports: ["25:25", "465:465", "587:587", "993:993"]
     volumes:
       - data:/data
     networks:
@@ -67,6 +92,7 @@ makes the session cookie `Secure`, since mailio itself only ever sees Caddy's pl
 ```sh
 docker run -d --name mailio \
   -e MAILIO_PUBLIC_URL=http://localhost:8080 \
+  -e MAILIO_SECRET_KEY=$(openssl rand -base64 32) \
   -v mailio-data:/data \
   -p 8080:80 \
   ghcr.io/reeywhaar/mailio:latest
@@ -193,9 +219,79 @@ lock everybody out.
 
 ## Ports
 
-`:80` inside the container for the admin interface, reached by Caddy and published nowhere. The
-mail ports are published straight from mailio, since Caddy speaks only HTTP; they arrive, with
-their own certificate, alongside the code that listens on them.
+| port | what | published |
+| --- | --- | --- |
+| 80 | the admin interface, plain HTTP | no: Caddy reaches it |
+| 25 | other servers deliver; STARTTLS offered, no AUTH | yes |
+| 587 | users send; AUTH only after STARTTLS | yes |
+| 465 | users send; TLS from the first byte | yes |
+| 993 | users read; TLS from the first byte | yes |
+
+There is no plain IMAP on 143 and no POP3: a password never crosses the wire unencrypted.
+
+## The mail ports have their own certificate
+
+For `MAILIO_MAIL_HOST`, kept in the database and swapped in without a restart. With
+`MAILIO_DNS_API_URL`, it comes from Let's Encrypt, proved through a DNS record the API writes, and
+is renewed once a third of its life is left. DNS rather than HTTP because port 80 is Caddy's and
+the mail ports cannot answer a challenge. Without a DNS API it stays self-signed: other servers
+deliver over it all the same, and mail clients warn.
+
+## DNS records
+
+Each domain's are in the admin interface under DNS…: MX to `MAILIO_MAIL_HOST`, SPF, DMARC, and
+the DKIM key. With `MAILIO_DNS_API_URL`, mailio publishes them every ten minutes.
+
+**The DKIM record is kept current; SPF and DMARC are only created when absent.** An existing SPF
+is somebody's decision, such as one that includes the relay, and a sync rewriting it would break
+mail. **MX is never touched**: where a domain's mail goes is set by hand, once.
+
+The key is published as `mailio._domainkey`, not the `mail._domainkey` the Postfix-based mailio
+used, so the old key keeps verifying mail it signed while the new one takes over.
+
+## Sending goes through the relay when there is one
+
+Many hosting providers block outbound port 25. Set a relay in the admin interface under Sending,
+with Test to check it signs in, and every message is handed to it. Without one, mailio delivers
+to each recipient's MX itself.
+
+A message waits in the queue until delivered. A temporary failure is retried with growing waits
+for five days; a refusal, or the five days running out, puts a report in the sender's INBOX. A
+relay that cannot be reached or refuses the sign-in is always temporary, so a wrong relay
+password is fixed in the admin interface and nothing is lost meanwhile. Retry now sends the
+queue at once.
+
+## DMARC is obeyed and nothing else filters
+
+An arriving message gets SPF, DKIM and DMARC checked and an Authentication-Results header. When
+its sender's DMARC policy is reject and it fails, it is refused; quarantine puts it in Junk.
+There is no content filter: what is junk beyond that is the reader's to move.
+
+## Switching from the Postfix-based mailio
+
+1. Deploy mailio beside the old container, under another name, with no mail ports. Add the
+   domains and users in the admin interface. With `MAILIO_DNS_API_URL` the new DKIM key and the
+   certificate arrive by themselves; without, publish the records under DNS….
+2. Set the relay, if the host needs one.
+3. Stop the old container, and give the new one its name and the mail ports:
+
+   ```yaml
+   ports: ["25:25", "465:465", "587:587", "993:993"]
+   ```
+
+4. Import the old mail, mounting the old Maildir read-only:
+
+   ```sh
+   docker exec mailio mailio import maildir --dry-run /import/root inbox@reey.ru inbox@vyrtsev.com
+   docker exec mailio mailio import maildir /import/root inbox@reey.ru inbox@vyrtsev.com
+   ```
+
+   Several addresses delivered into one Maildir are sorted to whoever `X-Original-To` names, the
+   address before any alias; sent mail by its From. Subfolders such as `.Sent` and `.Junk` go to
+   the matching mailbox. Importing twice imports twice.
+
+5. Point mail clients at `MAILIO_MAIL_HOST`, IMAP 993 and SMTP 465, with the user's address and
+   password.
 
 ## Backups go to a backio agent
 
@@ -215,6 +311,7 @@ services:
     image: ghcr.io/reeywhaar/mailio:latest
     environment:
       MAILIO_PUBLIC_URL: https://mail.example.com
+      MAILIO_SECRET_KEY: …
       MAILIO_BACKUP_URL: http://backup:8080/backup
     volumes:
       - data:/data
@@ -281,7 +378,7 @@ The archive carries every password hash, so it is worth the same care as the dir
 ```sh
 npm --prefix web ci && npm --prefix web run build
 mkdir -p data
-MAILIO_PUBLIC_URL=http://localhost MAILIO_DATA_DIR=data go run . serve
+MAILIO_PUBLIC_URL=http://localhost MAILIO_SECRET_KEY=$(openssl rand -base64 32) MAILIO_DATA_DIR=data go run . serve
 ```
 
 `npm --prefix web run dev` serves the interface with reloading and sends `/api` to the Go server

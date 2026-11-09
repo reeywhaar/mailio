@@ -13,11 +13,18 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/crypto/acme"
 
 	"mailio/internal/api"
 	"mailio/internal/app"
 	"mailio/internal/backup"
+	"mailio/internal/certs"
 	"mailio/internal/config"
+	"mailio/internal/dnsapi"
+	"mailio/internal/dnssync"
+	"mailio/internal/imapd"
+	"mailio/internal/outbound"
+	"mailio/internal/smtpd"
 	"mailio/internal/store"
 )
 
@@ -48,39 +55,76 @@ func serveCmd() *cobra.Command {
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
-			srv := &http.Server{
+			mgr, err := certs.New(ctx, st, cfg.MailHost, log)
+			if err != nil {
+				return err
+			}
+			tlsCfg := mgr.TLSConfig()
+			if err := st.EnsureDKIM(ctx); err != nil {
+				return err
+			}
+			sender := outbound.New(st, log, cfg.MailHost)
+
+			admin := &http.Server{
 				Addr:              app.ListenAddr,
-				Handler:           api.New(cfg, log, st, web(log)),
+				Handler:           api.New(cfg, log, st, mailService{mgr, sender}, web(log)),
 				ReadHeaderTimeout: 10 * time.Second,
+			}
+			imap := imapd.New(st, log)
+			inbound := smtpd.NewInbound(st, log, cfg.MailHost, smtpd.Checks{Host: cfg.MailHost}).Server(tlsCfg)
+			inbound.Addr = app.SMTPAddr
+			sub := smtpd.NewSubmission(st, log, cfg.MailHost, sender)
+			submission := sub.Server(tlsCfg)
+			submission.Addr = app.SubmissionAddr
+			submissions := sub.Server(tlsCfg)
+			submissions.Addr = app.SubmissionsAddr
+			imapLn, err := imapd.Listen(app.IMAPAddr, tlsCfg)
+			if err != nil {
+				return err
 			}
 
 			// Waited on below, so nothing is still writing when the database closes.
 			var background sync.WaitGroup
 			background.Go(func() { sweep(ctx, st, log) })
 			background.Go(func() { backup.Run(ctx, st, cfg.BackupURL, cfg.DataDir, log) })
+			background.Go(func() { sender.Run(ctx) })
+			if cfg.DNSAPI != "" {
+				dns := dnsapi.New(cfg.DNSAPI)
+				background.Go(func() { syncDNS(ctx, st, dns, cfg.MailHost, log) })
+				background.Go(func() { (&certs.ACME{M: mgr, API: dns, Directory: acme.LetsEncryptURL}).Run(ctx) })
+			} else {
+				log.Warn("no DNS API: publish the DNS records shown in the admin interface by hand, and the mail ports keep a self-signed certificate")
+			}
 
-			errc := make(chan error, 1)
-			go func() {
-				log.Info("listening", "addr", srv.Addr, "backups", cfg.BackupURL != "")
-				errc <- srv.ListenAndServe()
-			}()
+			errc := make(chan error, 5)
+			go func() { errc <- admin.ListenAndServe() }()
+			go func() { errc <- inbound.ListenAndServe() }()
+			go func() { errc <- submission.ListenAndServe() }()
+			go func() { errc <- submissions.ListenAndServeTLS() }()
+			go func() { errc <- imap.Serve(imapLn) }()
+			log.Info("listening", "admin", app.ListenAddr, "smtp", app.SMTPAddr, "submission", app.SubmissionAddr,
+				"submissions", app.SubmissionsAddr, "imap", app.IMAPAddr, "mail_host", cfg.MailHost,
+				"backups", cfg.BackupURL != "")
 
 			select {
-			case err := <-errc:
-				stop()
-				background.Wait()
-				return err
+			case err = <-errc:
+				log.Error("a listener stopped", "error", err)
 			case <-ctx.Done():
 			}
+			stop()
 			log.Info("stopping")
 			shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			err = srv.Shutdown(shutdown)
+			admin.Shutdown(shutdown)
+			inbound.Shutdown(shutdown)
+			submission.Shutdown(shutdown)
+			submissions.Shutdown(shutdown)
+			imap.Close()
 			background.Wait()
-			if errors.Is(err, http.ErrServerClosed) {
-				err = nil
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return err
 			}
-			return err
+			return nil
 		},
 	}
 }
@@ -125,6 +169,35 @@ func sweep(ctx context.Context, st *store.Store, log *slog.Logger) {
 			log.Error("sweep failed", "error", err)
 		} else if sessions+links > 0 {
 			log.Info("swept", "sessions", sessions, "admin_links", links)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
+// mailService is the running mail server, as the admin interface sees it.
+type mailService struct {
+	certs  *certs.Manager
+	sender *outbound.Sender
+}
+
+func (m mailService) Certificate() *store.Certificate { return m.certs.Current() }
+func (m mailService) TestRelay(ctx context.Context, r *store.Relay) error {
+	return m.sender.TestRelay(ctx, r)
+}
+func (m mailService) Wake() { m.sender.Wake() }
+
+// syncDNS publishes the domains' records now and every ten minutes, so a domain added in the admin
+// interface has its DKIM key published soon after.
+func syncDNS(ctx context.Context, st *store.Store, dns *dnsapi.Client, host string, log *slog.Logger) {
+	t := time.NewTicker(10 * time.Minute)
+	defer t.Stop()
+	for {
+		if err := dnssync.Sync(ctx, st, dns, host, log); err != nil && ctx.Err() == nil {
+			log.Error("publishing dns records failed", "error", err)
 		}
 		select {
 		case <-ctx.Done():

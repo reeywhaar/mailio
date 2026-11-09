@@ -23,6 +23,14 @@ CSRF defense; the `SameSite=Lax` cookie is the other.
 | `POST /api/users` | `{address, password}` |
 | `PATCH /api/users/{id}` | `{password}` |
 | `DELETE /api/users/{id}` | `409` for a user getting a domain's junk |
+| `GET /api/users/{id}/password` | `{password}`, sealed copy opened. `404` for one set before passwords were kept |
+| `GET /api/mail` | `{host, dns_api, certificate}` |
+| `GET /api/relay` | the relay without its password, `{…, has_password}`, or `null` |
+| `PUT /api/relay` | `{host, port, security, username, password}`. An empty password keeps the stored one |
+| `DELETE /api/relay` | deliver directly again |
+| `POST /api/relay/test` | sign in to the relay and send nothing. `502 relay_failed` with its answer |
+| `GET /api/queue` | what is waiting to be sent |
+| `POST /api/queue/retry` | send the queue now |
 | `GET /api/admins` | every admin |
 | `POST /api/admins` | `{name, password}` |
 | `PATCH /api/admins/{id}` | `{password}`. Signs that admin out everywhere but the session sending it |
@@ -40,7 +48,7 @@ reason, though it changes nothing.
 ```
 
 The code is the contract: `invalid`, `unauthenticated`, `not_found`, `conflict`,
-`unsupported_media_type`, `body_too_large`, `rate_limited`, `internal`. The sentence is written
+`unsupported_media_type`, `body_too_large`, `rate_limited`, `relay_failed`, `internal`. The sentence is written
 for whoever reads it, and nothing may match on it.
 
 ## Times are Unix seconds

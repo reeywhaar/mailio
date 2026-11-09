@@ -4,9 +4,10 @@ A mail server that keeps its mail in one SQLite file: one static Go binary, no P
 file. Domains and users are set up in its admin interface; mail is read with
 [emguio](https://github.com/reeywhaar/emguio), or any mail client, over IMAP.
 
-**Being rebuilt.** The admin interface works: domains, users, and what each domain does with mail
-for addresses nobody has. Receiving (SMTP on 25), reading (IMAP) and sending (submission, DKIM,
-the outbound queue) come next. The Postfix-based mailio is on `main` until then.
+It receives on 25, with SPF, DKIM and DMARC checked; serves IMAP on 993; takes users' mail on 465
+and 587, signs it with each domain's DKIM key, and sends it directly or through a relay. The
+certificate and the DNS records look after themselves when there is a DNS API. Moving from the
+Postfix-based mailio, on `main`: see [docs/deploy.md](docs/deploy.md#switching-from-the-postfix-based-mailio).
 
 ## Run it
 
@@ -21,6 +22,8 @@ services:
     restart: unless-stopped
     environment:
       MAILIO_PUBLIC_URL: https://mail.example.com
+      MAILIO_SECRET_KEY: … # openssl rand -base64 32
+    ports: ["25:25", "465:465", "587:587", "993:993"]
     volumes:
       - data:/data
     networks:

@@ -20,6 +20,11 @@ type Migration struct {
 // all is the declared order, which is documentation; the sort below is what decides.
 var all = []Migration{
 	initialSchema,
+	mailboxes,
+	certificates,
+	sealedPasswords,
+	sending,
+	adminsApart,
 }
 
 func exec(sqlText string) func(context.Context, *sql.Tx) error {

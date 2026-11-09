@@ -13,6 +13,7 @@ import (
 
 	"mailio/internal/app"
 	"mailio/internal/config"
+	"mailio/internal/seal"
 	"mailio/internal/store"
 )
 
@@ -26,7 +27,7 @@ func root() *cobra.Command {
 	// Cobra prints to stderr unless an output is set, which would make `link=$(mailio admin
 	// reset)` capture nothing.
 	cmd.SetOut(os.Stdout)
-	cmd.AddCommand(serveCmd(), adminCmd(), healthcheckCmd(), versionCmd())
+	cmd.AddCommand(serveCmd(), adminCmd(), importCmd(), healthcheckCmd(), versionCmd())
 	return cmd
 }
 
@@ -60,6 +61,12 @@ func setup() (*config.Config, *store.Store, *slog.Logger, error) {
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	sealer, err := seal.New(cfg.SecretKey)
+	if err != nil {
+		st.Close()
+		return nil, nil, nil, err
+	}
+	st.SetSealer(sealer)
 	return cfg, st, log, nil
 }
 

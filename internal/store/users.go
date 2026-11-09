@@ -96,17 +96,28 @@ func (s *Store) CreateUser(ctx context.Context, addr, password string) (*User, e
 	}
 	now := s.Now()
 	u := &User{ID: ids.New(ids.User, now.UnixMilli()), Local: a.Local, Domain: d.Name, DomainID: d.ID, CreatedAt: now}
-	if err := insertUser(ctx, s.writer, u, hash); err != nil {
+	tx, err := s.writer.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create user: %w", err)
+	}
+	defer tx.Rollback()
+	if err := insertUser(ctx, tx, u, hash, s.sealPassword(u.ID, password)); err != nil {
 		return nil, err
+	}
+	if err := createStandardMailboxes(ctx, tx, u.ID, now); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("create user: %w", err)
 	}
 	s.changed()
 	return u, nil
 }
 
-func insertUser(ctx context.Context, db execer, u *User, hash string) error {
+func insertUser(ctx context.Context, db execer, u *User, hash string, sealed []byte) error {
 	_, err := db.ExecContext(ctx,
-		`INSERT INTO users (id, domain_id, local_part, password_hash, created_at) VALUES (?, ?, ?, ?, ?)`,
-		u.ID, u.DomainID, u.Local, hash, unix(u.CreatedAt))
+		`INSERT INTO users (id, domain_id, local_part, password_hash, password_sealed, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		u.ID, u.DomainID, u.Local, hash, sealed, unix(u.CreatedAt))
 	if isUnique(err) {
 		return Conflict("%s is taken.", u.Address())
 	}
@@ -185,7 +196,8 @@ func (s *Store) SetPassword(ctx context.Context, id, password string) error {
 	if err != nil {
 		return err
 	}
-	res, err := s.writer.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ?`, hash, id)
+	res, err := s.writer.ExecContext(ctx, `UPDATE users SET password_hash = ?, password_sealed = ? WHERE id = ?`,
+		hash, s.sealPassword(id, password), id)
 	if err != nil {
 		return fmt.Errorf("set password: %w", err)
 	}
@@ -224,6 +236,27 @@ func (s *Store) DeleteUser(ctx context.Context, id string) error {
 	}
 	s.changed()
 	return nil
+}
+
+// UserPassword opens a user's sealed password. ErrNotFound for a user whose password was set
+// before passwords were kept, or by a store without the key.
+func (s *Store) UserPassword(ctx context.Context, id string) (string, error) {
+	var sealed []byte
+	err := s.reader.QueryRowContext(ctx, `SELECT password_sealed FROM users WHERE id = ?`, id).Scan(&sealed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", NotFound("There is no such user.")
+	}
+	if err != nil {
+		return "", fmt.Errorf("user password: %w", err)
+	}
+	if sealed == nil || s.sealer == nil {
+		return "", NotFound("That password was set before mailio kept passwords. Set a new one to see it.")
+	}
+	plain, err := s.sealer.Open(sealed, []byte("user-password:"+id))
+	if err != nil {
+		return "", NotFound("That password was sealed with another MAILIO_SECRET_KEY. Set a new one to see it.")
+	}
+	return string(plain), nil
 }
 
 // ValidatePassword refuses what bcrypt would silently truncate.

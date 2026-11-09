@@ -8,13 +8,17 @@ import (
 // set clears everything this package reads, so no test passes on another's leftovers.
 func set(t *testing.T, kv map[string]string) {
 	t.Helper()
-	for _, k := range []string{PublicURLEnv, DataDirEnv, LogLevelEnv, BackupURLEnv, TrustedProxiesEnv} {
+	for _, k := range []string{PublicURLEnv, DataDirEnv, LogLevelEnv, BackupURLEnv, TrustedProxiesEnv, MailHostEnv, SecretKeyEnv, DNSAPIEnv} {
 		t.Setenv(k, "")
 	}
+	t.Setenv(SecretKeyEnv, testKey)
 	for k, v := range kv {
 		t.Setenv(k, v)
 	}
 }
+
+// testKey is 32 bytes of base64, which every test needs and none is about.
+const testKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
 func TestDefaults(t *testing.T) {
 	set(t, map[string]string{PublicURLEnv: "https://mail.example.com/"})
@@ -27,6 +31,9 @@ func TestDefaults(t *testing.T) {
 	}
 	if cfg.BackupURL != "" {
 		t.Error("backups are on by default, which posts an archive somewhere nobody named")
+	}
+	if cfg.MailHost != "mail.example.com" {
+		t.Errorf("the mail host defaults to %q, want the public URL's host", cfg.MailHost)
 	}
 	if !cfg.TrustedProxies.Trusts(netip.MustParseAddr("172.18.0.5")) || cfg.TrustedProxies.Trusts(netip.MustParseAddr("203.0.113.7")) {
 		t.Errorf("trusted proxies = %v, want the private ranges", cfg.TrustedProxies)
@@ -43,7 +50,7 @@ func TestAPublicURLIsASchemeAndAHost(t *testing.T) {
 }
 
 func TestABadSettingRefusesToStart(t *testing.T) {
-	for k, v := range map[string]string{LogLevelEnv: "loud", TrustedProxiesEnv: "proxy.example.com"} {
+	for k, v := range map[string]string{LogLevelEnv: "loud", TrustedProxiesEnv: "proxy.example.com", SecretKeyEnv: "short", MailHostEnv: "mail.example.com:25"} {
 		set(t, map[string]string{PublicURLEnv: "https://mail.example.com", k: v})
 		if _, err := Load(); err == nil {
 			t.Errorf("%s=%q was accepted", k, v)
@@ -83,5 +90,13 @@ func TestTrustedProxies(t *testing.T) {
 		if _, err := ParseProxies(raw); err == nil {
 			t.Errorf("%q was accepted", raw)
 		}
+	}
+}
+
+func TestASecretKeyIsRequired(t *testing.T) {
+	set(t, map[string]string{PublicURLEnv: "https://mail.example.com"})
+	t.Setenv(SecretKeyEnv, "")
+	if _, err := Load(); err == nil {
+		t.Error("started without a secret key")
 	}
 }

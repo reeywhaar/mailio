@@ -11,6 +11,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"mailio/internal/address"
+	"mailio/internal/seal"
 )
 
 // The suite makes users by the dozen and is not testing bcrypt.
@@ -433,5 +434,38 @@ func TestADomainWithUsersCannotBeDeleted(t *testing.T) {
 	}
 	if err := st.DeleteDomain(ctx, empty.ID); err != nil {
 		t.Errorf("deleting an empty domain: %v", err)
+	}
+}
+
+func TestAUsersPasswordCanBeLookedUpAgain(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	key := make([]byte, seal.KeySize)
+	key[0] = 1
+	sealer, _ := seal.New(key)
+
+	before := user(t, st, "old@reey.ru")
+	if _, err := st.UserPassword(ctx, before.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a password set without a key: %v", err)
+	}
+
+	st.SetSealer(sealer)
+	u := user(t, st, "inbox@reey.ru")
+	if got, err := st.UserPassword(ctx, u.ID); err != nil || got != pw {
+		t.Errorf("got %q, %v", got, err)
+	}
+	if err := st.SetPassword(ctx, u.ID, "battery staple"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.UserPassword(ctx, u.ID); got != "battery staple" {
+		t.Errorf("after a change: %q", got)
+	}
+
+	// Another key opens nothing.
+	key[0] = 2
+	other, _ := seal.New(key)
+	st.SetSealer(other)
+	if _, err := st.UserPassword(ctx, u.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("another key: %v", err)
 	}
 }

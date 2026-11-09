@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 
+	"mailio/internal/dnssync"
 	"mailio/internal/ids"
 	"mailio/internal/store"
 )
@@ -24,7 +25,7 @@ func adminJSON(a *store.Admin) map[string]any {
 	}
 }
 
-func domainJSON(d *store.Domain) map[string]any {
+func (s *Server) domainJSON(d *store.Domain) map[string]any {
 	var junkTo any
 	if d.UnknownUserID != "" {
 		junkTo = d.UnknownUserID
@@ -34,6 +35,7 @@ func domainJSON(d *store.Domain) map[string]any {
 		"name":            d.Name,
 		"unknown":         d.Unknown,
 		"unknown_user_id": junkTo,
+		"records":         dnssync.Wanted(d, s.cfg.MailHost),
 		"created_at":      d.CreatedAt.Unix(),
 	}
 }
@@ -57,7 +59,7 @@ func (s *Server) listDomains(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, len(list))
 	for i := range list {
-		out[i] = domainJSON(&list[i])
+		out[i] = s.domainJSON(&list[i])
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -75,7 +77,7 @@ func (s *Server) createDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("domain added", "domain", d.ID, "by", adminOf(r).ID)
-	writeJSON(w, http.StatusCreated, domainJSON(d))
+	writeJSON(w, http.StatusCreated, s.domainJSON(d))
 }
 
 // updateDomain sets what the domain does with mail for addresses nobody has.
@@ -105,7 +107,7 @@ func (s *Server) updateDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("domain changed", "domain", d.ID, "unknown", d.Unknown, "by", adminOf(r).ID)
-	writeJSON(w, http.StatusOK, domainJSON(d))
+	writeJSON(w, http.StatusOK, s.domainJSON(d))
 }
 
 func (s *Server) deleteDomain(w http.ResponseWriter, r *http.Request) {
@@ -174,6 +176,23 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, userJSON(u))
+}
+
+// userPassword shows a user's password again, to copy into a mail client. Logged, since reading
+// one is worth an operator knowing about.
+func (s *Server) userPassword(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, ids.User)
+	if !ok {
+		return
+	}
+	pw, err := s.st.UserPassword(r.Context(), id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.log.Info("password viewed", "user", id, "by", adminOf(r).ID)
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"password": pw})
 }
 
 func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {

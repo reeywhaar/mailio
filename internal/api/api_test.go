@@ -17,6 +17,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"mailio/internal/config"
+	"mailio/internal/seal"
 	"mailio/internal/store"
 )
 
@@ -39,9 +40,11 @@ func newHarness(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
+	sealer, _ := seal.New(make([]byte, seal.KeySize))
+	st.SetSealer(sealer)
 	u, _ := url.Parse("http://mail.example.com")
 	cfg := &config.Config{PublicURL: u}
-	srv := httptest.NewServer(New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), st, nil))
+	srv := httptest.NewServer(New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), st, nil, nil))
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
 	return &harness{t: t, st: st, srv: srv, c: &http.Client{Jar: jar}}
@@ -170,7 +173,7 @@ func TestEveryAdminRouteNeedsASession(t *testing.T) {
 	h := newHarness(t)
 	for _, c := range [][2]string{
 		{"GET", "/api/domains"}, {"POST", "/api/domains"}, {"PATCH", "/api/domains/dm_x"}, {"DELETE", "/api/domains/dm_x"},
-		{"GET", "/api/users"}, {"POST", "/api/users"}, {"PATCH", "/api/users/u_x"}, {"DELETE", "/api/users/u_x"},
+		{"GET", "/api/users"}, {"POST", "/api/users"}, {"PATCH", "/api/users/u_x"}, {"DELETE", "/api/users/u_x"}, {"GET", "/api/users/u_x/password"},
 		{"GET", "/api/admins"}, {"POST", "/api/admins"}, {"PATCH", "/api/admins/ad_x"}, {"DELETE", "/api/admins/ad_x"},
 		{"GET", "/api/me"}, {"DELETE", "/api/session"},
 	} {
@@ -206,6 +209,9 @@ func TestAnAdminManagesDomainsAndUsers(t *testing.T) {
 
 	if code, u := h.do("PATCH", "/api/users/"+userID, map[string]any{"password": "a new password"}); code != http.StatusOK {
 		t.Fatalf("update user: %d %v", code, u)
+	}
+	if code, body := h.do("GET", "/api/users/"+userID+"/password", nil); code != http.StatusOK || body["password"] != "a new password" {
+		t.Errorf("look up the password: %d %v", code, body)
 	}
 	if len(h.list("/api/users")) != 1 || len(h.list("/api/domains")) != 1 {
 		t.Error("the lists do not have what was made")
@@ -322,5 +328,46 @@ func TestAnAdminLinkSendsNoServerItsToken(t *testing.T) {
 	}
 	if got, _ := url.ParseQuery(u.Fragment); got.Get("token") != "s3cret-_token" {
 		t.Errorf("fragment %q", u.Fragment)
+	}
+}
+
+func TestTheRelayIsSetAndItsPasswordNeverComesBack(t *testing.T) {
+	h := signedIn(t)
+	code, r := h.do("PUT", "/api/relay", map[string]any{"host": "smtp.relay.example", "port": 587, "security": "starttls", "username": "me", "password": "relay secret"})
+	if code != http.StatusOK || r["has_password"] != true || r["password"] != nil {
+		t.Fatalf("set: %d %v", code, r)
+	}
+	// A new port keeps the password the form never showed.
+	code, r = h.do("PUT", "/api/relay", map[string]any{"host": "smtp.relay.example", "port": 465, "security": "implicit", "username": "me", "password": ""})
+	if code != http.StatusOK || r["has_password"] != true || r["port"] != float64(465) {
+		t.Fatalf("change port: %d %v", code, r)
+	}
+	stored, _ := h.st.Relay(context.Background())
+	if stored.Password != "relay secret" {
+		t.Errorf("the password became %q", stored.Password)
+	}
+	if code, _ := h.do("PUT", "/api/relay", map[string]any{"host": "smtp.relay.example", "port": 0, "security": "starttls"}); code != http.StatusBadRequest {
+		t.Errorf("port 0: %d", code)
+	}
+	if code, _ := h.do("DELETE", "/api/relay", nil); code != http.StatusNoContent {
+		t.Errorf("delete: %d", code)
+	}
+	if code, body := h.do("GET", "/api/relay", nil); code != http.StatusOK || body != nil {
+		t.Errorf("after delete: %d %v", code, body)
+	}
+}
+
+func TestADomainShowsTheRecordsItNeeds(t *testing.T) {
+	h := signedIn(t)
+	_, d := h.do("POST", "/api/domains", map[string]any{"name": "reey.ru"})
+	records, _ := d["records"].([]any)
+	var types []string
+	for _, r := range records {
+		rec := r.(map[string]any)
+		types = append(types, rec["type"].(string)+" "+rec["name"].(string))
+	}
+	want := "MX reey.ru,TXT reey.ru,TXT _dmarc.reey.ru,TXT mailio._domainkey.reey.ru"
+	if strings.Join(types, ",") != want {
+		t.Errorf("records: %v", types)
 	}
 }

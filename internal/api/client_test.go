@@ -87,7 +87,7 @@ func TestAWrongPasswordIsALineFail2banBansOn(t *testing.T) {
 	var logged bytes.Buffer
 	u, _ := url.Parse("https://mail.example.com")
 	proxies, _ := config.ParseProxies("private")
-	s := New(&config.Config{PublicURL: u, TrustedProxies: proxies}, slog.New(slog.NewJSONHandler(&logged, nil)), st, nil)
+	s := New(&config.Config{PublicURL: u, TrustedProxies: proxies}, slog.New(slog.NewJSONHandler(&logged, nil)), st, nil, nil)
 
 	r := httptest.NewRequest("POST", "/api/session", strings.NewReader(`{"name":"misha","password":"guess one"}`))
 	r.Header.Set("Content-Type", "application/json")

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"mailio/internal/address"
+	"mailio/internal/dkimkey"
 	"mailio/internal/ids"
 )
 
@@ -35,16 +36,19 @@ type Domain struct {
 	// UnknownUserID is who gets the junk, set exactly when Unknown is UnknownJunk.
 	UnknownUserID string
 	CreatedAt     time.Time
+	// DKIMSelector and DKIMKey sign its outbound mail; empty until mailio makes the key.
+	DKIMSelector string
+	DKIMKey      string
 }
 
-const domainColumns = `id, name, unknown, coalesce(unknown_user_id, ''), created_at`
+const domainColumns = `id, name, unknown, coalesce(unknown_user_id, ''), created_at, dkim_selector, dkim_key`
 
 func scanDomain(row interface{ Scan(...any) error }) (*Domain, error) {
 	var (
 		d       Domain
 		created int64
 	)
-	if err := row.Scan(&d.ID, &d.Name, &d.Unknown, &d.UnknownUserID, &created); err != nil {
+	if err := row.Scan(&d.ID, &d.Name, &d.Unknown, &d.UnknownUserID, &created, &d.DKIMSelector, &d.DKIMKey); err != nil {
 		return nil, err
 	}
 	d.CreatedAt = fromUnix(created)
@@ -69,14 +73,19 @@ func (s *Store) newDomain(name string) (*Domain, error) {
 	if err != nil {
 		return nil, Invalid("%s", err)
 	}
+	key, err := dkimkey.Generate()
+	if err != nil {
+		return nil, err
+	}
 	now := s.Now()
-	return &Domain{ID: ids.New(ids.Domain, now.UnixMilli()), Name: a.Domain, Unknown: UnknownReject, CreatedAt: now}, nil
+	return &Domain{ID: ids.New(ids.Domain, now.UnixMilli()), Name: a.Domain, Unknown: UnknownReject, CreatedAt: now,
+		DKIMSelector: dkimkey.Selector, DKIMKey: key}, nil
 }
 
 func insertDomain(ctx context.Context, db execer, d *Domain) error {
 	_, err := db.ExecContext(ctx,
-		`INSERT INTO domains (id, name, unknown, created_at) VALUES (?, ?, ?, ?)`,
-		d.ID, d.Name, d.Unknown, unix(d.CreatedAt))
+		`INSERT INTO domains (id, name, unknown, created_at, dkim_selector, dkim_key) VALUES (?, ?, ?, ?, ?, ?)`,
+		d.ID, d.Name, d.Unknown, unix(d.CreatedAt), d.DKIMSelector, d.DKIMKey)
 	if isUnique(err) {
 		return Conflict("mailio already receives for %s.", d.Name)
 	}
@@ -190,5 +199,27 @@ func (s *Store) DeleteDomain(ctx context.Context, id string) error {
 		return fmt.Errorf("delete domain: %w", err)
 	}
 	s.changed()
+	return nil
+}
+
+// EnsureDKIM gives every domain without a signing key one. A domain from before mailio signed is
+// the only kind without.
+func (s *Store) EnsureDKIM(ctx context.Context) error {
+	domains, err := s.Domains(ctx)
+	if err != nil {
+		return err
+	}
+	for _, d := range domains {
+		if d.DKIMKey != "" {
+			continue
+		}
+		key, err := dkimkey.Generate()
+		if err != nil {
+			return err
+		}
+		if err := s.SetDKIM(ctx, d.ID, dkimkey.Selector, key); err != nil {
+			return err
+		}
+	}
 	return nil
 }

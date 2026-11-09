@@ -23,3 +23,26 @@ is read back at open, because a pragma is a request rather than a guarantee.
 The writer pool opens transactions `IMMEDIATE`. The command line writes to the same file as the
 running server, and a transaction that reads and then upgrades to writing fails at once, without
 waiting, if the other process holds the lock at that moment.
+
+## Mail is rows, and bodies are rows apart
+
+`mailboxes` per user, `messages` per mailbox with IMAP's UID, flags and arrival time, and the
+message itself in `bodies`, so listing a mailbox never reads a body. A message is stored as it
+arrived, with mailio's Received and Authentication-Results headers in front.
+
+Mailboxes and messages are keyed by rowid, not by a prefixed ULID: nothing outside the database
+names them. What a client sees is the mailbox's name and the message's UID.
+
+## A UID is given inside the insert's transaction
+
+`uid_next` is bumped and read in one statement, in the transaction that inserts the message, so
+two deliveries never share a UID and a rolled-back one leaves a gap rather than a reuse. Every
+write that adds a message also holds one lock through to telling IMAP about it, so open sessions
+hear of new UIDs in order.
+
+## Mail arriving counts as a change
+
+Every delivered or moved message moves the backup counter, so an instance receiving mail sends a
+whole copy of the database every half hour. That is fine while the database is small; when it is
+not, the interval is the thing to revisit.
+

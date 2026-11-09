@@ -3,12 +3,48 @@ import { request } from "@app/api/transport";
 /** What a domain does with mail for an address nobody has. */
 export type Unknown = "reject" | "drop" | "junk";
 
+/** A DNS record a domain should have. Kept: mailio keeps it current through the DNS API. */
+export type DNSRecord = {
+  type: string;
+  name: string;
+  data: string;
+  kept: boolean;
+};
+
 export type Domain = {
   id: string;
   name: string;
   unknown: Unknown;
   /** Who gets the junk, set exactly when unknown is "junk". */
   unknown_user_id: string | null;
+  records: DNSRecord[];
+  created_at: number;
+};
+
+export type MailStatus = {
+  host: string;
+  dns_api: boolean;
+  certificate: { issuer: "self" | "letsencrypt"; not_after: number } | null;
+};
+
+export type Security = "starttls" | "implicit";
+
+/** The relay as the server shows it: never the password, only whether there is one. */
+export type Relay = {
+  host: string;
+  port: number;
+  security: Security;
+  username: string;
+  has_password: boolean;
+};
+
+export type Queued = {
+  id: number;
+  sender: string;
+  recipient: string;
+  attempts: number;
+  last_error: string;
+  next_at: number;
   created_at: number;
 };
 
@@ -79,6 +115,9 @@ export const createUser = (address: string, password: string) =>
 export const setUserPassword = (id: string, password: string) =>
   request<User>(`/api/users/${id}`, { method: "PATCH", body: { password } });
 
+export const getUserPassword = (id: string) =>
+  request<{ password: string }>(`/api/users/${id}/password`);
+
 export const deleteUser = (id: string) =>
   request<void>(`/api/users/${id}`, { method: "DELETE" });
 
@@ -92,3 +131,26 @@ export const setAdminPassword = (id: string, password: string) =>
 
 export const deleteAdmin = (id: string) =>
   request<void>(`/api/admins/${id}`, { method: "DELETE" });
+
+export const getMail = () => request<MailStatus>("/api/mail");
+
+export const getRelay = () => request<Relay | null>("/api/relay");
+
+export const setRelay = (relay: {
+  host: string;
+  port: number;
+  security: Security;
+  username: string;
+  password: string;
+}) => request<Relay>("/api/relay", { method: "PUT", body: relay });
+
+export const deleteRelay = () =>
+  request<void>("/api/relay", { method: "DELETE" });
+
+export const testRelay = () =>
+  request<void>("/api/relay/test", { method: "POST" });
+
+export const listQueue = () => request<Queued[]>("/api/queue");
+
+export const retryQueue = () =>
+  request<void>("/api/queue/retry", { method: "POST" });

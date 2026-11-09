@@ -7,14 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"mailio/internal/app"
 	"mailio/internal/store"
 )
 
 const cookieName = "mailio_session"
-
-// PasswordRefused is the message of the one line logged for every wrong password, with the
-// caller's "ip". fail2ban matches it, so it is a contract: see docs/deploy.md.
-const PasswordRefused = "password refused"
 
 // credentials are an admin's: a name, not an address.
 type credentials struct {
@@ -81,7 +78,7 @@ func (s *Server) signIn(w http.ResponseWriter, r *http.Request) {
 	}
 	a, err := s.st.AuthenticateAdmin(r.Context(), req.Name, req.Password)
 	if errors.Is(err, store.ErrNotFound) {
-		s.log.Warn(PasswordRefused, "ip", s.clientIP(r), "via", "admin")
+		s.log.Warn(app.PasswordRefused, "ip", s.clientIP(r), "via", "admin")
 		refuse(w, http.StatusUnauthorized, CodeUnauthenticated, "That name and password do not match.")
 		return
 	}

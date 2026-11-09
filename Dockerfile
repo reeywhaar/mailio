@@ -34,7 +34,8 @@ FROM alpine:latest
 RUN apk add --no-cache ca-certificates
 COPY --from=build /out/mailio /usr/local/bin/mailio
 COPY --from=web /src/dist /srv/web
-EXPOSE 80
+# The admin interface, then SMTP in, submission (STARTTLS and TLS), and IMAP.
+EXPOSE 80 25 587 465 993
 # Runs the binary's own subcommand, so the image needs no HTTP client.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s CMD ["mailio", "healthcheck"]
 ENTRYPOINT ["mailio"]
