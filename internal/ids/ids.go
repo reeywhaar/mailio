@@ -20,6 +20,7 @@ const Alphabet = "0123456789abcdefghjkmnpqrstvwxyz"
 const (
 	Domain = "dm_"
 	User   = "u_"
+	Admin  = "ad_"
 )
 
 const ulidLen = 26

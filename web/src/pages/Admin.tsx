@@ -2,16 +2,21 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  createAdmin,
   createDomain,
   createUser,
+  deleteAdmin,
   deleteDomain,
   deleteUser,
   getMe,
+  listAdmins,
   listDomains,
   listUsers,
+  setAdminPassword,
   setUnknown,
+  setUserPassword,
   signOut,
-  updateUser,
+  type Admin as AdminT,
   type Domain,
   type Unknown,
   type User,
@@ -24,13 +29,14 @@ import { Wordmark } from "@app/components/Wordmark";
 import { leaveFor } from "@app/leave";
 import { generatePassword } from "@app/password";
 
-/** Domains and the users at them: everything an admin decides. */
+/** Domains, the users at them, and who else may sign in here: everything an admin decides. */
 export function Admin() {
   const me = useQuery({ queryKey: ["me"], queryFn: getMe });
   const domains = useQuery({ queryKey: ["domains"], queryFn: listDomains });
   const users = useQuery({ queryKey: ["users"], queryFn: listUsers });
+  const admins = useQuery({ queryKey: ["admins"], queryFn: listAdmins });
 
-  const failed = me.error ?? domains.error ?? users.error;
+  const failed = me.error ?? domains.error ?? users.error ?? admins.error;
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-10 px-4 py-6">
       <header className="flex items-center gap-4">
@@ -39,7 +45,7 @@ export function Admin() {
         </h1>
         <span className="flex-1" />
         {me.data ? (
-          <span className="truncate text-sm text-muted">{me.data.address}</span>
+          <span className="truncate text-sm text-muted">{me.data.name}</span>
         ) : null}
         <Button
           variant="link"
@@ -51,10 +57,11 @@ export function Admin() {
       {failed && !(failed instanceof ApiError && failed.status === 401) ? (
         <p className="text-sm text-accent">{messageOf(failed)}</p>
       ) : null}
-      {me.data && domains.data && users.data ? (
+      {me.data && domains.data && users.data && admins.data ? (
         <>
           <Domains domains={domains.data} users={users.data} />
-          <Users users={users.data} me={me.data} />
+          <Users users={users.data} />
+          <Admins admins={admins.data} me={me.data} />
         </>
       ) : null}
     </div>
@@ -207,22 +214,20 @@ function DomainRow({
 }
 
 /** A password just set, shown until dismissed because nothing can show it again. */
-type Shown = { address: string; password: string };
+type Shown = { who: string; password: string };
 
-function Users({ users, me }: { users: User[]; me: User }) {
+function Users({ users }: { users: User[] }) {
   const { act, busy, error } = useAct();
   const [shown, setShown] = useState<Shown | null>(null);
   const [address, setAddress] = useState("");
   const [password, setPassword] = useState("");
-  const [admin, setAdmin] = useState(false);
 
   const add = async (e: FormEvent) => {
     e.preventDefault();
-    if (await act(() => createUser(address, password, admin))) {
-      setShown({ address: address.trim().toLowerCase(), password });
+    if (await act(() => createUser(address, password))) {
+      setShown({ who: address.trim().toLowerCase(), password });
       setAddress("");
       setPassword("");
-      setAdmin(false);
     }
   };
 
@@ -234,74 +239,121 @@ function Users({ users, me }: { users: User[]; me: User }) {
       {users.length ? (
         <ul className="divide-y divide-line rounded-md border border-line bg-bg">
           {users.map((u) => (
-            <UserRow
+            <Row
               key={u.id}
-              user={u}
-              you={u.id === me.id}
-              act={act}
+              label={u.address}
               busy={busy}
-              onPassword={setShown}
+              onPassword={async (pw) => {
+                if (!(await act(() => setUserPassword(u.id, pw)))) return false;
+                setShown({ who: u.address, password: pw });
+                return true;
+              }}
+              onDelete={() => void act(() => deleteUser(u.id))}
             />
           ))}
         </ul>
       ) : null}
-      <form className="flex flex-col gap-2" onSubmit={add}>
-        <div className="flex flex-wrap gap-2">
-          <TextField
-            aria-label="Address"
-            type="email"
-            placeholder="name@example.com"
-            autoComplete="off"
-            className="min-w-48 flex-1"
-            value={address}
-            onChange={(e) => setAddress(e.target.value)}
-          />
-          <PasswordField value={password} onChange={setPassword} />
-        </div>
-        <div className="flex items-center gap-4">
-          <label className="flex items-center gap-2 text-sm text-muted">
-            <input
-              type="checkbox"
-              checked={admin}
-              onChange={(e) => setAdmin(e.target.checked)}
-            />
-            Admin
-          </label>
-          <span className="flex-1" />
-          <Button type="submit" disabled={busy || !address.trim() || !password}>
-            Add user
-          </Button>
-        </div>
+      <form className="flex flex-wrap gap-2" onSubmit={add}>
+        <TextField
+          aria-label="Address"
+          type="email"
+          placeholder="name@example.com"
+          autoComplete="off"
+          className="min-w-48 flex-1"
+          value={address}
+          onChange={(e) => setAddress(e.target.value)}
+        />
+        <PasswordField value={password} onChange={setPassword} />
+        <Button type="submit" disabled={busy || !address.trim() || !password}>
+          Add user
+        </Button>
       </form>
       {error ? <p className="text-sm text-accent">{error}</p> : null}
     </Section>
   );
 }
 
-function UserRow({
-  user,
-  you,
-  act,
+/** Who may sign in here. A name and a password each, and no mailbox. */
+function Admins({ admins, me }: { admins: AdminT[]; me: AdminT }) {
+  const { act, busy, error } = useAct();
+  const [shown, setShown] = useState<Shown | null>(null);
+  const [name, setName] = useState("");
+  const [password, setPassword] = useState("");
+
+  const add = async (e: FormEvent) => {
+    e.preventDefault();
+    if (await act(() => createAdmin(name, password))) {
+      setShown({ who: name.trim().toLowerCase(), password });
+      setName("");
+      setPassword("");
+    }
+  };
+
+  return (
+    <Section title="Admins">
+      {shown ? (
+        <ShownPassword shown={shown} onDone={() => setShown(null)} />
+      ) : null}
+      <ul className="divide-y divide-line rounded-md border border-line bg-bg">
+        {admins.map((a) => (
+          <Row
+            key={a.id}
+            label={a.name}
+            you={a.id === me.id}
+            busy={busy}
+            onPassword={async (pw) => {
+              if (!(await act(() => setAdminPassword(a.id, pw)))) return false;
+              // Your own you just typed; somebody else's is theirs to be handed.
+              if (a.id !== me.id) setShown({ who: a.name, password: pw });
+              return true;
+            }}
+            onDelete={() => void act(() => deleteAdmin(a.id))}
+          />
+        ))}
+      </ul>
+      <form className="flex flex-wrap gap-2" onSubmit={add}>
+        <TextField
+          aria-label="Name"
+          placeholder="Name"
+          autoComplete="off"
+          autoCapitalize="none"
+          spellCheck={false}
+          className="min-w-48 flex-1"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+        <PasswordField value={password} onChange={setPassword} />
+        <Button type="submit" disabled={busy || !name.trim() || !password}>
+          Add admin
+        </Button>
+      </form>
+      {error ? <p className="text-sm text-accent">{error}</p> : null}
+    </Section>
+  );
+}
+
+/** A user or an admin: its name, a new password, and a delete. */
+function Row({
+  label,
+  you = false,
   busy,
   onPassword,
+  onDelete,
 }: {
-  user: User;
-  you: boolean;
-  act: Act;
+  label: string;
+  you?: boolean;
   busy: boolean;
-  onPassword: (shown: Shown) => void;
+  onPassword: (password: string) => Promise<boolean>;
+  onDelete: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [password, setPassword] = useState("");
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
-    if (await act(() => updateUser(user.id, { password }))) {
+    if (await onPassword(password)) {
       setEditing(false);
       setPassword("");
-      // Your own sessions end with your password, so the page is about to leave anyway.
-      if (you) leaveFor("/login");
-      else onPassword({ address: user.address, password });
     }
   };
 
@@ -309,25 +361,11 @@ function UserRow({
     <li className="flex flex-col gap-2 px-3 py-2">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <span className="font-medium">
-          {user.address}
+          {label}
           {you ? <span className="ml-2 text-sm text-faint">you</span> : null}
         </span>
         {/* One group, so on a narrow screen the controls wrap together to the right. */}
         <span className="ml-auto flex items-center gap-x-4">
-          <label className="flex items-center gap-2 text-sm text-muted">
-            <input
-              type="checkbox"
-              checked={user.admin}
-              disabled={busy}
-              onChange={(e) => {
-                const admin = e.target.checked;
-                void act(() => updateUser(user.id, { admin })).then((ok) => {
-                  if (ok && you && !admin) leaveFor("/login");
-                });
-              }}
-            />
-            Admin
-          </label>
           <Button
             size="bar"
             disabled={busy}
@@ -335,10 +373,7 @@ function UserRow({
           >
             Password…
           </Button>
-          <DeleteButton
-            disabled={busy}
-            onConfirm={() => void act(() => deleteUser(user.id))}
-          />
+          <DeleteButton disabled={busy} onConfirm={onDelete} />
         </span>
       </div>
       {editing ? (
@@ -357,8 +392,8 @@ function UserRow({
 }
 
 /**
- * Shown, not masked: it is somebody else's password, typed or generated to be copied into their
- * mail client.
+ * Shown, not masked: it is typed or generated to be copied, into a mail client or to whoever it
+ * is for.
  */
 function PasswordField({
   value,
@@ -393,7 +428,7 @@ function ShownPassword({
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-line bg-surface px-3 py-2 text-sm">
       <span>
-        Password for <span className="font-medium">{shown.address}</span>:
+        Password for <span className="font-medium">{shown.who}</span>:
       </span>
       <code className="font-mono select-all">{shown.password}</code>
       <span className="text-muted">Copy it now: it is not shown again.</span>

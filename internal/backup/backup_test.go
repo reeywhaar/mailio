@@ -96,23 +96,22 @@ func TestOnlyContentCountsAsAChange(t *testing.T) {
 
 	var link string
 	still("an admin link", func() (err error) { link, _, err = st.CreateAdminLink(ctx); return })
-	var admin *store.User
-	moved("spending it", func() (err error) {
-		admin, err = st.UseAdminLink(ctx, link, "inbox@reey.ru", "correct horse")
-		return
-	})
+	var admin *store.Admin
+	moved("spending it", func() (err error) { admin, err = st.UseAdminLink(ctx, link, "misha", "correct horse"); return })
 	still("a sign-in", func() error { _, err := st.CreateSession(ctx, "token", admin.ID, "curl/8"); return err })
+	moved("an admin's password", func() error { return st.SetAdminPassword(ctx, admin.ID, "battery staple", "token") })
+	var other *store.Admin
+	moved("another admin", func() (err error) { other, err = st.CreateAdmin(ctx, "anna", "correct horse"); return })
+	moved("an admin deleted", func() error { return st.DeleteAdmin(ctx, other.ID) })
 
 	var d *store.Domain
 	moved("a domain", func() (err error) { d, err = st.CreateDomain(ctx, "vyrtsev.com"); return })
 	var u *store.User
-	moved("a user", func() (err error) { u, err = st.CreateUser(ctx, "inbox@vyrtsev.com", "correct horse", false); return })
+	moved("a user", func() (err error) { u, err = st.CreateUser(ctx, "inbox@vyrtsev.com", "correct horse"); return })
 	moved("a password", func() error { return st.SetPassword(ctx, u.ID, "battery staple") })
 	moved("junk", func() error { return st.SetUnknown(ctx, d.ID, store.UnknownJunk, u.ID) })
 	still("the same junk again", func() error { return st.SetUnknown(ctx, d.ID, store.UnknownJunk, u.ID) })
 	moved("dropping instead", func() error { return st.SetUnknown(ctx, d.ID, store.UnknownDrop, "") })
-	moved("an admin", func() error { return st.SetAdmin(ctx, u.ID, true) })
-	still("an admin again", func() error { return st.SetAdmin(ctx, u.ID, true) })
 	moved("a user deleted", func() error { return st.DeleteUser(ctx, u.ID) })
 	moved("a domain deleted", func() error { return st.DeleteDomain(ctx, d.ID) })
 }
@@ -124,7 +123,7 @@ func TestTheArchiveIsADatabaseThatOpens(t *testing.T) {
 	if _, err := st.CreateDomain(ctx, "reey.ru"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.CreateUser(ctx, "inbox@reey.ru", "correct horse", true); err != nil {
+	if _, err := st.CreateUser(ctx, "inbox@reey.ru", "correct horse"); err != nil {
 		t.Fatal(err)
 	}
 

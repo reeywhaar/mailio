@@ -24,22 +24,22 @@ const userAgentMax = 400
 // There is no field holding the cookie value. The table is keyed by sha256 of it, so nothing
 // readable ever contains something replayable.
 type Session struct {
-	UserID    string
+	AdminID   string
 	ExpiresAt time.Time
 }
 
 // CreateSession records a sign-in. token is the cookie value; only its hash is stored.
-func (s *Store) CreateSession(ctx context.Context, token, userID, userAgent string) (*Session, error) {
+func (s *Store) CreateSession(ctx context.Context, token, adminID, userAgent string) (*Session, error) {
 	now := s.Now()
 	expires := now.Add(SessionLifetime)
 	_, err := s.writer.ExecContext(ctx,
-		`INSERT INTO sessions (id_hash, user_id, user_agent, created_at, last_seen_at, expires_at)
+		`INSERT INTO sessions (id_hash, admin_id, user_agent, created_at, last_seen_at, expires_at)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
-		hashToken(token), userID, truncate(userAgent, userAgentMax), unix(now), unix(now), unix(expires))
+		hashToken(token), adminID, truncate(userAgent, userAgentMax), unix(now), unix(now), unix(expires))
 	if err != nil {
 		return nil, fmt.Errorf("create session: %w", err)
 	}
-	return &Session{UserID: userID, ExpiresAt: expires}, nil
+	return &Session{AdminID: adminID, ExpiresAt: expires}, nil
 }
 
 // SessionByToken returns a live session, or ErrNotFound. Expiry is applied in the query: a
@@ -50,8 +50,8 @@ func (s *Store) SessionByToken(ctx context.Context, token string) (*Session, err
 		expires int64
 	)
 	err := s.reader.QueryRowContext(ctx,
-		`SELECT user_id, expires_at FROM sessions WHERE id_hash = ? AND expires_at > ?`,
-		hashToken(token), unix(s.Now())).Scan(&sess.UserID, &expires)
+		`SELECT admin_id, expires_at FROM sessions WHERE id_hash = ? AND expires_at > ?`,
+		hashToken(token), unix(s.Now())).Scan(&sess.AdminID, &expires)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

@@ -8,7 +8,7 @@ import { Wordmark } from "@app/components/Wordmark";
 import { leaveFor } from "@app/leave";
 
 export function SignIn() {
-  const [address, setAddress] = useState("");
+  const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -18,7 +18,7 @@ export function SignIn() {
     setBusy(true);
     setError("");
     try {
-      await signIn(address, password);
+      await signIn(name, password);
       leaveFor("/");
     } catch (err) {
       setError(messageOf(err));
@@ -30,13 +30,14 @@ export function SignIn() {
     <Shell title={<Wordmark />}>
       <form className="flex flex-col gap-3" onSubmit={submit}>
         <TextField
-          name="address"
-          type="email"
+          name="name"
           autoComplete="username"
-          placeholder="Address"
+          autoCapitalize="none"
+          spellCheck={false}
+          placeholder="Name"
           className="w-full"
-          value={address}
-          onChange={(e) => setAddress(e.target.value)}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
           autoFocus
         />
         <TextField
@@ -63,7 +64,7 @@ export function SignIn() {
  */
 export function AdminLink({ token }: { token: string }) {
   const [live, setLive] = useState<boolean | null>(null);
-  const [address, setAddress] = useState("");
+  const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -97,7 +98,7 @@ export function AdminLink({ token }: { token: string }) {
     setBusy(true);
     setError("");
     try {
-      await spendAdminLink(token, address, password);
+      await spendAdminLink(token, name, password);
       leaveFor("/");
     } catch (err) {
       setError(messageOf(err));
@@ -108,19 +109,19 @@ export function AdminLink({ token }: { token: string }) {
   return (
     <Shell title="Set an admin's password">
       <p className="text-sm text-muted">
-        A new address becomes a user, and its domain is added if it is not here
-        yet. An address that already exists gets this password. Either way it
-        becomes an admin.
+        The name and password you sign in to this page with. A new name becomes
+        an admin; one that already exists gets this password.
       </p>
       <form className="flex flex-col gap-3" onSubmit={submit}>
         <TextField
-          name="address"
-          type="email"
+          name="name"
           autoComplete="username"
-          placeholder="inbox@example.com"
+          autoCapitalize="none"
+          spellCheck={false}
+          placeholder="Name, e.g. admin"
           className="w-full"
-          value={address}
-          onChange={(e) => setAddress(e.target.value)}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
           autoFocus
         />
         <TextField

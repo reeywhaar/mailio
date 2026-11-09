@@ -12,8 +12,15 @@ func userJSON(u *store.User) map[string]any {
 		"id":         u.ID,
 		"address":    u.Address(),
 		"domain_id":  u.DomainID,
-		"admin":      u.Admin,
 		"created_at": u.CreatedAt.Unix(),
+	}
+}
+
+func adminJSON(a *store.Admin) map[string]any {
+	return map[string]any{
+		"id":         a.ID,
+		"name":       a.Name,
+		"created_at": a.CreatedAt.Unix(),
 	}
 }
 
@@ -67,7 +74,7 @@ func (s *Server) createDomain(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	s.log.Info("domain added", "domain", d.ID, "by", userOf(r).ID)
+	s.log.Info("domain added", "domain", d.ID, "by", adminOf(r).ID)
 	writeJSON(w, http.StatusCreated, domainJSON(d))
 }
 
@@ -97,7 +104,7 @@ func (s *Server) updateDomain(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	s.log.Info("domain changed", "domain", d.ID, "unknown", d.Unknown, "by", userOf(r).ID)
+	s.log.Info("domain changed", "domain", d.ID, "unknown", d.Unknown, "by", adminOf(r).ID)
 	writeJSON(w, http.StatusOK, domainJSON(d))
 }
 
@@ -110,7 +117,7 @@ func (s *Server) deleteDomain(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	s.log.Info("domain deleted", "domain", id, "by", userOf(r).ID)
+	s.log.Info("domain deleted", "domain", id, "by", adminOf(r).ID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -129,48 +136,38 @@ func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		credentials
-		Admin bool `json:"admin"`
+		Address  string `json:"address"`
+		Password string `json:"password"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
-	u, err := s.st.CreateUser(r.Context(), req.Address, req.Password, req.Admin)
+	u, err := s.st.CreateUser(r.Context(), req.Address, req.Password)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	s.log.Info("user created", "user", u.ID, "admin", u.Admin, "by", userOf(r).ID)
+	s.log.Info("user created", "user", u.ID, "by", adminOf(r).ID)
 	writeJSON(w, http.StatusCreated, userJSON(u))
 }
 
-// updateUser changes a password, the admin flag, or both. A field left out is left alone.
+// updateUser sets a password, the one thing about a user that changes.
 func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, ids.User)
 	if !ok {
 		return
 	}
 	var req struct {
-		Password *string `json:"password"`
-		Admin    *bool   `json:"admin"`
+		Password string `json:"password"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
-	if req.Password != nil {
-		if err := s.st.SetPassword(r.Context(), id, *req.Password); err != nil {
-			s.fail(w, r, err)
-			return
-		}
-		s.log.Info("password changed", "user", id, "by", userOf(r).ID)
+	if err := s.st.SetPassword(r.Context(), id, req.Password); err != nil {
+		s.fail(w, r, err)
+		return
 	}
-	if req.Admin != nil {
-		if err := s.st.SetAdmin(r.Context(), id, *req.Admin); err != nil {
-			s.fail(w, r, err)
-			return
-		}
-		s.log.Info("admin changed", "user", id, "admin", *req.Admin, "by", userOf(r).ID)
-	}
+	s.log.Info("password changed", "user", id, "by", adminOf(r).ID)
 	u, err := s.st.UserByID(r.Context(), id)
 	if err != nil {
 		s.fail(w, r, err)
@@ -188,6 +185,71 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	s.log.Info("user deleted", "user", id, "by", userOf(r).ID)
+	s.log.Info("user deleted", "user", id, "by", adminOf(r).ID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) listAdmins(w http.ResponseWriter, r *http.Request) {
+	list, err := s.st.Admins(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	out := make([]map[string]any, len(list))
+	for i := range list {
+		out[i] = adminJSON(&list[i])
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) createAdmin(w http.ResponseWriter, r *http.Request) {
+	var req credentials
+	if !decode(w, r, &req) {
+		return
+	}
+	a, err := s.st.CreateAdmin(r.Context(), req.Name, req.Password)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.log.Info("admin created", "admin", a.ID, "by", adminOf(r).ID)
+	writeJSON(w, http.StatusCreated, adminJSON(a))
+}
+
+// updateAdmin sets a password and signs that admin out everywhere but here.
+func (s *Server) updateAdmin(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, ids.Admin)
+	if !ok {
+		return
+	}
+	var req struct {
+		Password string `json:"password"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if err := s.st.SetAdminPassword(r.Context(), id, req.Password, sessionOf(r)); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.log.Info("admin password changed", "admin", id, "by", adminOf(r).ID)
+	a, err := s.st.AdminByID(r.Context(), id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, adminJSON(a))
+}
+
+func (s *Server) deleteAdmin(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, ids.Admin)
+	if !ok {
+		return
+	}
+	if err := s.st.DeleteAdmin(r.Context(), id); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.log.Info("admin deleted", "admin", id, "by", adminOf(r).ID)
 	w.WriteHeader(http.StatusNoContent)
 }

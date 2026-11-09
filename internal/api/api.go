@@ -35,9 +35,9 @@ type Server struct {
 	mux *http.ServeMux
 
 	// Two buckets with two jobs: the global one bounds bcrypt on unauthenticated endpoints, the
-	// per-address one stops somebody working through a password list against one user.
+	// per-name one stops somebody working through a password list against one admin.
 	signInAll  *limiter
-	signInUser *limiter
+	signInName *limiter
 }
 
 // New builds the handler. web is the built bundle, or nil for a checkout that never built it.
@@ -48,7 +48,7 @@ func New(cfg *config.Config, log *slog.Logger, st *store.Store, web fs.FS) *Serv
 		st:         st,
 		mux:        http.NewServeMux(),
 		signInAll:  newLimiter(30, 2*time.Second),
-		signInUser: newLimiter(5, 12*time.Second),
+		signInName: newLimiter(5, 12*time.Second),
 	}
 
 	s.mux.HandleFunc("GET /healthz", s.healthz)
@@ -68,6 +68,11 @@ func New(cfg *config.Config, log *slog.Logger, st *store.Store, web fs.FS) *Serv
 	s.mux.Handle("POST /api/users", s.requireAdmin(s.createUser))
 	s.mux.Handle("PATCH /api/users/{id}", s.requireAdmin(s.updateUser))
 	s.mux.Handle("DELETE /api/users/{id}", s.requireAdmin(s.deleteUser))
+
+	s.mux.Handle("GET /api/admins", s.requireAdmin(s.listAdmins))
+	s.mux.Handle("POST /api/admins", s.requireAdmin(s.createAdmin))
+	s.mux.Handle("PATCH /api/admins/{id}", s.requireAdmin(s.updateAdmin))
+	s.mux.Handle("DELETE /api/admins/{id}", s.requireAdmin(s.deleteAdmin))
 
 	// A JSON 404 for an API path nobody registered, rather than the bundle's HTML.
 	s.mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {

@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"time"
 
-	"mailio/internal/address"
 	"mailio/internal/ids"
 )
 
@@ -66,19 +65,18 @@ func (s *Store) AdminLinkExpiry(ctx context.Context, token string) (time.Time, e
 	return fromUnix(expires), nil
 }
 
-// UseAdminLink spends a link on an address and a password, and returns the admin it made.
+// UseAdminLink spends a link on a name and a password, and returns the admin it made.
 //
-// An address nobody has becomes a new user, and its domain is added if mailio did not receive
-// for it yet, which is how the first domain and the first user come to exist. An address that
-// already exists is given the password and made an admin, signed out everywhere it was signed in.
+// A name nobody has becomes a new admin, which is how the first one comes to exist. A name that
+// already exists is given the password and signed out everywhere.
 //
-// The address and password are checked before the link is touched, so a typo leaves it unspent.
-// The spend is a guarded delete in the same transaction as the user, so two requests racing on
-// one link make one admin.
-func (s *Store) UseAdminLink(ctx context.Context, token, addr, password string) (*User, error) {
-	a, err := address.ParseUser(addr)
+// The name and password are checked before the link is touched, so a typo leaves it unspent. The
+// spend is a guarded delete in the same transaction as the admin, so two requests racing on one
+// link make one admin.
+func (s *Store) UseAdminLink(ctx context.Context, token, name, password string) (*Admin, error) {
+	name, err := AdminName(name)
 	if err != nil {
-		return nil, Invalid("%s", err)
+		return nil, err
 	}
 	if _, err := s.AdminLinkExpiry(ctx, token); err != nil {
 		return nil, err
@@ -104,30 +102,15 @@ func (s *Store) UseAdminLink(ctx context.Context, token, addr, password string) 
 		return nil, errLinkDead
 	}
 
-	d, err := domainWhere(ctx, tx, "name = ?", a.Domain)
-	if errors.Is(err, ErrNotFound) {
-		d, err = s.newDomain(a.Domain)
-		if err == nil {
-			err = insertDomain(ctx, tx, d)
-		}
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	u, err := userWhere(ctx, tx, "u.domain_id = ? AND u.local_part = ?", d.ID, a.Local)
+	a, err := adminWhere(ctx, tx, "name = ?", name)
 	switch {
 	case err == nil:
-		if err := setPassword(ctx, tx, u.ID, hash); err != nil {
+		if err := setAdminPassword(ctx, tx, a.ID, hash, ""); err != nil {
 			return nil, err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE users SET admin = 1 WHERE id = ?`, u.ID); err != nil {
-			return nil, fmt.Errorf("use admin link: %w", err)
-		}
-		u.Admin = true
 	case errors.Is(err, ErrNotFound):
-		u = &User{ID: ids.New(ids.User, now.UnixMilli()), Local: a.Local, Domain: d.Name, DomainID: d.ID, Admin: true, CreatedAt: now}
-		if err := insertUser(ctx, tx, u, hash); err != nil {
+		a = &Admin{ID: ids.New(ids.Admin, now.UnixMilli()), Name: name, CreatedAt: now}
+		if err := insertAdmin(ctx, tx, a, hash); err != nil {
 			return nil, err
 		}
 	default:
@@ -137,7 +120,7 @@ func (s *Store) UseAdminLink(ctx context.Context, token, addr, password string) 
 		return nil, fmt.Errorf("use admin link: %w", err)
 	}
 	s.changed()
-	return u, nil
+	return a, nil
 }
 
 // SweepAdminLinks collects a link nobody used.

@@ -89,10 +89,9 @@ docker logs mailio
 {"level":"INFO","msg":"no admin yet: open this link to make one","link":"https://mail.example.com/admin/password#token=…",…}
 ```
 
-The link asks for an address and a password. A new address becomes a user, and its domain is
-added if mailio did not receive for it yet; that is how the first domain and user come to exist.
-An existing address gets the password and is signed out everywhere. Either way it becomes an
-admin and is signed in.
+The link asks for a name and a password: what you sign in to the admin interface with, not a mail
+address. A new name becomes an admin; one that already exists gets the password and is signed out
+everywhere. Either way the link signs you in, and the domains and users are added from there.
 
 Locked out, or a password forgotten:
 

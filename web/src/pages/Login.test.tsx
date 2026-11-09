@@ -21,10 +21,10 @@ test("a dead admin link says so before anybody types into it", async () => {
   });
   render(<AdminLink token="dead" />);
   expect(await screen.findByText(/has been used or has expired/)).toBeTruthy();
-  expect(screen.queryByPlaceholderText("inbox@example.com")).toBeNull();
+  expect(screen.queryByPlaceholderText(/^Name/)).toBeNull();
 });
 
-test("a live admin link is spent on the address and password, then the app opens", async () => {
+test("a live admin link is spent on a name and password, then the app opens", async () => {
   const { sent } = fakeServer({
     "POST /api/admin-link/check": () => ({ body: { expires_at: 1 } }),
     "POST /api/admin-link": () => ({ status: 204 }),
@@ -37,8 +37,8 @@ test("a live admin link is spent on the address and password, then the app opens
     expect((button as HTMLButtonElement).disabled).toBe(false),
   );
 
-  fireEvent.change(screen.getByPlaceholderText("inbox@example.com"), {
-    target: { value: "inbox@reey.ru" },
+  fireEvent.change(screen.getByPlaceholderText(/^Name/), {
+    target: { value: "misha" },
   });
   fireEvent.change(screen.getByPlaceholderText(/^Password/), {
     target: { value: "correct horse" },
@@ -51,7 +51,7 @@ test("a live admin link is spent on the address and password, then the app opens
     path: "/api/admin-link",
     body: {
       token: "live",
-      address: "inbox@reey.ru",
+      name: "misha",
       password: "correct horse",
     },
   });
@@ -60,20 +60,23 @@ test("a live admin link is spent on the address and password, then the app opens
 test("signing in shows the server's refusal and stays on the page", async () => {
   fakeServer({
     "POST /api/session": () => ({
-      status: 403,
-      body: { code: "forbidden", message: "Only an admin can sign in here." },
+      status: 401,
+      body: {
+        code: "unauthenticated",
+        message: "That name and password do not match.",
+      },
     }),
   });
   render(<SignIn />);
-  fireEvent.change(screen.getByPlaceholderText("Address"), {
-    target: { value: "misha@reey.ru" },
+  fireEvent.change(screen.getByPlaceholderText("Name"), {
+    target: { value: "misha" },
   });
   fireEvent.change(screen.getByPlaceholderText("Password"), {
     target: { value: "whatever1" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
   expect(
-    await screen.findByText("Only an admin can sign in here."),
+    await screen.findByText("That name and password do not match."),
   ).toBeTruthy();
   expect(leaveFor).not.toHaveBeenCalled();
 });

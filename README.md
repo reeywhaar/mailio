@@ -42,8 +42,8 @@ docker compose up -d
 docker compose logs mailio
 ```
 
-The log has a link. Open it, and give the address and password of the first admin; its domain is
-added with it. Locked out later:
+The log has a link. Open it, and choose the first admin's name and password — a sign-in for the
+admin interface, not a mailbox. Domains and users are added from there. Locked out later:
 
 ```sh
 docker compose exec mailio mailio admin reset

@@ -19,7 +19,7 @@ func adminCmd() *cobra.Command {
 func adminResetCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "reset",
-		Short: "Print a link that makes an admin, or sets an existing user's password and makes it one",
+		Short: "Print a link that makes an admin, or sets an existing admin's password",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, st, _, err := setup()

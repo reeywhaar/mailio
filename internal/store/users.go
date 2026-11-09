@@ -28,21 +28,20 @@ func SetBcryptCost(cost int) {
 // would otherwise authenticate against any prefix of itself.
 const passwordMaxBytes = 72
 
-// User is an address mail is delivered to, and the password that signs in as it — to read the
-// mail, to send as it, and to the admin interface when Admin is set.
+// User is an address mail is delivered to, and the password that signs in as it: to read the
+// mail and to send as it. Never to the admin interface, which is an Admin's.
 type User struct {
 	ID        string
 	Local     string
 	Domain    string
 	DomainID  string
-	Admin     bool
 	CreatedAt time.Time
 }
 
 // Address is what the user signs in with and receives at.
 func (u *User) Address() string { return u.Local + "@" + u.Domain }
 
-const userColumns = `u.id, u.local_part, d.name, u.domain_id, u.admin, u.created_at`
+const userColumns = `u.id, u.local_part, d.name, u.domain_id, u.created_at`
 const userFrom = ` FROM users u JOIN domains d ON d.id = u.domain_id`
 
 func scanUser(row interface{ Scan(...any) error }) (*User, error) {
@@ -50,7 +49,7 @@ func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 		u       User
 		created int64
 	)
-	if err := row.Scan(&u.ID, &u.Local, &u.Domain, &u.DomainID, &u.Admin, &created); err != nil {
+	if err := row.Scan(&u.ID, &u.Local, &u.Domain, &u.DomainID, &created); err != nil {
 		return nil, err
 	}
 	u.CreatedAt = fromUnix(created)
@@ -79,7 +78,7 @@ func hashPassword(password string) (string, error) {
 }
 
 // CreateUser makes a user at a domain mailio already receives for.
-func (s *Store) CreateUser(ctx context.Context, addr, password string, admin bool) (*User, error) {
+func (s *Store) CreateUser(ctx context.Context, addr, password string) (*User, error) {
 	a, err := address.ParseUser(addr)
 	if err != nil {
 		return nil, Invalid("%s", err)
@@ -96,7 +95,7 @@ func (s *Store) CreateUser(ctx context.Context, addr, password string, admin boo
 		return nil, err
 	}
 	now := s.Now()
-	u := &User{ID: ids.New(ids.User, now.UnixMilli()), Local: a.Local, Domain: d.Name, DomainID: d.ID, Admin: admin, CreatedAt: now}
+	u := &User{ID: ids.New(ids.User, now.UnixMilli()), Local: a.Local, Domain: d.Name, DomainID: d.ID, CreatedAt: now}
 	if err := insertUser(ctx, s.writer, u, hash); err != nil {
 		return nil, err
 	}
@@ -106,8 +105,8 @@ func (s *Store) CreateUser(ctx context.Context, addr, password string, admin boo
 
 func insertUser(ctx context.Context, db execer, u *User, hash string) error {
 	_, err := db.ExecContext(ctx,
-		`INSERT INTO users (id, domain_id, local_part, password_hash, admin, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		u.ID, u.DomainID, u.Local, hash, u.Admin, unix(u.CreatedAt))
+		`INSERT INTO users (id, domain_id, local_part, password_hash, created_at) VALUES (?, ?, ?, ?, ?)`,
+		u.ID, u.DomainID, u.Local, hash, unix(u.CreatedAt))
 	if isUnique(err) {
 		return Conflict("%s is taken.", u.Address())
 	}
@@ -135,7 +134,7 @@ func (s *Store) Authenticate(ctx context.Context, addr, password string) (*User,
 		u       User
 		created int64
 	)
-	err = row.Scan(&hash, &u.ID, &u.Local, &u.Domain, &u.DomainID, &u.Admin, &created)
+	err = row.Scan(&hash, &u.ID, &u.Local, &u.Domain, &u.DomainID, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		bcrypt.CompareHashAndPassword(decoyHash, []byte(password))
 		return nil, ErrNotFound
@@ -180,97 +179,20 @@ func (s *Store) Users(ctx context.Context) ([]User, error) {
 	return out, rows.Err()
 }
 
-// HasAdmin reports whether anybody can sign in to the admin interface. Nothing else decides
-// whether serve prints an admin link at startup.
-func (s *Store) HasAdmin(ctx context.Context) (bool, error) {
-	var n int
-	err := s.reader.QueryRowContext(ctx, `SELECT count(*) FROM users WHERE admin = 1`).Scan(&n)
-	return n > 0, err
-}
-
-// SetPassword replaces a user's password and signs out everywhere they were signed in, which is
-// what somebody changing a password they think was seen wants.
+// SetPassword replaces a user's password.
 func (s *Store) SetPassword(ctx context.Context, id, password string) error {
 	hash, err := hashPassword(password)
 	if err != nil {
 		return err
 	}
-	tx, err := s.writer.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("set password: %w", err)
-	}
-	defer tx.Rollback()
-	if err := setPassword(ctx, tx, id, hash); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("set password: %w", err)
-	}
-	s.changed()
-	return nil
-}
-
-func setPassword(ctx context.Context, tx *sql.Tx, id, hash string) error {
-	res, err := tx.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ?`, hash, id)
+	res, err := s.writer.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ?`, hash, id)
 	if err != nil {
 		return fmt.Errorf("set password: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return NotFound("There is no such user.")
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, id); err != nil {
-		return fmt.Errorf("set password: %w", err)
-	}
-	return nil
-}
-
-// SetAdmin grants or takes away the admin interface.
-//
-// The last admin keeps it. `mailio admin reset` would let somebody back in, but a click should
-// not be what makes that necessary.
-func (s *Store) SetAdmin(ctx context.Context, id string, admin bool) error {
-	tx, err := s.writer.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("set admin: %w", err)
-	}
-	defer tx.Rollback()
-
-	u, err := userWhere(ctx, tx, "u.id = ?", id)
-	if err != nil {
-		return err
-	}
-	// Already so: no write, no sign-out, and nothing for the backup loop to count.
-	if u.Admin == admin {
-		return nil
-	}
-	if u.Admin {
-		if err := otherAdmins(ctx, tx, id); err != nil {
-			return err
-		}
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE users SET admin = ? WHERE id = ?`, admin, id); err != nil {
-		return fmt.Errorf("set admin: %w", err)
-	}
-	if !admin {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, id); err != nil {
-			return fmt.Errorf("set admin: %w", err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("set admin: %w", err)
-	}
 	s.changed()
-	return nil
-}
-
-func otherAdmins(ctx context.Context, tx *sql.Tx, id string) error {
-	var n int
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM users WHERE admin = 1 AND id != ?`, id).Scan(&n); err != nil {
-		return fmt.Errorf("count admins: %w", err)
-	}
-	if n == 0 {
-		return Conflict("That is the only admin. Make somebody else an admin first.")
-	}
 	return nil
 }
 
@@ -285,11 +207,6 @@ func (s *Store) DeleteUser(ctx context.Context, id string) error {
 	u, err := userWhere(ctx, tx, "u.id = ?", id)
 	if err != nil {
 		return err
-	}
-	if u.Admin {
-		if err := otherAdmins(ctx, tx, id); err != nil {
-			return err
-		}
 	}
 	var junkFor string
 	err = tx.QueryRowContext(ctx, `SELECT name FROM domains WHERE unknown_user_id = ? ORDER BY name LIMIT 1`, id).Scan(&junkFor)

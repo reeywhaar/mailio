@@ -100,7 +100,7 @@ func signedIn(t *testing.T) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if code, body := h.do("POST", "/api/admin-link", map[string]any{"token": token, "address": "inbox@reey.ru", "password": "correct horse"}); code != http.StatusNoContent {
+	if code, body := h.do("POST", "/api/admin-link", map[string]any{"token": token, "name": "misha", "password": "correct horse"}); code != http.StatusNoContent {
 		t.Fatalf("admin link: %d %v", code, body)
 	}
 	return h
@@ -116,32 +116,39 @@ func TestAnAdminLinkIsCheckedThenSpentAndSignsIn(t *testing.T) {
 	if code, _ := h.do("GET", "/api/me", nil); code != http.StatusUnauthorized {
 		t.Fatalf("me before: %d", code)
 	}
-	if code, body := h.do("POST", "/api/admin-link", map[string]any{"token": token, "address": "inbox@reey.ru", "password": "correct horse"}); code != http.StatusNoContent {
+	if code, body := h.do("POST", "/api/admin-link", map[string]any{"token": token, "name": "Misha", "password": "correct horse"}); code != http.StatusNoContent {
 		t.Fatalf("use: %d %v", code, body)
 	}
 	code, me := h.do("GET", "/api/me", nil)
-	if code != http.StatusOK || me["address"] != "inbox@reey.ru" || me["admin"] != true {
+	if code != http.StatusOK || me["name"] != "misha" {
 		t.Fatalf("me after: %d %v", code, me)
+	}
+	// An admin is not a mailbox, so the link made no domain and no user.
+	if len(h.list("/api/domains")) != 0 || len(h.list("/api/users")) != 0 {
+		t.Error("the admin link made a domain or a user")
 	}
 	if code, _ := h.do("POST", "/api/admin-link/check", map[string]any{"token": token}); code != http.StatusNotFound {
 		t.Errorf("a spent link checks as %d", code)
 	}
 }
 
-func TestOnlyAnAdminCanSignIn(t *testing.T) {
+func TestAUserCannotSignInHereOnlyAnAdmin(t *testing.T) {
 	h := signedIn(t)
-	if code, body := h.do("POST", "/api/users", map[string]any{"address": "misha@reey.ru", "password": "another one"}); code != http.StatusCreated {
-		t.Fatalf("create: %d %v", code, body)
+	if code, body := h.do("POST", "/api/domains", map[string]any{"name": "reey.ru"}); code != http.StatusCreated {
+		t.Fatalf("domain: %d %v", code, body)
+	}
+	if code, body := h.do("POST", "/api/users", map[string]any{"address": "inbox@reey.ru", "password": "another one"}); code != http.StatusCreated {
+		t.Fatalf("user: %d %v", code, body)
 	}
 
 	b := h.fresh()
-	if code, _ := b.do("POST", "/api/session", map[string]any{"address": "misha@reey.ru", "password": "wrong password"}); code != http.StatusUnauthorized {
+	if code, _ := b.do("POST", "/api/session", map[string]any{"name": "inbox@reey.ru", "password": "another one"}); code != http.StatusUnauthorized {
+		t.Errorf("a user: %d", code)
+	}
+	if code, _ := b.do("POST", "/api/session", map[string]any{"name": "misha", "password": "wrong password"}); code != http.StatusUnauthorized {
 		t.Errorf("wrong password: %d", code)
 	}
-	if code, _ := b.do("POST", "/api/session", map[string]any{"address": "misha@reey.ru", "password": "another one"}); code != http.StatusForbidden {
-		t.Errorf("not an admin: %d", code)
-	}
-	if code, _ := b.do("POST", "/api/session", map[string]any{"address": "Inbox@Reey.ru", "password": "correct horse"}); code != http.StatusNoContent {
+	if code, _ := b.do("POST", "/api/session", map[string]any{"name": "Misha", "password": "correct horse"}); code != http.StatusNoContent {
 		t.Errorf("an admin: %d", code)
 	}
 	if code, _ := b.do("GET", "/api/me", nil); code != http.StatusOK {
@@ -164,6 +171,7 @@ func TestEveryAdminRouteNeedsASession(t *testing.T) {
 	for _, c := range [][2]string{
 		{"GET", "/api/domains"}, {"POST", "/api/domains"}, {"PATCH", "/api/domains/dm_x"}, {"DELETE", "/api/domains/dm_x"},
 		{"GET", "/api/users"}, {"POST", "/api/users"}, {"PATCH", "/api/users/u_x"}, {"DELETE", "/api/users/u_x"},
+		{"GET", "/api/admins"}, {"POST", "/api/admins"}, {"PATCH", "/api/admins/ad_x"}, {"DELETE", "/api/admins/ad_x"},
 		{"GET", "/api/me"}, {"DELETE", "/api/session"},
 	} {
 		if code, _ := h.do(c[0], c[1], map[string]any{}); code != http.StatusUnauthorized {
@@ -180,7 +188,7 @@ func TestAnAdminManagesDomainsAndUsers(t *testing.T) {
 		t.Fatalf("create domain: %d %v", code, d)
 	}
 	code, u := h.do("POST", "/api/users", map[string]any{"address": "inbox@vyrtsev.com", "password": "correct horse"})
-	if code != http.StatusCreated || u["admin"] != false {
+	if code != http.StatusCreated || u["address"] != "inbox@vyrtsev.com" {
 		t.Fatalf("create user: %d %v", code, u)
 	}
 
@@ -196,11 +204,10 @@ func TestAnAdminManagesDomainsAndUsers(t *testing.T) {
 		t.Errorf("set drop: %d", code)
 	}
 
-	code, u = h.do("PATCH", "/api/users/"+userID, map[string]any{"admin": true, "password": "a new password"})
-	if code != http.StatusOK || u["admin"] != true {
+	if code, u := h.do("PATCH", "/api/users/"+userID, map[string]any{"password": "a new password"}); code != http.StatusOK {
 		t.Fatalf("update user: %d %v", code, u)
 	}
-	if len(h.list("/api/users")) != 2 || len(h.list("/api/domains")) != 2 {
+	if len(h.list("/api/users")) != 1 || len(h.list("/api/domains")) != 1 {
 		t.Error("the lists do not have what was made")
 	}
 
@@ -209,6 +216,60 @@ func TestAnAdminManagesDomainsAndUsers(t *testing.T) {
 	}
 	if code, _ := h.do("DELETE", "/api/domains/"+domainID, nil); code != http.StatusNoContent {
 		t.Errorf("delete domain: %d", code)
+	}
+}
+
+func TestAnAdminManagesAdmins(t *testing.T) {
+	h := signedIn(t)
+	code, a := h.do("POST", "/api/admins", map[string]any{"name": "anna", "password": "correct horse"})
+	if code != http.StatusCreated || a["name"] != "anna" {
+		t.Fatalf("create: %d %v", code, a)
+	}
+	if code, _ := h.do("POST", "/api/admins", map[string]any{"name": "ANNA", "password": "correct horse"}); code != http.StatusConflict {
+		t.Errorf("a name taken: %d", code)
+	}
+	if len(h.list("/api/admins")) != 2 {
+		t.Error("the list does not have both")
+	}
+
+	// Anna signs in elsewhere, and a new password ends that session.
+	anna := h.fresh()
+	if code, _ := anna.do("POST", "/api/session", map[string]any{"name": "anna", "password": "correct horse"}); code != http.StatusNoContent {
+		t.Fatalf("anna signs in: %d", code)
+	}
+	id := a["id"].(string)
+	if code, _ := h.do("PATCH", "/api/admins/"+id, map[string]any{"password": "a new password"}); code != http.StatusOK {
+		t.Fatalf("password: %d", code)
+	}
+	if code, _ := anna.do("GET", "/api/me", nil); code != http.StatusUnauthorized {
+		t.Errorf("anna's session outlived her password: %d", code)
+	}
+
+	if code, _ := h.do("DELETE", "/api/admins/"+id, nil); code != http.StatusNoContent {
+		t.Errorf("delete: %d", code)
+	}
+	_, me := h.do("GET", "/api/me", nil)
+	if code, _ := h.do("DELETE", "/api/admins/"+me["id"].(string), nil); code != http.StatusConflict {
+		t.Errorf("deleting the last admin: %d", code)
+	}
+}
+
+// Changing your own password keeps you signed in here, and only here.
+func TestYourOwnNewPasswordKeepsThisSession(t *testing.T) {
+	h := signedIn(t)
+	elsewhere := h.fresh()
+	if code, _ := elsewhere.do("POST", "/api/session", map[string]any{"name": "misha", "password": "correct horse"}); code != http.StatusNoContent {
+		t.Fatalf("sign in elsewhere: %d", code)
+	}
+	_, me := h.do("GET", "/api/me", nil)
+	if code, _ := h.do("PATCH", "/api/admins/"+me["id"].(string), map[string]any{"password": "a new password"}); code != http.StatusOK {
+		t.Fatalf("password: %d", code)
+	}
+	if code, _ := h.do("GET", "/api/me", nil); code != http.StatusOK {
+		t.Errorf("signed out here: %d", code)
+	}
+	if code, _ := elsewhere.do("GET", "/api/me", nil); code != http.StatusUnauthorized {
+		t.Errorf("still signed in elsewhere: %d", code)
 	}
 }
 

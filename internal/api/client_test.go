@@ -89,7 +89,7 @@ func TestAWrongPasswordIsALineFail2banBansOn(t *testing.T) {
 	proxies, _ := config.ParseProxies("private")
 	s := New(&config.Config{PublicURL: u, TrustedProxies: proxies}, slog.New(slog.NewJSONHandler(&logged, nil)), st, nil)
 
-	r := httptest.NewRequest("POST", "/api/session", strings.NewReader(`{"address":"inbox@reey.ru","password":"guess one"}`))
+	r := httptest.NewRequest("POST", "/api/session", strings.NewReader(`{"name":"misha","password":"guess one"}`))
 	r.Header.Set("Content-Type", "application/json")
 	r.RemoteAddr = "172.18.0.5:41000"
 	r.Header.Set("X-Forwarded-For", "203.0.113.7")

@@ -5,9 +5,15 @@ and `store.Resolve` are the code.
 
 ## A user is an address and a password
 
-A user is what mail is delivered to, and the same address and password sign in to read it, to send
-as it, and — with the admin flag — to the admin interface. There is no second kind of account and
-no list of extra addresses on a user: an address that should receive mail is a user.
+A user is what mail is delivered to, and the same address and password sign in to read it and to
+send as it. There is no list of extra addresses on a user: an address that should receive mail is
+a user.
+
+## An admin is not a user
+
+An admin signs in to the admin interface with a name, not an address, and has no mailbox. So the
+first admin exists before any domain does, and adds the domains and then the users. Giving
+somebody both means giving them two: a user to read mail, an admin to manage it.
 
 ## Mail to name+anything goes to name
 

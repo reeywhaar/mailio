@@ -9,7 +9,6 @@ import (
 const (
 	CodeInvalid              = "invalid"
 	CodeUnauthenticated      = "unauthenticated"
-	CodeForbidden            = "forbidden"
 	CodeNotFound             = "not_found"
 	CodeConflict             = "conflict"
 	CodeUnsupportedMediaType = "unsupported_media_type"
