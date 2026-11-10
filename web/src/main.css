@@ -1,8 +1,9 @@
 @import "tailwindcss";
 
 /*
- * Semantic tokens, not colors, and the same ones emguio uses. Components name what a color is
- * for; this is the only file that says what those are.
+ * Semantic tokens, not colors, named as emguio names them; the brand is mailio's own, the muddy
+ * green of its icon. Components name what a color is for; this is the only file that says what
+ * those are.
  *
  * Light is the base; dark is an override, so no className needs a dark: variant.
  */
@@ -15,7 +16,7 @@
   --color-faint: #80868f;
   --color-line: #e3e5e8;
   --color-fill: #f0f1f3;
-  --color-brand: #ef6500;
+  --color-brand: #657432;
   --color-brand-ink: #ffffff;
   --color-accent: #b91c1c;
   --color-ok: #15803d;
@@ -35,7 +36,8 @@
     --color-faint: #7d8490;
     --color-line: #31343a;
     --color-fill: #2a2c31;
-    --color-brand: #818cf8;
+    /* Lighter, to stand out on the dark page as the light one does on white. */
+    --color-brand: #9aab5c;
     --color-brand-ink: #111113;
     --color-accent: #f87171;
     --color-ok: #4ade80;
