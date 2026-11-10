@@ -8,28 +8,28 @@ import (
 	"mailio/internal/store"
 )
 
-func userJSON(u *store.User, passwords []store.Password) map[string]any {
+func accountJSON(u *store.Account, passwords []store.Credential) map[string]any {
 	var forwardTo any
-	if u.ForwardUserID != "" {
-		forwardTo = u.ForwardUserID
+	if u.ForwardAccountID != "" {
+		forwardTo = u.ForwardAccountID
 	}
 	list := make([]map[string]any, len(passwords))
 	for i := range passwords {
-		list[i] = passwordJSON(u, &passwords[i])
+		list[i] = credentialJSON(u, &passwords[i])
 	}
 	return map[string]any{
-		"id":              u.ID,
-		"address":         u.Address(),
-		"domain_id":       u.DomainID,
-		"incoming":        u.Incoming,
-		"forward_user_id": forwardTo,
-		"passwords":       list,
-		"created_at":      u.CreatedAt.Unix(),
+		"id":                 u.ID,
+		"address":            u.Address(),
+		"domain_id":          u.DomainID,
+		"incoming":           u.Incoming,
+		"forward_account_id": forwardTo,
+		"credentials":        list,
+		"created_at":         u.CreatedAt.Unix(),
 	}
 }
 
-// passwordJSON never carries the password: only its hash is kept.
-func passwordJSON(u *store.User, p *store.Password) map[string]any {
+// credentialJSON carries no password: only its hash is kept. The one answer that makes it adds it.
+func credentialJSON(u *store.Account, p *store.Credential) map[string]any {
 	var used any
 	if !p.LastUsedAt.IsZero() {
 		used = p.LastUsedAt.Unix()
@@ -51,19 +51,56 @@ func adminJSON(a *store.Admin) map[string]any {
 	}
 }
 
-func (s *Server) domainJSON(d *store.Domain) map[string]any {
-	var junkTo any
-	if d.UnknownUserID != "" {
-		junkTo = d.UnknownUserID
+// domainJSON shows a domain's own DMARC, SPF and relay as null when it follows the default, and
+// its records as they are published, defaults applied. Its relay is "builtin" or a relay's id.
+func (s *Server) domainJSON(d *store.Domain, set *store.Settings) map[string]any {
+	orNull := func(v string) any {
+		if v == "" {
+			return nil
+		}
+		return v
+	}
+	relay := ""
+	switch d.Via {
+	case store.ViaBuiltIn:
+		relay = store.ViaBuiltIn
+	case store.ViaRelay:
+		relay = d.RelayID
 	}
 	return map[string]any{
-		"id":              d.ID,
-		"name":            d.Name,
-		"unknown":         d.Unknown,
-		"unknown_user_id": junkTo,
-		"records":         dnssync.Wanted(d, s.cfg.MailHost),
-		"created_at":      d.CreatedAt.Unix(),
+		"id":                 d.ID,
+		"name":               d.Name,
+		"unknown":            ownOr(d.UnknownOwn, string(d.Unknown)),
+		"unknown_account_id": ownOr(d.UnknownOwn, d.UnknownAccountID),
+		"dmarc":              orNull(string(d.DMARC)),
+		"spf":                orNull(string(d.SPF)),
+		"relay":              orNull(relay),
+		"records":            dnssync.Wanted(d, set, s.cfg.MailHost),
+		"created_at":         d.CreatedAt.Unix(),
 	}
+}
+
+// ownOr is a domain's own value, or null where it follows the default.
+func ownOr(own bool, v string) any {
+	if !own || v == "" {
+		return nil
+	}
+	return v
+}
+
+// writeDomain answers with one domain as the list has it.
+func (s *Server) writeDomain(w http.ResponseWriter, r *http.Request, status int, id string) {
+	d, err := s.st.DomainByID(r.Context(), id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	set, err := s.st.Settings(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, status, s.domainJSON(d, set))
 }
 
 // pathID reads {id} and refuses one that cannot be an id, so a typo is a 400 rather than a 404
@@ -87,9 +124,14 @@ func (s *Server) listDomains(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	set, err := s.st.Settings(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	out := make([]map[string]any, len(list))
 	for i := range list {
-		out[i] = s.domainJSON(&list[i])
+		out[i] = s.domainJSON(&list[i], set)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -107,37 +149,60 @@ func (s *Server) createDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("domain added", "domain", d.ID, "by", adminOf(r).ID)
-	writeJSON(w, http.StatusCreated, s.domainJSON(d))
+	s.writeDomain(w, r, http.StatusCreated, d.ID)
 }
 
-// updateDomain sets what the domain does with mail for addresses nobody has.
+// updateDomain sets a domain's own unknown addresses, DMARC, SPF and relay, "" returning one to
+// the default. A field left out is left alone.
 func (s *Server) updateDomain(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, ids.Domain)
 	if !ok {
 		return
 	}
 	var req struct {
-		Unknown       store.Unknown `json:"unknown"`
-		UnknownUserID *string       `json:"unknown_user_id"`
+		Unknown          *store.Unknown `json:"unknown"`
+		UnknownAccountID *string        `json:"unknown_account_id"`
+		DMARC            *store.DMARC   `json:"dmarc"`
+		SPF              *store.SPF     `json:"spf"`
+		Relay            *string        `json:"relay"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
-	var userID string
-	if req.UnknownUserID != nil {
-		userID = *req.UnknownUserID
+	ctx := r.Context()
+	if req.Unknown != nil {
+		var accountID string
+		if req.UnknownAccountID != nil {
+			accountID = *req.UnknownAccountID
+		}
+		if err := s.st.SetUnknown(ctx, id, *req.Unknown, accountID); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		s.log.Info("domain changed", "domain", id, "unknown", *req.Unknown, "by", adminOf(r).ID)
 	}
-	if err := s.st.SetUnknown(r.Context(), id, req.Unknown, userID); err != nil {
-		s.fail(w, r, err)
-		return
+	if req.DMARC != nil {
+		if err := s.st.SetDMARC(ctx, id, *req.DMARC); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		s.log.Info("domain changed", "domain", id, "dmarc", *req.DMARC, "by", adminOf(r).ID)
 	}
-	d, err := s.st.DomainByID(r.Context(), id)
-	if err != nil {
-		s.fail(w, r, err)
-		return
+	if req.SPF != nil {
+		if err := s.st.SetSPF(ctx, id, *req.SPF); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		s.log.Info("domain changed", "domain", id, "spf", *req.SPF, "by", adminOf(r).ID)
 	}
-	s.log.Info("domain changed", "domain", d.ID, "unknown", d.Unknown, "by", adminOf(r).ID)
-	writeJSON(w, http.StatusOK, s.domainJSON(d))
+	if req.Relay != nil {
+		if err := s.st.SetDomainVia(ctx, id, *req.Relay); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		s.log.Info("domain changed", "domain", id, "relay", *req.Relay, "by", adminOf(r).ID)
+	}
+	s.writeDomain(w, r, http.StatusOK, id)
 }
 
 func (s *Server) deleteDomain(w http.ResponseWriter, r *http.Request) {
@@ -153,134 +218,174 @@ func (s *Server) deleteDomain(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
-	list, err := s.st.Users(r.Context())
+func (s *Server) listAccounts(w http.ResponseWriter, r *http.Request) {
+	list, err := s.st.Accounts(r.Context())
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	passwords, err := s.st.Passwords(r.Context())
+	passwords, err := s.st.Credentials(r.Context())
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
 	out := make([]map[string]any, len(list))
 	for i := range list {
-		out[i] = userJSON(&list[i], passwords[list[i].ID])
+		out[i] = accountJSON(&list[i], passwords[list[i].ID])
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
-// writeUser answers with one user as the list has it.
-func (s *Server) writeUser(w http.ResponseWriter, r *http.Request, status int, id string) {
-	u, err := s.st.UserByID(r.Context(), id)
+// writeAccount answers with one account as the list has it.
+func (s *Server) writeAccount(w http.ResponseWriter, r *http.Request, status int, id string) {
+	u, err := s.st.AccountByID(r.Context(), id)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	passwords, err := s.st.Passwords(r.Context())
+	passwords, err := s.st.Credentials(r.Context())
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, status, userJSON(u, passwords[id]))
+	writeJSON(w, status, accountJSON(u, passwords[id]))
 }
 
-func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
+// createAccount makes an account from an address alone. Its default password is generated, and this
+// answer is the one time it is shown: only its hash is kept.
+func (s *Server) createAccount(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Address  string `json:"address"`
-		Password string `json:"password"`
+		Address string `json:"address"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
-	u, err := s.st.CreateUser(r.Context(), req.Address, req.Password)
+	password := store.GeneratePassword()
+	a, err := s.st.CreateAccount(r.Context(), req.Address, password)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	s.log.Info("user created", "user", u.ID, "by", adminOf(r).ID)
-	s.writeUser(w, r, http.StatusCreated, u.ID)
+	s.log.Info("account created", "account", a.ID, "by", adminOf(r).ID)
+	creds, err := s.st.Credentials(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	out := accountJSON(a, creds[a.ID])
+	out["password"] = password
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusCreated, out)
 }
 
-// updateUser sets what mail to the user does: kept, refused, or forwarded to another user.
-func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(w, r, ids.User)
+// updateAccount sets what mail to the account does: kept, refused, or forwarded to another account.
+func (s *Server) updateAccount(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, ids.Account)
 	if !ok {
 		return
 	}
 	var req struct {
-		Incoming      store.Incoming `json:"incoming"`
-		ForwardUserID *string        `json:"forward_user_id"`
+		Incoming         store.Incoming `json:"incoming"`
+		ForwardAccountID *string        `json:"forward_account_id"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
 	var to string
-	if req.ForwardUserID != nil {
-		to = *req.ForwardUserID
+	if req.ForwardAccountID != nil {
+		to = *req.ForwardAccountID
 	}
 	if err := s.st.SetIncoming(r.Context(), id, req.Incoming, to); err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	s.log.Info("incoming mail changed", "user", id, "incoming", req.Incoming, "by", adminOf(r).ID)
-	s.writeUser(w, r, http.StatusOK, id)
+	s.log.Info("incoming mail changed", "account", id, "incoming", req.Incoming, "by", adminOf(r).ID)
+	s.writeAccount(w, r, http.StatusOK, id)
 }
 
-func (s *Server) addPassword(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(w, r, ids.User)
+// addCredential gives an account another password, generated, with a login of its own. This answer is
+// the one time the password is shown.
+func (s *Server) addCredential(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, ids.Account)
 	if !ok {
 		return
 	}
 	var req struct {
-		Label    string `json:"label"`
-		Password string `json:"password"`
+		Label string `json:"label"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
-	p, err := s.st.AddPassword(r.Context(), id, req.Label, req.Password)
+	password := store.GeneratePassword()
+	p, err := s.st.AddCredential(r.Context(), id, req.Label, password)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	u, err := s.st.UserByID(r.Context(), id)
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	s.log.Info("password added", "user", id, "password", p.ID, "by", adminOf(r).ID)
-	writeJSON(w, http.StatusCreated, passwordJSON(u, p))
+	s.answerCredential(w, r, http.StatusCreated, id, p, password)
+	s.log.Info("credential added", "account", id, "credential", p.ID, "by", adminOf(r).ID)
 }
 
-func (s *Server) deletePassword(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(w, r, ids.User)
+// resetCredential replaces a password with a newly generated one, keeping its label and login.
+func (s *Server) resetCredential(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, ids.Account)
 	if !ok {
 		return
 	}
-	pid, ok := pathParam(w, r, "pid", ids.Password)
+	pid, ok := pathParam(w, r, "cid", ids.Credential)
 	if !ok {
 		return
 	}
-	if err := s.st.DeletePassword(r.Context(), id, pid); err != nil {
+	password := store.GeneratePassword()
+	p, err := s.st.ResetCredential(r.Context(), id, pid, password)
+	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	s.log.Info("password deleted", "user", id, "password", pid, "by", adminOf(r).ID)
+	s.answerCredential(w, r, http.StatusOK, id, p, password)
+	s.log.Info("credential reset", "account", id, "credential", pid, "by", adminOf(r).ID)
+}
+
+// answerCredential is a credential with, this once, its password.
+func (s *Server) answerCredential(w http.ResponseWriter, r *http.Request, status int, accountID string, c *store.Credential, password string) {
+	a, err := s.st.AccountByID(r.Context(), accountID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	out := credentialJSON(a, c)
+	out["password"] = password
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, status, out)
+}
+
+func (s *Server) deleteCredential(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, ids.Account)
+	if !ok {
+		return
+	}
+	pid, ok := pathParam(w, r, "cid", ids.Credential)
+	if !ok {
+		return
+	}
+	if err := s.st.DeleteCredential(r.Context(), id, pid); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.log.Info("credential deleted", "account", id, "credential", pid, "by", adminOf(r).ID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(w, r, ids.User)
+func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, ids.Account)
 	if !ok {
 		return
 	}
-	if err := s.st.DeleteUser(r.Context(), id); err != nil {
+	if err := s.st.DeleteAccount(r.Context(), id); err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	s.log.Info("user deleted", "user", id, "by", adminOf(r).ID)
+	s.log.Info("account deleted", "account", id, "by", adminOf(r).ID)
 	w.WriteHeader(http.StatusNoContent)
 }
 

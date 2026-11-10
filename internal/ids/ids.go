@@ -18,11 +18,13 @@ const Alphabet = "0123456789abcdefghjkmnpqrstvwxyz"
 
 // Prefixes.
 const (
-	Domain = "dm_"
-	User   = "u_"
-	Admin  = "ad_"
-	// Password is one of a user's passwords.
-	Password = "pw_"
+	Domain  = "dm_"
+	Account = "ac_"
+	Admin   = "ad_"
+	// Credential is one of an account's logins and its password.
+	Credential = "cr_"
+	// Relay is a server outbound mail can be handed to.
+	Relay = "rl_"
 )
 
 const ulidLen = 26

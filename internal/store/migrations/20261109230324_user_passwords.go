@@ -53,7 +53,7 @@ CREATE TABLE user_passwords (
 		for _, o := range users {
 			if _, err := tx.ExecContext(ctx,
 				`INSERT INTO user_passwords (id, user_id, label, login, hash, created_at) VALUES (?, ?, 'default', '', ?, ?)`,
-				ids.New(ids.Password, time.Now().UnixMilli()), o.id, o.hash, o.created); err != nil {
+				ids.New("pw_", time.Now().UnixMilli()), o.id, o.hash, o.created); err != nil {
 				return err
 			}
 		}

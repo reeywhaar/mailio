@@ -1,4 +1,4 @@
-// Package imapd serves users' mail over IMAP, from the store.
+// Package imapd serves accounts' mail over IMAP, from the store.
 //
 // The messages are in SQLite; what lives here is each open mailbox's ordered list of UIDs and the
 // tracker that turns changes into the untagged responses every session watching it is owed.
@@ -156,10 +156,10 @@ func peerIP(c net.Conn) string {
 
 // session is one connection.
 type session struct {
-	srv  *Server
-	ip   string
-	user *store.User
-	sel  *selected
+	srv     *Server
+	ip      string
+	account *store.Account
+	sel     *selected
 }
 
 // selected is the mailbox a session has open.
@@ -195,8 +195,8 @@ func (s *session) Login(username, password string) error {
 	if err != nil {
 		return err
 	}
-	s.user = u
-	s.srv.log.Info("imap signed in", "user", u.ID)
+	s.account = u
+	s.srv.log.Info("imap signed in", "account", u.ID)
 	return nil
 }
 
@@ -206,9 +206,9 @@ func (s *session) Namespace() (*imap.NamespaceData, error) {
 	return &imap.NamespaceData{Personal: []imap.NamespaceDescriptor{{Delim: store.Delim}}}, nil
 }
 
-// box finds one of the user's mailboxes, answering IMAP's way when there is none.
+// box finds one of the account's mailboxes, answering IMAP's way when there is none.
 func (s *session) box(name string, code imap.ResponseCode) (*store.Mailbox, error) {
-	m, err := s.srv.st.MailboxNamed(ctx(), s.user.ID, name)
+	m, err := s.srv.st.MailboxNamed(ctx(), s.account.ID, name)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, &imap.Error{Type: imap.StatusResponseTypeNo, Code: code, Text: "No such mailbox"}
 	}
@@ -232,7 +232,7 @@ func refused(err error) error {
 }
 
 func (s *session) Create(name string, _ *imap.CreateOptions) error {
-	_, err := s.srv.st.CreateMailbox(ctx(), s.user.ID, name)
+	_, err := s.srv.st.CreateMailbox(ctx(), s.account.ID, name)
 	return refused(err)
 }
 
@@ -241,7 +241,7 @@ func (s *session) Delete(name string) error {
 	if err != nil {
 		return err
 	}
-	if err := s.srv.st.DeleteMailbox(ctx(), s.user.ID, name); err != nil {
+	if err := s.srv.st.DeleteMailbox(ctx(), s.account.ID, name); err != nil {
 		return refused(err)
 	}
 	s.srv.forget(m.ID)
@@ -249,22 +249,22 @@ func (s *session) Delete(name string) error {
 }
 
 func (s *session) Rename(from, to string, _ *imap.RenameOptions) error {
-	return refused(s.srv.st.RenameMailbox(ctx(), s.user.ID, from, to))
+	return refused(s.srv.st.RenameMailbox(ctx(), s.account.ID, from, to))
 }
 
 func (s *session) Subscribe(name string) error {
-	return refused(s.srv.st.SetSubscribed(ctx(), s.user.ID, name, true))
+	return refused(s.srv.st.SetSubscribed(ctx(), s.account.ID, name, true))
 }
 
 func (s *session) Unsubscribe(name string) error {
-	return refused(s.srv.st.SetSubscribed(ctx(), s.user.ID, name, false))
+	return refused(s.srv.st.SetSubscribed(ctx(), s.account.ID, name, false))
 }
 
 func (s *session) List(w *imapserver.ListWriter, ref string, patterns []string, options *imap.ListOptions) error {
 	if len(patterns) == 0 {
 		return w.WriteList(&imap.ListData{Attrs: []imap.MailboxAttr{imap.MailboxAttrNoSelect}, Delim: store.Delim})
 	}
-	boxes, err := s.srv.st.Mailboxes(ctx(), s.user.ID)
+	boxes, err := s.srv.st.Mailboxes(ctx(), s.account.ID)
 	if err != nil {
 		return err
 	}

@@ -10,16 +10,19 @@ One name per thing, in identifiers, the API, the docs and the interface.
 | word | means | in code |
 | --- | --- | --- |
 | domain | a domain mailio receives mail for | `Domain`, `domains`, `domain_id` |
-| user | an address mail is delivered to, and the passwords that sign in as it | `User`, `users`, `user_id` |
-| password | one of a user's passwords, with a label and its own login | `Password`, `user_passwords` |
-| login | what signs in with one password: the address, tagged unless it is the default | `Login` |
-| admin | a name and a password that sign in to the admin interface; never a user | `Admin`, `admins` |
+| account | an address mail is delivered to, and the credentials that sign in as it | `Account`, `accounts`, `account_id` |
+| credential | one of an account's sign-ins: a label, a login and a generated password | `Credential`, `credentials` |
+| login | what signs in with one credential: the address, tagged unless it is the default | `Login` |
+| mailbox | an IMAP folder inside an account: INBOX, Sent, Junk | `mailboxes` |
+| relay | a server mail is sent through instead of straight to the recipient's, with a unique label | `Relay`, `relays` |
+| defaults | what every domain follows unless it has its own: unknown addresses, DMARC, SPF, relay | `Settings`, `settings` |
+| admin | a name and a password that sign in to the admin interface; never an account | `Admin`, `admins` |
 | admin link | the one-time link that makes an admin | `AdminLink`, `admin_links` |
 | address | `local@domain`, lowercased | `address.Address` |
 | tag | what follows the `+` in an address | `Tag` |
 
-**"Account" is not a word here.** It is what Postfix's mailio called a user, and what a mail
-client calls the connection to one. A user is a user.
+**"User" is not a word here.** It would mean an account to one reader and an admin to another.
+Somebody signing in to mail has an account; somebody signing in here is an admin.
 
 ## American spelling
 
@@ -58,13 +61,24 @@ the change.
 
 - `gofmt` clean.
 - Tests beside sources as `*_test.go`, named as sentences:
-  `TestMailToATaggedAddressGoesToItsUser`.
+  `TestMailToATaggedAddressGoesToItsAccount`.
 - Errors wrap with `%w` and name what was being done.
 - One error vocabulary in `internal/store` — `ErrNotFound`, `ErrConflict`, `ErrInvalid` — built
   through `store.NotFound`, `store.Conflict` and `store.Invalid` with a sentence for whoever reads
   it. `internal/store` is the only package that writes SQL.
 - `context.Context` first on anything that can block.
 - Injectable clocks, so expiry is driven rather than slept through.
+
+## Interface
+
+**Every add or change happens in a dialog that holds it until Save.** A button opens it ("Add
+account", "Configure sending…"), or a row does: a list is rows, each a summary of what it is, and
+a click opens its settings. Save sends the whole change at once; a refusal leaves the dialog open
+with the server's sentence and everything chosen in it; closing it forgets the change. So the page
+only ever shows what the server has, and a failed change never leaves it half edited.
+
+A delete is in the dialog of what it deletes and takes two presses. A command whose label ends in
+"…" opens a dialog; one without acts on the press.
 
 ## TypeScript
 
@@ -82,9 +96,10 @@ A software-only identifier is a ULID: a prefix, then 26 Crockford characters ove
 | prefix | names |
 | --- | --- |
 | `dm_` | domain |
-| `u_` | user |
+| `ac_` | account |
 | `ad_` | admin |
-| `pw_` | a user's password |
+| `cr_` | an account's credential |
+| `rl_` | a relay |
 
 A new prefix is added to this table in the change that introduces it. Ids are opaque and never
 parsed back. A malformed one is refused before it reaches a query, so a typo is a `400` rather
@@ -109,8 +124,8 @@ date -u +%Y%m%d%H%M%S
 ## Logging
 
 `log/slog`, one JSON object a line on stderr. Log what an operator needs: a sign-in refused, a
-user created or deleted and by whom, a domain changed, a sweep that deleted something.
+account created or deleted and by whom, a domain changed, a sweep that deleted something.
 
-A line names users and domains by id. **Never** a password, a session cookie, or a request's
+A line names accounts, credentials and domains by id. **Never** a password, a session cookie, or a request's
 query; the admin link at startup is the one token logged, and [deploy.md](deploy.md) says why.
 When mail arrives, **never** anything from a message: subject, body, attachment names.

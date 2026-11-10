@@ -17,13 +17,13 @@ func importCmd() *cobra.Command {
 }
 
 // importMaildirCmd reads the Postfix-based mailio's mail. Several addresses share one Maildir
-// there when they were delivered to one system user, so it takes several users and sorts each
+// there when they were delivered to one system user, so it takes several accounts and sorts each
 // message to the one it was sent to.
 func importMaildirCmd() *cobra.Command {
 	var dry bool
 	cmd := &cobra.Command{
 		Use:   "maildir <dir> <address>...",
-		Short: "Import a Maildir into users' mailboxes, sorted by who each message was sent to",
+		Short: "Import a Maildir into accounts' mailboxes, sorted by who each message was sent to",
 		Example: "  docker exec mailio mailio import maildir /import/root inbox@reey.ru inbox@vyrtsev.com\n" +
 			"  docker exec mailio mailio import maildir --dry-run /import/root inbox@reey.ru",
 		Args: cobra.MinimumNArgs(2),
@@ -34,24 +34,24 @@ func importMaildirCmd() *cobra.Command {
 			}
 			defer st.Close()
 			ctx := cmd.Context()
-			all, err := st.Users(ctx)
+			all, err := st.Accounts(ctx)
 			if err != nil {
 				return err
 			}
-			var users []*store.User
+			var accounts []*store.Account
 			for _, addr := range args[1:] {
-				var found *store.User
+				var found *store.Account
 				for i := range all {
 					if all[i].Address() == addr {
 						found = &all[i]
 					}
 				}
 				if found == nil {
-					return fmt.Errorf("%s is not a user: add it in the admin interface first", addr)
+					return fmt.Errorf("%s is not an account: add it in the admin interface first", addr)
 				}
-				users = append(users, found)
+				accounts = append(accounts, found)
 			}
-			res, err := maildir.Import(ctx, st, args[0], users, dry)
+			res, err := maildir.Import(ctx, st, args[0], accounts, dry)
 			if err != nil {
 				return err
 			}

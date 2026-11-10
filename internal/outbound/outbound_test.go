@@ -116,7 +116,7 @@ func newRig(t *testing.T) *rig {
 		t.Fatal(err)
 	}
 	for _, a := range []string{"inbox@reey.ru", "other@reey.ru"} {
-		if _, err := st.CreateUser(ctx, a, "correct horse"); err != nil {
+		if _, err := st.CreateAccount(ctx, a, "correct horse"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -137,8 +137,12 @@ func newRig(t *testing.T) *rig {
 	go rs.Serve(ln)
 	t.Cleanup(func() { rs.Close() })
 	port := ln.Addr().(*net.TCPAddr).Port
-	if err := st.SetRelay(ctx, store.Relay{Host: "localhost", Port: port, Security: store.SecurityStartTLS,
-		Username: "relayuser", Password: "relaypass"}); err != nil {
+	rl, err := st.CreateRelay(ctx, store.Relay{Label: "test relay", Host: "localhost", Port: port,
+		Security: store.SecurityStartTLS, Username: "relayuser", Password: "relaypass"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSettings(ctx, store.Settings{Unknown: store.UnknownReject, DMARC: store.DMARCReject, SPF: store.SPFSoftFail, RelayID: rl.ID}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -160,8 +164,8 @@ func newRig(t *testing.T) *rig {
 	return &rig{t: t, st: st, sender: sender, relay: fake, sub: subLn.Addr().String(), log: &logged, domain: d}
 }
 
-// submit sends as a user over 465, returning the first refusal.
-func (r *rig) submit(user, password, from string, to []string, body string) error {
+// submit sends as an account over 465, returning the first refusal.
+func (r *rig) submit(login, password, from string, to []string, body string) error {
 	conn, err := tls.Dial("tcp", r.sub, &tls.Config{InsecureSkipVerify: true})
 	if err != nil {
 		r.t.Fatal(err)
@@ -171,7 +175,7 @@ func (r *rig) submit(user, password, from string, to []string, body string) erro
 		r.t.Fatal(err)
 	}
 	defer c.Close()
-	if err := c.Auth(smtp.PlainAuth("", user, password, "localhost")); err != nil {
+	if err := c.Auth(smtp.PlainAuth("", login, password, "localhost")); err != nil {
 		return err
 	}
 	if err := c.Mail(from); err != nil {
@@ -252,7 +256,7 @@ func TestSubmittedMailGoesThroughTheRelaySignedAndLocalMailStaysHome(t *testing.
 	}
 }
 
-func TestAUserSendsOnlyAsThemself(t *testing.T) {
+func TestAnAccountSendsOnlyAsItself(t *testing.T) {
 	r := newRig(t)
 	err := r.submit("inbox@reey.ru", "correct horse", "other@reey.ru", []string{"someone@example.com"}, letter)
 	if err == nil || !strings.Contains(err.Error(), "553") {
@@ -297,4 +301,51 @@ func TestAWrongRelayPasswordIsRetriedNotBounced(t *testing.T) {
 	if q, _ := r.st.Outbound(context.Background()); len(q) != 1 || q[0].LastError == "" {
 		t.Errorf("queue: %+v", q)
 	}
+}
+
+// A domain set to built in goes to the recipient's MX, whatever the default relay.
+func TestADomainThatSendsDirectlySkipsTheDefaultRelay(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	if err := r.st.SetDomainVia(ctx, r.domain.ID, store.ViaBuiltIn); err != nil {
+		t.Fatal(err)
+	}
+	// The recipient's MX is a fake on a local port.
+	mx := &relay{refuse: map[string]*gosmtp.SMTPError{}}
+	srv := gosmtp.NewServer(&openMX{mx})
+	srv.Domain = "mx.example.com"
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve(ln)
+	defer srv.Close()
+	r.sender.mx = func(context.Context, string) ([]*net.MX, error) {
+		return []*net.MX{{Host: "mx.example.com.", Pref: 10}}, nil
+	}
+	dial := r.sender.dial
+	r.sender.dial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if addr == "mx.example.com:25" {
+			addr = ln.Addr().String()
+		}
+		return dial(ctx, network, addr)
+	}
+
+	if err := r.submit("inbox@reey.ru", "correct horse", "inbox@reey.ru", []string{"someone@example.com"}, letter); err != nil {
+		t.Fatal(err)
+	}
+	r.sender.runOnce(ctx)
+	if len(r.relay.got) != 0 {
+		t.Errorf("the default relay got %d", len(r.relay.got))
+	}
+	if len(mx.got) != 1 || mx.got[0].rcpts[0] != "someone@example.com" {
+		t.Errorf("the MX got %+v", mx.got)
+	}
+}
+
+// openMX is the fake relay without its password: an MX takes mail from anyone.
+type openMX struct{ r *relay }
+
+func (m *openMX) NewSession(*gosmtp.Conn) (gosmtp.Session, error) {
+	return &relaySession{r: m.r, authed: true}, nil
 }

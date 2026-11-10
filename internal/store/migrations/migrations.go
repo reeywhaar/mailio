@@ -27,6 +27,8 @@ var all = []Migration{
 	adminsApart,
 	userPasswords,
 	incoming,
+	defaults,
+	accounts,
 }
 
 func exec(sqlText string) func(context.Context, *sql.Tx) error {

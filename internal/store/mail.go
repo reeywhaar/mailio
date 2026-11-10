@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// Inbox is the one mailbox whose name is case-insensitive, and the one every user always has.
+// Inbox is the one mailbox whose name is case-insensitive, and the one every account always has.
 const Inbox = "INBOX"
 
 // MaxMessageBytes is the largest message mailio takes, by SMTP or by IMAP APPEND. Larger than any
@@ -20,7 +20,7 @@ const MaxMessageBytes = 50 << 20
 // Delim separates the levels of a mailbox name.
 const Delim = '/'
 
-// StandardMailboxes is the set every user starts with, with the special use each announces so a
+// StandardMailboxes is the set every account starts with, with the special use each announces so a
 // client files sent mail and junk without asking.
 var StandardMailboxes = []struct{ Name, SpecialUse string }{
 	{Inbox, ""},
@@ -31,10 +31,10 @@ var StandardMailboxes = []struct{ Name, SpecialUse string }{
 	{"Trash", `\Trash`},
 }
 
-// Mailbox is one folder of one user's mail.
+// Mailbox is one folder of one account's mail.
 type Mailbox struct {
 	ID          int64
-	UserID      string
+	AccountID   string
 	Name        string
 	SpecialUse  string
 	Subscribed  bool
@@ -59,11 +59,11 @@ type MailListener interface {
 // SetMailListener installs the listener. Set once, before anything is delivered.
 func (s *Store) SetMailListener(l MailListener) { s.listener = l }
 
-func createStandardMailboxes(ctx context.Context, db execer, userID string, now time.Time) error {
+func createStandardMailboxes(ctx context.Context, db execer, accountID string, now time.Time) error {
 	for i, m := range StandardMailboxes {
 		if _, err := db.ExecContext(ctx,
-			`INSERT INTO mailboxes (user_id, name, special_use, uid_validity) VALUES (?, ?, ?, ?)`,
-			userID, m.Name, m.SpecialUse, uint32(now.Unix())+uint32(i)); err != nil {
+			`INSERT INTO mailboxes (account_id, name, special_use, uid_validity) VALUES (?, ?, ?, ?)`,
+			accountID, m.Name, m.SpecialUse, uint32(now.Unix())+uint32(i)); err != nil {
 			return fmt.Errorf("create mailboxes: %w", err)
 		}
 	}
@@ -80,20 +80,20 @@ func MailboxName(name string) string {
 	return name
 }
 
-const mailboxColumns = `id, user_id, name, special_use, subscribed, uid_validity, uid_next`
+const mailboxColumns = `id, account_id, name, special_use, subscribed, uid_validity, uid_next`
 
 func scanMailbox(row interface{ Scan(...any) error }) (*Mailbox, error) {
 	var m Mailbox
-	if err := row.Scan(&m.ID, &m.UserID, &m.Name, &m.SpecialUse, &m.Subscribed, &m.UIDValidity, &m.UIDNext); err != nil {
+	if err := row.Scan(&m.ID, &m.AccountID, &m.Name, &m.SpecialUse, &m.Subscribed, &m.UIDValidity, &m.UIDNext); err != nil {
 		return nil, err
 	}
 	return &m, nil
 }
 
-// Mailboxes returns a user's mailboxes by name.
-func (s *Store) Mailboxes(ctx context.Context, userID string) ([]Mailbox, error) {
+// Mailboxes returns an account's mailboxes by name.
+func (s *Store) Mailboxes(ctx context.Context, accountID string) ([]Mailbox, error) {
 	rows, err := s.reader.QueryContext(ctx,
-		`SELECT `+mailboxColumns+` FROM mailboxes WHERE user_id = ? ORDER BY name`, userID)
+		`SELECT `+mailboxColumns+` FROM mailboxes WHERE account_id = ? ORDER BY name`, accountID)
 	if err != nil {
 		return nil, fmt.Errorf("mailboxes: %w", err)
 	}
@@ -109,14 +109,14 @@ func (s *Store) Mailboxes(ctx context.Context, userID string) ([]Mailbox, error)
 	return out, rows.Err()
 }
 
-// MailboxNamed returns one of a user's mailboxes.
-func (s *Store) MailboxNamed(ctx context.Context, userID, name string) (*Mailbox, error) {
-	return mailboxWhere(ctx, s.reader, "user_id = ? AND name = ?", userID, MailboxName(name))
+// MailboxNamed returns one of an account's mailboxes.
+func (s *Store) MailboxNamed(ctx context.Context, accountID, name string) (*Mailbox, error) {
+	return mailboxWhere(ctx, s.reader, "account_id = ? AND name = ?", accountID, MailboxName(name))
 }
 
-// SpecialMailbox returns the user's mailbox with a special use, such as `\Junk`.
-func (s *Store) SpecialMailbox(ctx context.Context, userID, specialUse string) (*Mailbox, error) {
-	return mailboxWhere(ctx, s.reader, "user_id = ? AND special_use = ? ORDER BY id LIMIT 1", userID, specialUse)
+// SpecialMailbox returns the account's mailbox with a special use, such as `\Junk`.
+func (s *Store) SpecialMailbox(ctx context.Context, accountID, specialUse string) (*Mailbox, error) {
+	return mailboxWhere(ctx, s.reader, "account_id = ? AND special_use = ? ORDER BY id LIMIT 1", accountID, specialUse)
 }
 
 func mailboxWhere(ctx context.Context, db queryer, where string, args ...any) (*Mailbox, error) {
@@ -132,16 +132,16 @@ func mailboxWhere(ctx context.Context, db queryer, where string, args ...any) (*
 
 // CreateMailbox makes a mailbox. Its UIDVALIDITY is new, so a client that knew a deleted mailbox
 // of the same name does not mistake this one for it.
-func (s *Store) CreateMailbox(ctx context.Context, userID, name string) (*Mailbox, error) {
+func (s *Store) CreateMailbox(ctx context.Context, accountID, name string) (*Mailbox, error) {
 	name = MailboxName(name)
 	if name == "" || strings.ContainsAny(name, "\r\n*%") {
 		return nil, Invalid("That is not a mailbox name.")
 	}
 	validity := uint32(s.Now().Unix())
 	res, err := s.writer.ExecContext(ctx,
-		`INSERT INTO mailboxes (user_id, name, uid_validity)
-		 VALUES (?, ?, max(?, coalesce((SELECT max(uid_validity) + 1 FROM mailboxes WHERE user_id = ?), 0)))`,
-		userID, name, validity, userID)
+		`INSERT INTO mailboxes (account_id, name, uid_validity)
+		 VALUES (?, ?, max(?, coalesce((SELECT max(uid_validity) + 1 FROM mailboxes WHERE account_id = ?), 0)))`,
+		accountID, name, validity, accountID)
 	if isUnique(err) {
 		return nil, Conflict("There is already a mailbox called %s.", name)
 	}
@@ -154,12 +154,12 @@ func (s *Store) CreateMailbox(ctx context.Context, userID, name string) (*Mailbo
 }
 
 // DeleteMailbox removes a mailbox and every message in it. INBOX stays.
-func (s *Store) DeleteMailbox(ctx context.Context, userID, name string) error {
+func (s *Store) DeleteMailbox(ctx context.Context, accountID, name string) error {
 	name = MailboxName(name)
 	if name == Inbox {
 		return Invalid("INBOX cannot be deleted.")
 	}
-	res, err := s.writer.ExecContext(ctx, `DELETE FROM mailboxes WHERE user_id = ? AND name = ?`, userID, name)
+	res, err := s.writer.ExecContext(ctx, `DELETE FROM mailboxes WHERE account_id = ? AND name = ?`, accountID, name)
 	if err != nil {
 		return fmt.Errorf("delete mailbox: %w", err)
 	}
@@ -171,7 +171,7 @@ func (s *Store) DeleteMailbox(ctx context.Context, userID, name string) error {
 }
 
 // RenameMailbox renames a mailbox and everything under it. INBOX keeps its name.
-func (s *Store) RenameMailbox(ctx context.Context, userID, from, to string) error {
+func (s *Store) RenameMailbox(ctx context.Context, accountID, from, to string) error {
 	from, to = MailboxName(from), MailboxName(to)
 	if from == Inbox || to == Inbox {
 		return Invalid("INBOX cannot be renamed.")
@@ -184,7 +184,7 @@ func (s *Store) RenameMailbox(ctx context.Context, userID, from, to string) erro
 		return fmt.Errorf("rename mailbox: %w", err)
 	}
 	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx, `UPDATE mailboxes SET name = ? WHERE user_id = ? AND name = ?`, to, userID, from)
+	res, err := tx.ExecContext(ctx, `UPDATE mailboxes SET name = ? WHERE account_id = ? AND name = ?`, to, accountID, from)
 	if isUnique(err) {
 		return Conflict("There is already a mailbox called %s.", to)
 	}
@@ -196,8 +196,8 @@ func (s *Store) RenameMailbox(ctx context.Context, userID, from, to string) erro
 	}
 	prefix := from + string(Delim)
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE mailboxes SET name = ? || substr(name, ?) WHERE user_id = ? AND substr(name, 1, ?) = ?`,
-		to+string(Delim), len(prefix)+1, userID, len(prefix), prefix); err != nil {
+		`UPDATE mailboxes SET name = ? || substr(name, ?) WHERE account_id = ? AND substr(name, 1, ?) = ?`,
+		to+string(Delim), len(prefix)+1, accountID, len(prefix), prefix); err != nil {
 		if isUnique(err) {
 			return Conflict("A mailbox under %s already exists.", to)
 		}
@@ -211,9 +211,9 @@ func (s *Store) RenameMailbox(ctx context.Context, userID, from, to string) erro
 }
 
 // SetSubscribed marks a mailbox subscribed or not.
-func (s *Store) SetSubscribed(ctx context.Context, userID, name string, subscribed bool) error {
+func (s *Store) SetSubscribed(ctx context.Context, accountID, name string, subscribed bool) error {
 	res, err := s.writer.ExecContext(ctx,
-		`UPDATE mailboxes SET subscribed = ? WHERE user_id = ? AND name = ?`, subscribed, userID, MailboxName(name))
+		`UPDATE mailboxes SET subscribed = ? WHERE account_id = ? AND name = ?`, subscribed, accountID, MailboxName(name))
 	if err != nil {
 		return fmt.Errorf("subscribe: %w", err)
 	}

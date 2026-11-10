@@ -27,7 +27,7 @@ ghcr.io/reeywhaar/mailio:v2
 
 ## There is no config file
 
-Domains, users, and what each domain does with unknown mail are in the database and edited in the
+Domains, accounts, relays and the defaults domains follow are in the database and edited in the
 admin interface. The environment is only for what must be true before the process starts.
 
 ## `MAILIO_PUBLIC_URL` is required and never inferred
@@ -38,7 +38,7 @@ is trimmed; a path is refused, because mailio serves from the root.
 
 ## `MAILIO_SECRET_KEY`
 
-Required. It seals the relay's password, the one secret mailio has to read back, since it hands
+Required. It seals each relay's password, the one secret mailio has to read back, since it hands
 it to the relay:
 
 ```sh
@@ -46,8 +46,8 @@ openssl rand -base64 32
 ```
 
 **Keep it apart from the data directory and its backups**, which is the point of it: a copied
-database does not hold the relay's credential. Users' passwords are only ever hashed, and need no
-key. **And keep it**: with a new key, the relay's password has to be entered again.
+database does not hold the relays' passwords. Accounts' passwords are only ever hashed, and need
+no key. **And keep it**: with a new key, each relay's password has to be entered again.
 
 ## `MAILIO_MAIL_HOST` is the name the world reaches mail at
 
@@ -124,7 +124,7 @@ docker logs mailio
 
 The link asks for a name and a password: what you sign in to the admin interface with, not a mail
 address. A new name becomes an admin; one that already exists gets the password and is signed out
-everywhere. Either way the link signs you in, and the domains and users are added from there.
+everywhere. Either way the link signs you in, and the domains and accounts are added from there.
 
 Locked out, or a password forgotten:
 
@@ -230,9 +230,9 @@ lock everybody out.
 | --- | --- | --- |
 | 80 | the admin interface, plain HTTP | no: Caddy reaches it |
 | 25 | other servers deliver; STARTTLS offered, no AUTH | yes |
-| 587 | users send; AUTH only after STARTTLS | yes |
-| 465 | users send; TLS from the first byte | yes |
-| 993 | users read; TLS from the first byte | yes |
+| 587 | mail clients send; AUTH only after STARTTLS | yes |
+| 465 | mail clients send; TLS from the first byte | yes |
+| 993 | mail clients read; TLS from the first byte | yes |
 
 There is no plain IMAP on 143 and no POP3: a password never crosses the wire unencrypted.
 
@@ -244,23 +244,46 @@ is renewed once a third of its life is left. DNS rather than HTTP because port 8
 the mail ports cannot answer a challenge. Without a DNS API it stays self-signed: other servers
 deliver over it all the same, and mail clients warn.
 
+## Defaults, and each domain's own
+
+Unknown addresses, DMARC, SPF and the relay have a server-wide default, under Defaults and
+Sending in the admin interface, and each domain can override any of them in its settings, opened
+by a click on its row. A domain that does not follows the default, whatever it becomes later.
+
+| | default | a domain's own |
+| --- | --- | --- |
+| unknown addresses | `reject` | `reject`, `drop`, or `junk` to an account; see [addresses.md](addresses.md) |
+| DMARC | `reject` | `reject`, `quarantine` or `none` |
+| SPF ending | `~all` | `-all`, `~all` or `?all` |
+| relay | built in, or one of the relays | built in, or one of the relays |
+
 ## DNS records
 
-Each domain's are in the admin interface under DNS…: MX to `MAILIO_MAIL_HOST`, SPF, DMARC, and
-the DKIM key. With `MAILIO_DNS_API_URL`, mailio publishes them every ten minutes.
+Each domain's are in its settings: SPF, DMARC and its DKIM key. With `MAILIO_DNS_API_URL`,
+mailio publishes them every ten minutes, **rewriting them to its own each time**: managing a
+domain's mail records is mailio's job, so whatever else was there is replaced. Other records on
+the domain are left alone, a site verification among them.
 
-**The DKIM record is kept current; SPF and DMARC are only created when absent.** An existing SPF
-is somebody's decision, such as one that includes the relay, and a sync rewriting it would break
-mail. **MX is never touched**: where a domain's mail goes is set by hand, once.
+**MX is set outside mailio,** pointing at `MAILIO_MAIL_HOST`.
+
+**DMARC** is what receivers do with mail that claims the domain and carries no signature of it.
+`reject` by default, since every message mailio sends is signed with the domain's DKIM key;
+`quarantine` sends forgeries to spam, `none` delivers them and only asks for reports. **SPF**
+ends in what it says about servers it does not name: `-all` that their mail fails, `~all` that it
+is suspect, `?all` nothing.
 
 The key is published as `mailio._domainkey`, not the `mail._domainkey` the Postfix-based mailio
-used, so the old key keeps verifying mail it signed while the new one takes over.
+used, so the old key keeps verifying mail it signed while the new one takes over. Delete the old
+one when nothing signed with it is still in flight.
 
-## Sending goes through the relay when there is one
+## Sending goes through a relay, or is built in
 
-Many hosting providers block outbound port 25. Set a relay in the admin interface under Sending,
-with Test to check it signs in, and every message is handed to it. Without one, mailio delivers
-to each recipient's MX itself.
+Many hosting providers block outbound port 25. Relays are a list under Sending → Configure
+sending…, each with a label of its own, added and changed in a dialog, with Test to check it signs
+in. The default is one of them, or **built in**: mailio delivering to each recipient's MX itself.
+A domain can use another relay, or built in, in its settings; the relay a message goes through is
+chosen by its sender's domain. A relay that is the default or a domain's cannot be deleted until
+it is not.
 
 A message waits in the queue until delivered. A temporary failure is retried with growing waits
 for five days; a refusal, or the five days running out, puts a report in the sender's INBOX. A
@@ -277,8 +300,9 @@ There is no content filter: what is junk beyond that is the reader's to move.
 ## Switching from the Postfix-based mailio
 
 1. Deploy mailio beside the old container, under another name, with no mail ports. Add the
-   domains and users in the admin interface. With `MAILIO_DNS_API_URL` the new DKIM key and the
-   certificate arrive by themselves; without, publish the records under DNS….
+   domains and accounts in the admin interface. With `MAILIO_DNS_API_URL` the new DKIM key and
+   the certificate arrive by themselves; without, publish the records listed in each domain's
+   settings.
 2. Set the relay, if the host needs one.
 3. Stop the old container, and give the new one its name and the mail ports:
 
@@ -297,8 +321,8 @@ There is no content filter: what is junk beyond that is the reader's to move.
    address before any alias; sent mail by its From. Subfolders such as `.Sent` and `.Junk` go to
    the matching mailbox. Importing twice imports twice.
 
-5. Point mail clients at `MAILIO_MAIL_HOST`, IMAP 993 and SMTP 465, with the user's address and
-   password.
+5. Point mail clients at `MAILIO_MAIL_HOST`, IMAP 993 and SMTP 465, with a credential's login
+   and password. Each password is new: the old server's are hashes mailio cannot carry over.
 
 ## Backups go to a backio agent
 
@@ -343,7 +367,7 @@ only hand over one more archive.
 ### A copy goes out when content changed, and at no other time
 
 The loop looks every half hour and sends only when something was written since the last archive
-the agent accepted: a domain, a user, a password, an admin, what a domain does with unknown mail.
+the agent accepted: a domain, an account, a credential, a relay, an admin, the defaults.
 Saving what is already there is not a change. Sessions and admin links are the process noticing
 itself and do not count either.
 

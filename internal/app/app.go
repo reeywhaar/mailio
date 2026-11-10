@@ -13,11 +13,11 @@ const (
 	ListenAddr = ":80"
 	// SMTPAddr is where other servers deliver: STARTTLS offered, no AUTH.
 	SMTPAddr = ":25"
-	// SubmissionAddr is where users send, STARTTLS required before AUTH.
+	// SubmissionAddr is where accounts send, STARTTLS required before AUTH.
 	SubmissionAddr = ":587"
-	// SubmissionsAddr is where users send, TLS from the first byte.
+	// SubmissionsAddr is where accounts send, TLS from the first byte.
 	SubmissionsAddr = ":465"
-	// IMAPAddr is where users read, TLS from the first byte.
+	// IMAPAddr is where accounts read, TLS from the first byte.
 	IMAPAddr = ":993"
 )
 

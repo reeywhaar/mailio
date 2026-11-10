@@ -81,21 +81,36 @@ func (s *Sender) runOnce(ctx context.Context) {
 		}
 		return
 	}
-	relay, err := s.st.Relay(ctx)
-	if err != nil {
-		s.log.Error("reading the relay failed", "error", err)
-		return
+	// The relay is the sender's domain's own, or the default; a message has one sender, so one
+	// relay, and nil sends it straight to each recipient's MX.
+	relays := map[string]*store.Relay{}
+	relayFor := func(sender string) (*store.Relay, error) {
+		d := domainOf(sender)
+		if r, ok := relays[d]; ok {
+			return r, nil
+		}
+		r, err := s.st.RelayFor(ctx, d)
+		if err == nil {
+			relays[d] = r
+		}
+		return r, err
 	}
 	// One SMTP transaction per message per destination: the relay takes every recipient at once,
 	// and an MX takes those at its own domain.
 	type batch struct {
 		messageID int64
+		relay     *store.Relay
 		dest      string
 		rcpts     []store.OutboundRecipient
 	}
 	var batches []*batch
 	index := map[string]*batch{}
 	for _, r := range due {
+		relay, err := relayFor(r.Sender)
+		if err != nil {
+			s.log.Error("reading the relay failed", "error", err)
+			return
+		}
 		dest := "relay"
 		if relay == nil {
 			dest = domainOf(r.Recipient)
@@ -103,7 +118,7 @@ func (s *Sender) runOnce(ctx context.Context) {
 		key := fmt.Sprintf("%d %s", r.MessageID, dest)
 		b := index[key]
 		if b == nil {
-			b = &batch{messageID: r.MessageID, dest: dest}
+			b = &batch{messageID: r.MessageID, relay: relay, dest: dest}
 			index[key] = b
 			batches = append(batches, b)
 		}
@@ -119,8 +134,8 @@ func (s *Sender) runOnce(ctx context.Context) {
 			continue
 		}
 		var results map[int64]error
-		if relay != nil {
-			results = s.viaRelay(ctx, relay, b.rcpts, raw)
+		if b.relay != nil {
+			results = s.viaRelay(ctx, b.relay, b.rcpts, raw)
 		} else {
 			results = s.direct(ctx, b.dest, b.rcpts, raw)
 		}
@@ -138,18 +153,18 @@ func (s *Sender) settle(ctx context.Context, rcpts []store.OutboundRecipient, ra
 		switch {
 		case err == nil:
 			done = append(done, r.ID)
-			s.log.Info("mail sent", "user", r.UserID, "attempts", r.Attempts+1)
+			s.log.Info("mail sent", "account", r.AccountID, "attempts", r.Attempts+1)
 		case permanent(err) || time.Since(r.CreatedAt) > GiveUpAfter:
 			done = append(done, r.ID)
 			failed = append(failed, r)
 			reasons = append(reasons, err.Error())
-			s.log.Warn("mail could not be delivered", "user", r.UserID, "attempts", r.Attempts+1, "error", err)
+			s.log.Warn("mail could not be delivered", "account", r.AccountID, "attempts", r.Attempts+1, "error", err)
 		default:
 			wait := backoff[min(r.Attempts, len(backoff)-1)]
 			if err := s.st.DeferOutbound(ctx, r.ID, time.Now().Add(wait), err.Error()); err != nil {
 				s.log.Error("deferring a recipient failed", "error", err)
 			}
-			s.log.Info("mail deferred", "user", r.UserID, "attempts", r.Attempts+1, "retry_in", wait, "error", err)
+			s.log.Info("mail deferred", "account", r.AccountID, "attempts", r.Attempts+1, "retry_in", wait, "error", err)
 		}
 	}
 	if err := s.st.FinishOutbound(ctx, done); err != nil {
@@ -157,7 +172,7 @@ func (s *Sender) settle(ctx context.Context, rcpts []store.OutboundRecipient, ra
 	}
 	for i, r := range failed {
 		if err := s.bounce(ctx, r, raw, reasons[i]); err != nil {
-			s.log.Error("reporting a failure to its sender failed", "user", r.UserID, "error", err)
+			s.log.Error("reporting a failure to its sender failed", "account", r.AccountID, "error", err)
 		}
 	}
 }
@@ -384,10 +399,10 @@ func domainOf(addr string) string {
 // bounce tells the sender, in their INBOX, that a recipient never got it. Delivered locally: a
 // report about failed delivery that could itself fail to deliver helps nobody.
 func (s *Sender) bounce(ctx context.Context, r store.OutboundRecipient, raw []byte, reason string) error {
-	if r.UserID == "" {
+	if r.AccountID == "" {
 		return nil
 	}
-	box, err := s.st.MailboxNamed(ctx, r.UserID, store.Inbox)
+	box, err := s.st.MailboxNamed(ctx, r.AccountID, store.Inbox)
 	if err != nil {
 		return err
 	}

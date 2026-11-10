@@ -29,7 +29,7 @@ type Queue interface {
 	Wake()
 }
 
-// Submission accepts mail from mailio's own users, signed in, to send anywhere.
+// Submission accepts mail from mailio's own accounts, signed in, to send anywhere.
 type Submission struct {
 	st    *store.Store
 	log   *slog.Logger
@@ -63,11 +63,11 @@ func (sub *Submission) NewSession(c *smtp.Conn) (smtp.Session, error) {
 }
 
 type subSession struct {
-	sub   *Submission
-	ip    net.IP
-	user  *store.User
-	from  string
-	rcpts []string
+	sub     *Submission
+	ip      net.IP
+	account *store.Account
+	from    string
+	rcpts   []string
 }
 
 var _ smtp.AuthSession = (*subSession)(nil)
@@ -85,7 +85,7 @@ func (s *subSession) Auth(mech string) (sasl.Server, error) {
 		if err != nil {
 			return err
 		}
-		s.user = u
+		s.account = u
 		return nil
 	}
 	switch mech {
@@ -110,13 +110,13 @@ func (s *subSession) Reset() {
 func (s *subSession) Logout() error { return nil }
 
 func (s *subSession) Mail(from string, _ *smtp.MailOptions) error {
-	if s.user == nil {
+	if s.account == nil {
 		return smtp.ErrAuthRequired
 	}
 	a, err := address.Parse(from)
-	// A user sends as themself, tagged or not: from inbox+shop@ as readily as inbox@.
-	if err != nil || a.Domain != s.user.Domain || a.Name() != s.user.Local {
-		return &smtp.SMTPError{Code: 553, EnhancedCode: smtp.EnhancedCode{5, 7, 1}, Message: "You can only send as " + s.user.Address()}
+	// An account sends as itself, tagged or not: from inbox+shop@ as readily as inbox@.
+	if err != nil || a.Domain != s.account.Domain || a.Name() != s.account.Local {
+		return &smtp.SMTPError{Code: 553, EnhancedCode: smtp.EnhancedCode{5, 7, 1}, Message: "You can only send as " + s.account.Address()}
 	}
 	s.Reset()
 	s.from = a.String()
@@ -124,7 +124,7 @@ func (s *subSession) Mail(from string, _ *smtp.MailOptions) error {
 }
 
 func (s *subSession) Rcpt(to string, _ *smtp.RcptOptions) error {
-	if s.user == nil {
+	if s.account == nil {
 		return smtp.ErrAuthRequired
 	}
 	a, err := address.Parse(to)
@@ -144,7 +144,7 @@ func (s *subSession) Rcpt(to string, _ *smtp.RcptOptions) error {
 }
 
 func (s *subSession) Data(r io.Reader) error {
-	if s.user == nil {
+	if s.account == nil {
 		return smtp.ErrAuthRequired
 	}
 	body, err := io.ReadAll(r)
@@ -152,13 +152,13 @@ func (s *subSession) Data(r io.Reader) error {
 		return err
 	}
 	ctx := context.Background()
-	raw, err := s.sub.prepare(ctx, s.user, NormalizeCRLF(body))
+	raw, err := s.sub.prepare(ctx, s.account, NormalizeCRLF(body))
 	if err != nil {
-		s.sub.log.Error("preparing a message failed", "user", s.user.ID, "error", err)
+		s.sub.log.Error("preparing a message failed", "account", s.account.ID, "error", err)
 		return errTemporary
 	}
 
-	// Mail between users of this server never leaves it.
+	// Mail between accounts of this server never leaves it.
 	var local []store.Delivery
 	var remote []string
 	seen := map[int64]bool{}
@@ -172,15 +172,15 @@ func (s *subSession) Data(r io.Reader) error {
 			remote = append(remote, rcpt)
 			continue
 		}
-		if res.User == nil || res.Drop {
+		if res.Account == nil || res.Drop {
 			continue
 		}
-		box, err := s.sub.st.MailboxNamed(ctx, res.User.ID, store.Inbox)
+		box, err := s.sub.st.MailboxNamed(ctx, res.Account.ID, store.Inbox)
 		if err != nil {
 			return errTemporary
 		}
 		if res.Junk {
-			if j, err := s.sub.st.SpecialMailbox(ctx, res.User.ID, `\Junk`); err == nil {
+			if j, err := s.sub.st.SpecialMailbox(ctx, res.Account.ID, `\Junk`); err == nil {
 				box = j
 			}
 		}
@@ -195,17 +195,17 @@ func (s *subSession) Data(r io.Reader) error {
 		}
 	}
 	if len(remote) > 0 {
-		if err := s.sub.st.Enqueue(ctx, s.from, s.user.ID, raw, remote); err != nil {
+		if err := s.sub.st.Enqueue(ctx, s.from, s.account.ID, raw, remote); err != nil {
 			return errTemporary
 		}
 		s.sub.queue.Wake()
 	}
-	s.sub.log.Info("mail submitted", "user", s.user.ID, "local", len(local), "remote", len(remote), "bytes", len(raw))
+	s.sub.log.Info("mail submitted", "account", s.account.ID, "local", len(local), "remote", len(remote), "bytes", len(raw))
 	return nil
 }
 
 // prepare adds what a client may leave out, stamps Received, and signs with the domain's DKIM key.
-func (sub *Submission) prepare(ctx context.Context, u *store.User, body []byte) ([]byte, error) {
+func (sub *Submission) prepare(ctx context.Context, u *store.Account, body []byte) ([]byte, error) {
 	var head bytes.Buffer
 	fmt.Fprintf(&head, "Received: by %s (mailio) with ESMTPSA;\r\n\t%s\r\n", sub.host, time.Now().Format(time.RFC1123Z))
 	if m, err := mail.ReadMessage(bytes.NewReader(body)); err == nil {

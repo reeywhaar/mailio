@@ -106,15 +106,15 @@ func TestOnlyContentCountsAsAChange(t *testing.T) {
 
 	var d *store.Domain
 	moved("a domain", func() (err error) { d, err = st.CreateDomain(ctx, "vyrtsev.com"); return })
-	var u *store.User
-	moved("a user", func() (err error) { u, err = st.CreateUser(ctx, "inbox@vyrtsev.com", "correct horse"); return })
-	moved("a password", func() error { _, err := st.AddPassword(ctx, u.ID, "phone", "battery staple"); return err })
+	var u *store.Account
+	moved("an account", func() (err error) { u, err = st.CreateAccount(ctx, "inbox@vyrtsev.com", "correct horse"); return })
+	moved("a password", func() error { _, err := st.AddCredential(ctx, u.ID, "phone", "battery staple"); return err })
 	moved("no-reply", func() error { return st.SetIncoming(ctx, u.ID, store.IncomingReject, "") })
 	still("no-reply again", func() error { return st.SetIncoming(ctx, u.ID, store.IncomingReject, "") })
 	moved("junk", func() error { return st.SetUnknown(ctx, d.ID, store.UnknownJunk, u.ID) })
 	still("the same junk again", func() error { return st.SetUnknown(ctx, d.ID, store.UnknownJunk, u.ID) })
 	moved("dropping instead", func() error { return st.SetUnknown(ctx, d.ID, store.UnknownDrop, "") })
-	moved("a user deleted", func() error { return st.DeleteUser(ctx, u.ID) })
+	moved("an account deleted", func() error { return st.DeleteAccount(ctx, u.ID) })
 	moved("a domain deleted", func() error { return st.DeleteDomain(ctx, d.ID) })
 }
 
@@ -125,7 +125,7 @@ func TestTheArchiveIsADatabaseThatOpens(t *testing.T) {
 	if _, err := st.CreateDomain(ctx, "reey.ru"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.CreateUser(ctx, "inbox@reey.ru", "correct horse"); err != nil {
+	if _, err := st.CreateAccount(ctx, "inbox@reey.ru", "correct horse"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -135,7 +135,7 @@ func TestTheArchiveIsADatabaseThatOpens(t *testing.T) {
 	}
 	reopened := openStore(t, restored)
 	if _, err := reopened.Authenticate(ctx, "inbox@reey.ru", "correct horse"); err != nil {
-		t.Errorf("the restored database does not know the user: %v", err)
+		t.Errorf("the restored database does not know the account: %v", err)
 	}
 }
 

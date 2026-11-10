@@ -2,7 +2,7 @@
 
 ## One SQLite file holds everything
 
-`mailio.db` in the data directory: domains, users, sessions, and — as it arrives — the mail
+`mailio.db` in the data directory: domains, accounts, sessions, and — as it arrives — the mail
 itself. A backup is one file — see [deploy.md](deploy.md#backups-go-to-a-backio-agent) — and a
 stopped instance leaves exactly one, because closing checkpoints the write-ahead log into it.
 
@@ -26,7 +26,7 @@ waiting, if the other process holds the lock at that moment.
 
 ## Mail is rows, and bodies are rows apart
 
-`mailboxes` per user, `messages` per mailbox with IMAP's UID, flags and arrival time, and the
+`mailboxes` per account, `messages` per mailbox with IMAP's UID, flags and arrival time, and the
 message itself in `bodies`, so listing a mailbox never reads a body. A message is stored as it
 arrived, with mailio's Received and Authentication-Results headers in front.
 

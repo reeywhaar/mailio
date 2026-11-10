@@ -36,8 +36,8 @@ func TestASharedMaildirIsSortedToWhoEachMessageWasSentTo(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	reey, _ := st.CreateUser(ctx, "inbox@reey.ru", "correct horse")
-	vyr, _ := st.CreateUser(ctx, "inbox@vyrtsev.com", "correct horse")
+	reey, _ := st.CreateAccount(ctx, "inbox@reey.ru", "correct horse")
+	vyr, _ := st.CreateAccount(ctx, "inbox@vyrtsev.com", "correct horse")
 
 	root := t.TempDir()
 	old := time.Date(2025, 3, 1, 10, 0, 0, 0, time.UTC)
@@ -47,7 +47,7 @@ func TestASharedMaildirIsSortedToWhoEachMessageWasSentTo(t *testing.T) {
 	write(t, filepath.Join(root, ".Sent", "cur", "4.d:2,S"), "From: inbox@reey.ru\r\nTo: anna@example.com\r\nSubject: d\r\n\r\nx\r\n", old)
 	write(t, filepath.Join(root, ".Projects.2025", "cur", "5.e:2,S"), "X-Original-To: inbox@reey.ru\r\nSubject: e\r\n\r\nx\r\n", old)
 
-	res, err := Import(ctx, st, root, []*store.User{reey, vyr}, true)
+	res, err := Import(ctx, st, root, []*store.Account{reey, vyr}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestASharedMaildirIsSortedToWhoEachMessageWasSentTo(t *testing.T) {
 		}
 	}
 
-	if _, err := Import(ctx, st, root, []*store.User{reey, vyr}, false); err != nil {
+	if _, err := Import(ctx, st, root, []*store.Account{reey, vyr}, false); err != nil {
 		t.Fatal(err)
 	}
 	box, _ := st.MailboxNamed(ctx, vyr.ID, store.Inbox)

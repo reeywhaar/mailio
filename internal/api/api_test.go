@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -126,27 +127,27 @@ func TestAnAdminLinkIsCheckedThenSpentAndSignsIn(t *testing.T) {
 	if code != http.StatusOK || me["name"] != "misha" {
 		t.Fatalf("me after: %d %v", code, me)
 	}
-	// An admin is not a mailbox, so the link made no domain and no user.
-	if len(h.list("/api/domains")) != 0 || len(h.list("/api/users")) != 0 {
-		t.Error("the admin link made a domain or a user")
+	// An admin is not a mailbox, so the link made no domain and no account.
+	if len(h.list("/api/domains")) != 0 || len(h.list("/api/accounts")) != 0 {
+		t.Error("the admin link made a domain or an account")
 	}
 	if code, _ := h.do("POST", "/api/admin-link/check", map[string]any{"token": token}); code != http.StatusNotFound {
 		t.Errorf("a spent link checks as %d", code)
 	}
 }
 
-func TestAUserCannotSignInHereOnlyAnAdmin(t *testing.T) {
+func TestAnAccountCannotSignInHereOnlyAnAdmin(t *testing.T) {
 	h := signedIn(t)
 	if code, body := h.do("POST", "/api/domains", map[string]any{"name": "reey.ru"}); code != http.StatusCreated {
 		t.Fatalf("domain: %d %v", code, body)
 	}
-	if code, body := h.do("POST", "/api/users", map[string]any{"address": "inbox@reey.ru", "password": "another one"}); code != http.StatusCreated {
-		t.Fatalf("user: %d %v", code, body)
+	if code, body := h.do("POST", "/api/accounts", map[string]any{"address": "inbox@reey.ru"}); code != http.StatusCreated {
+		t.Fatalf("account: %d %v", code, body)
 	}
 
 	b := h.fresh()
-	if code, _ := b.do("POST", "/api/session", map[string]any{"name": "inbox@reey.ru", "password": "another one"}); code != http.StatusUnauthorized {
-		t.Errorf("a user: %d", code)
+	if code, _ := b.do("POST", "/api/session", map[string]any{"name": "inbox@reey.ru", "password": "correct horse"}); code != http.StatusUnauthorized {
+		t.Errorf("an account: %d", code)
 	}
 	if code, _ := b.do("POST", "/api/session", map[string]any{"name": "misha", "password": "wrong password"}); code != http.StatusUnauthorized {
 		t.Errorf("wrong password: %d", code)
@@ -173,9 +174,12 @@ func TestEveryAdminRouteNeedsASession(t *testing.T) {
 	h := newHarness(t)
 	for _, c := range [][2]string{
 		{"GET", "/api/domains"}, {"POST", "/api/domains"}, {"PATCH", "/api/domains/dm_x"}, {"DELETE", "/api/domains/dm_x"},
-		{"GET", "/api/users"}, {"POST", "/api/users"}, {"PATCH", "/api/users/u_x"}, {"DELETE", "/api/users/u_x"},
-		{"POST", "/api/users/u_x/passwords"}, {"DELETE", "/api/users/u_x/passwords/pw_x"},
+		{"GET", "/api/accounts"}, {"POST", "/api/accounts"}, {"PATCH", "/api/accounts/ac_x"}, {"DELETE", "/api/accounts/ac_x"},
+		{"POST", "/api/accounts/ac_x/credentials"}, {"DELETE", "/api/accounts/ac_x/credentials/cr_x"},
+		{"POST", "/api/accounts/ac_x/credentials/cr_x/reset"},
 		{"GET", "/api/admins"}, {"POST", "/api/admins"}, {"PATCH", "/api/admins/ad_x"}, {"DELETE", "/api/admins/ad_x"},
+		{"GET", "/api/relays"}, {"POST", "/api/relays"}, {"PUT", "/api/relays/rl_x"}, {"DELETE", "/api/relays/rl_x"},
+		{"POST", "/api/relays/rl_x/test"}, {"GET", "/api/settings"}, {"PUT", "/api/settings"}, {"GET", "/api/queue"},
 		{"GET", "/api/me"}, {"DELETE", "/api/session"},
 	} {
 		if code, _ := h.do(c[0], c[1], map[string]any{}); code != http.StatusUnauthorized {
@@ -184,36 +188,36 @@ func TestEveryAdminRouteNeedsASession(t *testing.T) {
 	}
 }
 
-func TestAnAdminManagesDomainsAndUsers(t *testing.T) {
+func TestAnAdminManagesDomainsAndAccounts(t *testing.T) {
 	h := signedIn(t)
 
 	code, d := h.do("POST", "/api/domains", map[string]any{"name": "Vyrtsev.com"})
-	if code != http.StatusCreated || d["name"] != "vyrtsev.com" || d["unknown"] != "reject" {
+	if code != http.StatusCreated || d["name"] != "vyrtsev.com" || d["unknown"] != nil {
 		t.Fatalf("create domain: %d %v", code, d)
 	}
-	code, u := h.do("POST", "/api/users", map[string]any{"address": "inbox@vyrtsev.com", "password": "correct horse"})
+	code, u := h.do("POST", "/api/accounts", map[string]any{"address": "inbox@vyrtsev.com"})
 	if code != http.StatusCreated || u["address"] != "inbox@vyrtsev.com" {
-		t.Fatalf("create user: %d %v", code, u)
+		t.Fatalf("create account: %d %v", code, u)
 	}
 
-	domainID, userID := d["id"].(string), u["id"].(string)
-	code, d = h.do("PATCH", "/api/domains/"+domainID, map[string]any{"unknown": "junk", "unknown_user_id": userID})
-	if code != http.StatusOK || d["unknown"] != "junk" || d["unknown_user_id"] != userID {
+	domainID, accountID := d["id"].(string), u["id"].(string)
+	code, d = h.do("PATCH", "/api/domains/"+domainID, map[string]any{"unknown": "junk", "unknown_account_id": accountID})
+	if code != http.StatusOK || d["unknown"] != "junk" || d["unknown_account_id"] != accountID {
 		t.Fatalf("set junk: %d %v", code, d)
 	}
-	if code, _ := h.do("DELETE", "/api/users/"+userID, nil); code != http.StatusConflict {
-		t.Errorf("deleting the junk user: %d", code)
+	if code, _ := h.do("DELETE", "/api/accounts/"+accountID, nil); code != http.StatusConflict {
+		t.Errorf("deleting the junk account: %d", code)
 	}
 	if code, _ := h.do("PATCH", "/api/domains/"+domainID, map[string]any{"unknown": "drop"}); code != http.StatusOK {
 		t.Errorf("set drop: %d", code)
 	}
 
-	if len(h.list("/api/users")) != 1 || len(h.list("/api/domains")) != 1 {
+	if len(h.list("/api/accounts")) != 1 || len(h.list("/api/domains")) != 1 {
 		t.Error("the lists do not have what was made")
 	}
 
-	if code, _ := h.do("DELETE", "/api/users/"+userID, nil); code != http.StatusNoContent {
-		t.Errorf("delete user: %d", code)
+	if code, _ := h.do("DELETE", "/api/accounts/"+accountID, nil); code != http.StatusNoContent {
+		t.Errorf("delete account: %d", code)
 	}
 	if code, _ := h.do("DELETE", "/api/domains/"+domainID, nil); code != http.StatusNoContent {
 		t.Errorf("delete domain: %d", code)
@@ -276,7 +280,7 @@ func TestYourOwnNewPasswordKeepsThisSession(t *testing.T) {
 
 func TestAMalformedIdIsABadRequest(t *testing.T) {
 	h := signedIn(t)
-	if code, _ := h.do("DELETE", "/api/users/nope", nil); code != http.StatusBadRequest {
+	if code, _ := h.do("DELETE", "/api/accounts/nope", nil); code != http.StatusBadRequest {
 		t.Errorf("got %d", code)
 	}
 }
@@ -326,29 +330,32 @@ func TestAnAdminLinkSendsNoServerItsToken(t *testing.T) {
 	}
 }
 
-func TestTheRelayIsSetAndItsPasswordNeverComesBack(t *testing.T) {
+func TestRelaysAreListedWithoutTheirPasswords(t *testing.T) {
 	h := signedIn(t)
-	code, r := h.do("PUT", "/api/relay", map[string]any{"host": "smtp.relay.example", "port": 587, "security": "starttls", "username": "me", "password": "relay secret"})
-	if code != http.StatusOK || r["has_password"] != true || r["password"] != nil {
-		t.Fatalf("set: %d %v", code, r)
+	code, r := h.do("POST", "/api/relays", map[string]any{"label": "Gmail", "host": "smtp.gmail.com", "port": 587, "security": "starttls", "username": "me", "password": "relay secret"})
+	if code != http.StatusCreated || r["has_password"] != true || r["password"] != nil {
+		t.Fatalf("add: %d %v", code, r)
+	}
+	id := r["id"].(string)
+	if code, _ := h.do("POST", "/api/relays", map[string]any{"label": "GMAIL", "host": "x.example", "port": 25, "security": "starttls"}); code != http.StatusConflict {
+		t.Errorf("a taken label: %d", code)
 	}
 	// A new port keeps the password the form never showed.
-	code, r = h.do("PUT", "/api/relay", map[string]any{"host": "smtp.relay.example", "port": 465, "security": "implicit", "username": "me", "password": ""})
+	code, r = h.do("PUT", "/api/relays/"+id, map[string]any{"label": "Gmail", "host": "smtp.gmail.com", "port": 465, "security": "implicit", "username": "me", "password": ""})
 	if code != http.StatusOK || r["has_password"] != true || r["port"] != float64(465) {
 		t.Fatalf("change port: %d %v", code, r)
 	}
-	stored, _ := h.st.Relay(context.Background())
-	if stored.Password != "relay secret" {
+	if stored, _ := h.st.RelayByID(context.Background(), id); stored.Password != "relay secret" {
 		t.Errorf("the password became %q", stored.Password)
 	}
-	if code, _ := h.do("PUT", "/api/relay", map[string]any{"host": "smtp.relay.example", "port": 0, "security": "starttls"}); code != http.StatusBadRequest {
+	if list := h.list("/api/relays"); len(list) != 1 || strings.Contains(fmt.Sprint(list), "relay secret") {
+		t.Errorf("list: %v", list)
+	}
+	if code, _ := h.do("PUT", "/api/relays/"+id, map[string]any{"label": "Gmail", "host": "smtp.gmail.com", "port": 0, "security": "starttls"}); code != http.StatusBadRequest {
 		t.Errorf("port 0: %d", code)
 	}
-	if code, _ := h.do("DELETE", "/api/relay", nil); code != http.StatusNoContent {
+	if code, _ := h.do("DELETE", "/api/relays/"+id, nil); code != http.StatusNoContent {
 		t.Errorf("delete: %d", code)
-	}
-	if code, body := h.do("GET", "/api/relay", nil); code != http.StatusOK || body != nil {
-		t.Errorf("after delete: %d %v", code, body)
 	}
 }
 
@@ -361,62 +368,113 @@ func TestADomainShowsTheRecordsItNeeds(t *testing.T) {
 		rec := r.(map[string]any)
 		types = append(types, rec["type"].(string)+" "+rec["name"].(string))
 	}
-	want := "MX reey.ru,TXT reey.ru,TXT _dmarc.reey.ru,TXT mailio._domainkey.reey.ru"
+	want := "TXT reey.ru,TXT _dmarc.reey.ru,TXT mailio._domainkey.reey.ru"
 	if strings.Join(types, ",") != want {
 		t.Errorf("records: %v", types)
 	}
 }
 
-func TestAUserHasPasswordsEachWithItsLogin(t *testing.T) {
+func TestAnAccountHasCredentialsEachWithItsLogin(t *testing.T) {
 	h := signedIn(t)
 	h.do("POST", "/api/domains", map[string]any{"name": "reey.ru"})
-	_, u := h.do("POST", "/api/users", map[string]any{"address": "inbox@reey.ru", "password": "correct horse"})
+	_, u := h.do("POST", "/api/accounts", map[string]any{"address": "inbox@reey.ru"})
 	id := u["id"].(string)
-	list := u["passwords"].([]any)
+	// The default is generated, and this answer is the one time it is shown.
+	generated, _ := u["password"].(string)
+	if len(generated) != store.GeneratedLength {
+		t.Fatalf("generated %q", generated)
+	}
+	if _, err := h.st.Authenticate(context.Background(), "inbox@reey.ru", generated); err != nil {
+		t.Errorf("the generated default does not sign in: %v", err)
+	}
+	if len(h.list("/api/accounts")[0]) == 0 || h.list("/api/accounts")[0]["password"] != nil {
+		t.Error("the list carries a password")
+	}
+	list := u["credentials"].([]any)
 	if len(list) != 1 || list[0].(map[string]any)["label"] != "default" || list[0].(map[string]any)["login"] != "inbox@reey.ru" {
-		t.Fatalf("a new user's passwords: %v", list)
+		t.Fatalf("a new account's credentials: %v", list)
 	}
 
-	code, p := h.do("POST", "/api/users/"+id+"/passwords", map[string]any{"label": "iPhone", "password": "phone password"})
-	if code != http.StatusCreated || p["label"] != "iPhone" || p["password"] != nil {
+	code, p := h.do("POST", "/api/accounts/"+id+"/credentials", map[string]any{"label": "iPhone"})
+	if code != http.StatusCreated || p["label"] != "iPhone" {
 		t.Fatalf("add: %d %v", code, p)
 	}
+	phone := p["password"].(string)
 	login := p["login"].(string)
 	if !strings.HasPrefix(login, "inbox+") || !strings.HasSuffix(login, "@reey.ru") {
 		t.Errorf("login %q", login)
 	}
-	if _, err := h.st.Authenticate(context.Background(), login, "phone password"); err != nil {
+	if _, err := h.st.Authenticate(context.Background(), login, phone); err != nil {
 		t.Errorf("the new login does not sign in: %v", err)
 	}
 	pid := p["id"].(string)
-	if code, _ := h.do("DELETE", "/api/users/"+id+"/passwords/"+pid, nil); code != http.StatusNoContent {
+
+	// A new password for the same login: the old one stops.
+	code, p = h.do("POST", "/api/accounts/"+id+"/credentials/"+pid+"/reset", nil)
+	if code != http.StatusOK || p["login"] != login || p["password"] == phone {
+		t.Fatalf("reset: %d %v", code, p)
+	}
+	if _, err := h.st.Authenticate(context.Background(), login, phone); err == nil {
+		t.Error("the old password still signs in")
+	}
+	phone = p["password"].(string)
+	if code, _ := h.do("DELETE", "/api/accounts/"+id+"/credentials/"+pid, nil); code != http.StatusNoContent {
 		t.Errorf("delete: %d", code)
 	}
-	if _, err := h.st.Authenticate(context.Background(), login, "phone password"); err == nil {
+	if _, err := h.st.Authenticate(context.Background(), login, phone); err == nil {
 		t.Error("a deleted password still signs in")
 	}
-	if code, _ := h.do("DELETE", "/api/users/"+id+"/passwords/"+pid, nil); code != http.StatusNotFound {
+	if code, _ := h.do("DELETE", "/api/accounts/"+id+"/credentials/"+pid, nil); code != http.StatusNotFound {
 		t.Errorf("deleting it twice: %d", code)
 	}
 }
 
-func TestAUserRefusesOrForwardsItsMail(t *testing.T) {
+func TestAnAccountRefusesOrForwardsItsMail(t *testing.T) {
 	h := signedIn(t)
 	h.do("POST", "/api/domains", map[string]any{"name": "reey.ru"})
-	_, inbox := h.do("POST", "/api/users", map[string]any{"address": "inbox@reey.ru", "password": "correct horse"})
-	_, billing := h.do("POST", "/api/users", map[string]any{"address": "billing@reey.ru", "password": "correct horse"})
-	if billing["incoming"] != "keep" || billing["forward_user_id"] != nil {
-		t.Errorf("a new user: %v", billing)
+	_, inbox := h.do("POST", "/api/accounts", map[string]any{"address": "inbox@reey.ru"})
+	_, billing := h.do("POST", "/api/accounts", map[string]any{"address": "billing@reey.ru"})
+	if billing["incoming"] != "keep" || billing["forward_account_id"] != nil {
+		t.Errorf("a new account: %v", billing)
 	}
-	code, u := h.do("PATCH", "/api/users/"+billing["id"].(string), map[string]any{"incoming": "forward", "forward_user_id": inbox["id"]})
-	if code != http.StatusOK || u["incoming"] != "forward" || u["forward_user_id"] != inbox["id"] {
+	code, u := h.do("PATCH", "/api/accounts/"+billing["id"].(string), map[string]any{"incoming": "forward", "forward_account_id": inbox["id"]})
+	if code != http.StatusOK || u["incoming"] != "forward" || u["forward_account_id"] != inbox["id"] {
 		t.Errorf("forward: %d %v", code, u)
 	}
-	code, u = h.do("PATCH", "/api/users/"+billing["id"].(string), map[string]any{"incoming": "reject"})
-	if code != http.StatusOK || u["incoming"] != "reject" || u["forward_user_id"] != nil {
+	code, u = h.do("PATCH", "/api/accounts/"+billing["id"].(string), map[string]any{"incoming": "reject"})
+	if code != http.StatusOK || u["incoming"] != "reject" || u["forward_account_id"] != nil {
 		t.Errorf("reject: %d %v", code, u)
 	}
-	if code, _ := h.do("PATCH", "/api/users/"+billing["id"].(string), map[string]any{"incoming": "forward"}); code != http.StatusBadRequest {
+	if code, _ := h.do("PATCH", "/api/accounts/"+billing["id"].(string), map[string]any{"incoming": "forward"}); code != http.StatusBadRequest {
 		t.Errorf("forward to nobody: %d", code)
+	}
+}
+
+func TestTheDefaultsAndADomainsOwn(t *testing.T) {
+	h := signedIn(t)
+	if code, set := h.do("GET", "/api/settings", nil); code != http.StatusOK || set["dmarc"] != "reject" || set["spf"] != "~all" || set["relay_id"] != nil {
+		t.Fatalf("defaults: %d %v", code, set)
+	}
+	_, gmail := h.do("POST", "/api/relays", map[string]any{"label": "Gmail", "host": "smtp.gmail.com", "port": 587, "security": "starttls", "username": "me", "password": "relay secret"})
+	code, set := h.do("PUT", "/api/settings", map[string]any{"unknown": "reject", "dmarc": "quarantine", "spf": "-all", "relay_id": gmail["id"]})
+	if code != http.StatusOK || set["spf"] != "-all" || set["relay_id"] != gmail["id"] {
+		t.Fatalf("set defaults: %d %v", code, set)
+	}
+	_, d := h.do("POST", "/api/domains", map[string]any{"name": "reey.ru"})
+	id := d["id"].(string)
+	if d["dmarc"] != nil || d["spf"] != nil || d["relay"] != nil {
+		t.Errorf("a new domain: %v", d)
+	}
+	code, d = h.do("PATCH", "/api/domains/"+id, map[string]any{"dmarc": "none", "relay": "builtin"})
+	if code != http.StatusOK || d["dmarc"] != "none" || d["relay"] != "builtin" {
+		t.Errorf("its own: %d %v", code, d)
+	}
+	code, d = h.do("PATCH", "/api/domains/"+id, map[string]any{"relay": gmail["id"]})
+	if code != http.StatusOK || d["relay"] != gmail["id"] {
+		t.Errorf("a relay of its own: %d %v", code, d)
+	}
+	code, d = h.do("PATCH", "/api/domains/"+id, map[string]any{"relay": "", "dmarc": ""})
+	if code != http.StatusOK || d["relay"] != nil || d["dmarc"] != nil {
+		t.Errorf("back to the defaults: %d %v", code, d)
 	}
 }

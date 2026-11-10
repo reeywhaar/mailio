@@ -1,5 +1,5 @@
-// Package smtpd speaks SMTP: inbound on 25, where other servers deliver to mailio's users, and
-// submission on 465 and 587, where those users send.
+// Package smtpd speaks SMTP: inbound on 25, where other servers deliver to mailio's accounts, and
+// submission on 465 and 587, where those accounts send.
 package smtpd
 
 import (
@@ -19,11 +19,11 @@ import (
 	"mailio/internal/store"
 )
 
-// MaxRecipients is per message. A real message to more than this many of one server's users is
+// MaxRecipients is per message. A real message to more than this many of one server's accounts is
 // a mailing list, and lists split their sends.
 const MaxRecipients = 100
 
-// Inbound accepts mail for mailio's users from the rest of the internet.
+// Inbound accepts mail for mailio's accounts from the rest of the internet.
 type Inbound struct {
 	st     *store.Store
 	log    *slog.Logger
@@ -94,8 +94,8 @@ func (s *inSession) Rcpt(to string, _ *smtp.RcptOptions) error {
 	case r.Refused:
 		s.in.log.Info("mail refused: the address takes no mail", "ip", s.ip.String())
 		return errNoMail
-	case r.User == nil && !r.Drop:
-		s.in.log.Info("mail refused: no such user", "ip", s.ip.String())
+	case r.Account == nil && !r.Drop:
+		s.in.log.Info("mail refused: no such account", "ip", s.ip.String())
 		return &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 1, 1}, Message: "No such user here"}
 	}
 	s.rcpts = append(s.rcpts, r)
@@ -135,7 +135,7 @@ func (s *inSession) Data(r io.Reader) error {
 		sanitize(s.conn.Hostname()), s.ip, s.in.host, with, time.Now().Format(time.RFC1123Z))
 	raw := append(head.Bytes(), body...)
 
-	deliveries, users, err := s.in.deliveries(ctx, s.rcpts, v.Junk)
+	deliveries, accounts, err := s.in.deliveries(ctx, s.rcpts, v.Junk)
 	if err != nil {
 		s.in.log.Error("delivery failed", "error", err)
 		return errTemporary
@@ -146,29 +146,29 @@ func (s *inSession) Data(r io.Reader) error {
 			return errTemporary
 		}
 	}
-	s.in.log.Info("mail received", "users", users, "bytes", len(raw), "spf", v.SPF, "dkim", v.DKIM,
+	s.in.log.Info("mail received", "accounts", accounts, "bytes", len(raw), "spf", v.SPF, "dkim", v.DKIM,
 		"dmarc", v.DMARC, "junk", v.Junk, "tls", secure)
 	return nil
 }
 
 // deliveries decides each recipient's mailbox: INBOX, or Junk for junk. One copy per mailbox,
-// however many of a user's tagged addresses it was sent to.
+// however many of an account's tagged addresses it was sent to.
 func (in *Inbound) deliveries(ctx context.Context, rcpts []*store.Recipient, junk bool) ([]store.Delivery, []string, error) {
 	seen := make(map[int64]bool)
 	var (
-		out   []store.Delivery
-		users []string
+		out      []store.Delivery
+		accounts []string
 	)
 	for _, r := range rcpts {
-		if r.Drop || r.User == nil {
+		if r.Drop || r.Account == nil {
 			continue
 		}
-		box, err := in.st.MailboxNamed(ctx, r.User.ID, store.Inbox)
+		box, err := in.st.MailboxNamed(ctx, r.Account.ID, store.Inbox)
 		if err != nil {
 			return nil, nil, err
 		}
 		if r.Junk || junk {
-			if j, err := in.st.SpecialMailbox(ctx, r.User.ID, `\Junk`); err == nil {
+			if j, err := in.st.SpecialMailbox(ctx, r.Account.ID, `\Junk`); err == nil {
 				box = j
 			} else if !errors.Is(err, store.ErrNotFound) {
 				return nil, nil, err
@@ -179,9 +179,9 @@ func (in *Inbound) deliveries(ctx context.Context, rcpts []*store.Recipient, jun
 		}
 		seen[box.ID] = true
 		out = append(out, store.Delivery{MailboxID: box.ID})
-		users = append(users, r.User.ID)
+		accounts = append(accounts, r.Account.ID)
 	}
-	return out, users, nil
+	return out, accounts, nil
 }
 
 // NormalizeCRLF makes every line end in CRLF. A bare LF passed on is what SMTP smuggling rides

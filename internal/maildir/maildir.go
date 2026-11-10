@@ -1,4 +1,4 @@
-// Package maildir imports a Maildir, the Postfix-based mailio's format, into users' mailboxes.
+// Package maildir imports a Maildir, the Postfix-based mailio's format, into accounts' mailboxes.
 package maildir
 
 import (
@@ -119,10 +119,10 @@ func flags(name string) []string {
 	return out
 }
 
-// Owner picks which of users a message belongs to, for a Maildir several addresses delivered
+// Owner picks which of accounts a message belongs to, for a Maildir several addresses delivered
 // into: whoever the headers say it was sent to, X-Original-To first, which Postfix stamps with the
 // address before any alias; for sent mail, whoever it is from. Nil when nobody matches.
-func Owner(raw []byte, users []*store.User, sent bool) *store.User {
+func Owner(raw []byte, accounts []*store.Account, sent bool) *store.Account {
 	m, err := mail.ReadMessage(bufio.NewReader(bytes.NewReader(raw)))
 	if err != nil {
 		return nil
@@ -142,7 +142,7 @@ func Owner(raw []byte, users []*store.User, sent bool) *store.User {
 				if err != nil {
 					continue
 				}
-				for _, u := range users {
+				for _, u := range accounts {
 					if addr.Domain == u.Domain && addr.Name() == u.Local {
 						return u
 					}
@@ -153,12 +153,12 @@ func Owner(raw []byte, users []*store.User, sent bool) *store.User {
 	return nil
 }
 
-// Result counts what an import did, per user and mailbox.
+// Result counts what an import did, per account and mailbox.
 type Result map[string]int
 
-// Import reads every folder of root into users' mailboxes, making any mailbox that is missing.
-// A message whose owner cannot be told goes to the first user. dry counts without writing.
-func Import(ctx context.Context, st *store.Store, root string, users []*store.User, dry bool) (Result, error) {
+// Import reads every folder of root into accounts' mailboxes, making any mailbox that is missing.
+// A message whose owner cannot be told goes to the first account. dry counts without writing.
+func Import(ctx context.Context, st *store.Store, root string, accounts []*store.Account, dry bool) (Result, error) {
 	folders, err := Folders(root)
 	if err != nil {
 		return nil, err
@@ -175,15 +175,15 @@ func Import(ctx context.Context, st *store.Store, root string, users []*store.Us
 			if err != nil {
 				return nil, err
 			}
-			owner := users[0]
-			if len(users) > 1 {
-				if u := Owner(raw, users, f.Mailbox == "Sent"); u != nil {
+			owner := accounts[0]
+			if len(accounts) > 1 {
+				if u := Owner(raw, accounts, f.Mailbox == "Sent"); u != nil {
 					owner = u
 				}
 			}
 			batches[owner.ID] = append(batches[owner.ID], store.Imported{Raw: raw, Flags: m.Flags, At: m.At})
 		}
-		for _, u := range users {
+		for _, u := range accounts {
 			batch := batches[u.ID]
 			if len(batch) == 0 {
 				continue

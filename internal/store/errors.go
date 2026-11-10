@@ -14,7 +14,7 @@ var (
 )
 
 // These wrap a sentinel with a written sentence, which is what reaches whoever reads it: "That
-// address is taken." rather than "conflict: users".
+// address is taken." rather than "conflict: accounts".
 func NotFound(format string, a ...any) error { return classify(ErrNotFound, format, a...) }
 func Conflict(format string, a ...any) error { return classify(ErrConflict, format, a...) }
 func Invalid(format string, a ...any) error  { return classify(ErrInvalid, format, a...) }

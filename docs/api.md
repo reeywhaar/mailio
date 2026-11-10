@@ -1,7 +1,7 @@
 # API
 
 JSON over HTTP, for the admin interface. Every route but the first four needs an admin's session
-cookie; without one it answers `401`. Users never sign in here: an admin has a name, not an
+cookie; without one it answers `401`. Accounts never sign in here: an admin has a name, not an
 address. See [addresses.md](addresses.md).
 
 A body is JSON with `Content-Type: application/json`, or `415`. That requirement is half the
@@ -17,19 +17,23 @@ CSRF defense; the `SameSite=Lax` cookie is the other.
 | `GET /api/me` | the signed-in admin |
 | `GET /api/domains` | every domain |
 | `POST /api/domains` | `{name}` |
-| `PATCH /api/domains/{id}` | `{unknown, unknown_user_id}` — see [addresses.md](addresses.md) |
-| `DELETE /api/domains/{id}` | `409` while it has users |
-| `GET /api/users` | every user |
-| `POST /api/users` | `{address, password}`: the password is the `default`, whose login is the address |
-| `PATCH /api/users/{id}` | `{incoming, forward_user_id}`: `keep`, `reject`, or `forward` to a user |
-| `DELETE /api/users/{id}` | `409` for a user getting a domain's junk, or forwarded to |
-| `POST /api/users/{id}/passwords` | `{label, password}` → `{id, label, login, …}`, the login newly tagged. Never the password |
-| `DELETE /api/users/{id}/passwords/{pid}` | the last may go too |
+| `PATCH /api/domains/{id}` | `{unknown, unknown_account_id, dmarc, spf, relay}`, each optional; `""` returns one to the default, and `relay` is `"builtin"` or a relay's id. See [addresses.md](addresses.md) |
+| `DELETE /api/domains/{id}` | `409` while it has accounts |
+| `GET /api/accounts` | every account, with its credentials and never a password |
+| `POST /api/accounts` | `{address}` → the account and `password`, its `default` credential's, generated and in this answer only |
+| `PATCH /api/accounts/{id}` | `{incoming, forward_account_id}`: `keep`, `reject`, or `forward` to an account |
+| `DELETE /api/accounts/{id}` | `409` for an account getting junk, or forwarded to |
+| `POST /api/accounts/{id}/credentials` | `{label}` → `{id, label, login, password, …}`, the login newly tagged, the password generated and in this answer only |
+| `POST /api/accounts/{id}/credentials/{cid}/reset` | the same credential and login with a new generated `password`, in this answer only |
+| `DELETE /api/accounts/{id}/credentials/{cid}` | the last may go too |
 | `GET /api/mail` | `{host, dns_api, certificate}` |
-| `GET /api/relay` | the relay without its password, `{…, has_password}`, or `null` |
-| `PUT /api/relay` | `{host, port, security, username, password}`. An empty password keeps the stored one |
-| `DELETE /api/relay` | deliver directly again |
-| `POST /api/relay/test` | sign in to the relay and send nothing. `502 relay_failed` with its answer |
+| `GET /api/settings` | the defaults: `{unknown, unknown_account_id, dmarc, spf, relay_id}`, a null relay being built in |
+| `PUT /api/settings` | the same, all of it |
+| `GET /api/relays` | every relay, by label, without its password: `{…, has_password}` |
+| `POST /api/relays` | `{label, host, port, security, username, password}`. `409` for a label taken |
+| `PUT /api/relays/{id}` | the same; an empty password keeps the stored one |
+| `DELETE /api/relays/{id}` | `409` while it is the default or a domain's |
+| `POST /api/relays/{id}/test` | sign in to the relay and send nothing. `502 relay_failed` with its answer |
 | `GET /api/queue` | what is waiting to be sent |
 | `POST /api/queue/retry` | send the queue now |
 | `GET /api/admins` | every admin |
@@ -45,7 +49,7 @@ reason, though it changes nothing.
 ## A refusal is a code and a sentence
 
 ```json
-{ "code": "conflict", "message": "reey.ru still has users. Delete them first." }
+{ "code": "conflict", "message": "reey.ru still has accounts. Delete them first." }
 ```
 
 The code is the contract: `invalid`, `unauthenticated`, `not_found`, `conflict`,
@@ -54,4 +58,4 @@ for whoever reads it, and nothing may match on it.
 
 ## Times are Unix seconds
 
-`created_at` and `expires_at` are integers, UTC. The browser shows them in the viewer's zone.
+`created_at`, `last_used_at` and `expires_at` are integers, UTC. The browser shows them in the viewer's zone.

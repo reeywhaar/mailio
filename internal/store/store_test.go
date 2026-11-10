@@ -12,9 +12,10 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"mailio/internal/address"
+	"mailio/internal/seal"
 )
 
-// The suite makes users by the dozen and is not testing bcrypt.
+// The suite makes accounts by the dozen and is not testing bcrypt.
 func TestMain(m *testing.M) {
 	SetBcryptCost(bcrypt.MinCost)
 	os.Exit(m.Run())
@@ -48,11 +49,11 @@ func admin(t *testing.T, st *Store, name string) *Admin {
 	return a
 }
 
-// user makes a user, and its domain first if mailio does not receive for it yet.
-func user(t *testing.T, st *Store, addr string) *User {
+// account makes an account, and its domain first if mailio does not receive for it yet.
+func account(t *testing.T, st *Store, addr string) *Account {
 	t.Helper()
 	ctx := context.Background()
-	a, err := address.ParseUser(addr)
+	a, err := address.ParseAccount(addr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +62,7 @@ func user(t *testing.T, st *Store, addr string) *User {
 			t.Fatal(err)
 		}
 	}
-	u, err := st.CreateUser(ctx, addr, pw)
+	u, err := st.CreateAccount(ctx, addr, pw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,12 +156,12 @@ func TestTheFirstAdminLinkMakesAnAdminAndNothingElse(t *testing.T) {
 	if _, err := st.AuthenticateAdmin(ctx, "misha", pw); err != nil {
 		t.Errorf("cannot sign in with the password just set: %v", err)
 	}
-	// An admin is not a mailbox: no domain, no user.
+	// An admin is not a mailbox: no domain, no account.
 	if domains, _ := st.Domains(ctx); len(domains) != 0 {
 		t.Errorf("the link added domains: %v", domains)
 	}
-	if users, _ := st.Users(ctx); len(users) != 0 {
-		t.Errorf("the link added users: %v", users)
+	if accounts, _ := st.Accounts(ctx); len(accounts) != 0 {
+		t.Errorf("the link added accounts: %v", accounts)
 	}
 }
 
@@ -252,13 +253,13 @@ func TestAWrongPasswordAndAMissingAdminAreOneRefusal(t *testing.T) {
 	}
 }
 
-func TestAUserIsNotAnAdmin(t *testing.T) {
+func TestAnAccountIsNotAnAdmin(t *testing.T) {
 	st := openStore(t)
 	ctx := context.Background()
 	admin(t, st, "misha")
-	user(t, st, "inbox@reey.ru")
+	account(t, st, "inbox@reey.ru")
 	if _, err := st.AuthenticateAdmin(ctx, "inbox@reey.ru", pw); err != ErrNotFound {
-		t.Errorf("a user signed in as an admin: %v", err)
+		t.Errorf("an account signed in as an admin: %v", err)
 	}
 }
 
@@ -320,25 +321,25 @@ func TestADeletedAdminIsSignedOut(t *testing.T) {
 	}
 }
 
-func TestAUserNeedsADomainMailioReceivesFor(t *testing.T) {
+func TestAnAccountNeedsADomainMailioReceivesFor(t *testing.T) {
 	st := openStore(t)
-	if _, err := st.CreateUser(context.Background(), "inbox@vyrtsev.com", pw); !errors.Is(err, ErrInvalid) {
+	if _, err := st.CreateAccount(context.Background(), "inbox@vyrtsev.com", pw); !errors.Is(err, ErrInvalid) {
 		t.Errorf("got %v", err)
 	}
 }
 
 func TestAddressesAreUniqueRegardlessOfCase(t *testing.T) {
 	st := openStore(t)
-	user(t, st, "inbox@reey.ru")
-	if _, err := st.CreateUser(context.Background(), "INBOX@reey.ru", pw); !errors.Is(err, ErrConflict) {
+	account(t, st, "inbox@reey.ru")
+	if _, err := st.CreateAccount(context.Background(), "INBOX@reey.ru", pw); !errors.Is(err, ErrConflict) {
 		t.Errorf("got %v", err)
 	}
 }
 
-func TestAWrongPasswordAndAMissingUserAreOneRefusal(t *testing.T) {
+func TestAWrongPasswordAndAMissingAccountAreOneRefusal(t *testing.T) {
 	st := openStore(t)
 	ctx := context.Background()
-	user(t, st, "inbox@reey.ru")
+	account(t, st, "inbox@reey.ru")
 	for _, c := range [][2]string{{"inbox@reey.ru", "wrong password"}, {"nobody@reey.ru", pw}, {"not an address", pw}} {
 		if _, err := st.Authenticate(ctx, c[0], c[1]); err != ErrNotFound {
 			t.Errorf("%q: got %v, want the bare ErrNotFound", c[0], err)
@@ -346,18 +347,18 @@ func TestAWrongPasswordAndAMissingUserAreOneRefusal(t *testing.T) {
 	}
 }
 
-func TestMailToATaggedAddressGoesToItsUser(t *testing.T) {
+func TestMailToATaggedAddressGoesToItsAccount(t *testing.T) {
 	st := openStore(t)
-	u := user(t, st, "inbox@reey.ru")
+	u := account(t, st, "inbox@reey.ru")
 	r := resolve(t, st, "Inbox+Shop@reey.ru")
-	if !r.Ours || r.User == nil || r.User.ID != u.ID || r.Tag != "shop" || r.Junk || r.Drop {
+	if !r.Ours || r.Account == nil || r.Account.ID != u.ID || r.Tag != "shop" || r.Junk || r.Drop {
 		t.Errorf("got %+v", r)
 	}
 }
 
 func TestMailToAnotherDomainIsNotOurs(t *testing.T) {
 	st := openStore(t)
-	user(t, st, "inbox@reey.ru")
+	account(t, st, "inbox@reey.ru")
 	if r := resolve(t, st, "inbox@gmail.com"); r.Ours {
 		t.Errorf("got %+v", r)
 	}
@@ -366,24 +367,24 @@ func TestMailToAnotherDomainIsNotOurs(t *testing.T) {
 func TestADomainDecidesWhatHappensToUnknownMail(t *testing.T) {
 	st := openStore(t)
 	ctx := context.Background()
-	u := user(t, st, "inbox@reey.ru")
+	u := account(t, st, "inbox@reey.ru")
 	d, _ := st.DomainByName(ctx, "reey.ru")
 
-	if r := resolve(t, st, "nobody@reey.ru"); !r.Ours || r.User != nil || r.Drop || r.Junk {
+	if r := resolve(t, st, "nobody@reey.ru"); !r.Ours || r.Account != nil || r.Drop || r.Junk {
 		t.Errorf("reject: got %+v", r)
 	}
 
 	if err := st.SetUnknown(ctx, d.ID, UnknownDrop, ""); err != nil {
 		t.Fatal(err)
 	}
-	if r := resolve(t, st, "nobody@reey.ru"); r.User != nil || !r.Drop {
+	if r := resolve(t, st, "nobody@reey.ru"); r.Account != nil || !r.Drop {
 		t.Errorf("drop: got %+v", r)
 	}
 
 	if err := st.SetUnknown(ctx, d.ID, UnknownJunk, u.ID); err != nil {
 		t.Fatal(err)
 	}
-	if r := resolve(t, st, "nobody+x@reey.ru"); r.User == nil || r.User.ID != u.ID || !r.Junk {
+	if r := resolve(t, st, "nobody+x@reey.ru"); r.Account == nil || r.Account.ID != u.ID || !r.Junk {
 		t.Errorf("junk: got %+v", r)
 	}
 	if r := resolve(t, st, "inbox@reey.ru"); r.Junk {
@@ -394,7 +395,7 @@ func TestADomainDecidesWhatHappensToUnknownMail(t *testing.T) {
 func TestJunkNeedsSomebodyToGoTo(t *testing.T) {
 	st := openStore(t)
 	ctx := context.Background()
-	u := user(t, st, "inbox@reey.ru")
+	u := account(t, st, "inbox@reey.ru")
 	d, _ := st.DomainByName(ctx, "reey.ru")
 	if err := st.SetUnknown(ctx, d.ID, UnknownJunk, ""); !errors.Is(err, ErrInvalid) {
 		t.Errorf("junk to nobody: %v", err)
@@ -407,22 +408,22 @@ func TestJunkNeedsSomebodyToGoTo(t *testing.T) {
 	}
 }
 
-func TestTheUserGettingJunkCannotBeDeletedFromUnderIt(t *testing.T) {
+func TestTheAccountGettingJunkCannotBeDeletedFromUnderIt(t *testing.T) {
 	st := openStore(t)
 	ctx := context.Background()
-	user(t, st, "inbox@reey.ru")
+	account(t, st, "inbox@reey.ru")
 	d, _ := st.DomainByName(ctx, "reey.ru")
-	u, _ := st.CreateUser(ctx, "junk@reey.ru", pw)
+	u, _ := st.CreateAccount(ctx, "junk@reey.ru", pw)
 	st.SetUnknown(ctx, d.ID, UnknownJunk, u.ID)
-	if err := st.DeleteUser(ctx, u.ID); !errors.Is(err, ErrConflict) {
+	if err := st.DeleteAccount(ctx, u.ID); !errors.Is(err, ErrConflict) {
 		t.Errorf("got %v", err)
 	}
 }
 
-func TestADomainWithUsersCannotBeDeleted(t *testing.T) {
+func TestADomainWithAccountsCannotBeDeleted(t *testing.T) {
 	st := openStore(t)
 	ctx := context.Background()
-	user(t, st, "inbox@reey.ru")
+	account(t, st, "inbox@reey.ru")
 	d, _ := st.DomainByName(ctx, "reey.ru")
 	if err := st.DeleteDomain(ctx, d.ID); !errors.Is(err, ErrConflict) {
 		t.Errorf("got %v", err)
@@ -440,9 +441,9 @@ func TestADomainWithUsersCannotBeDeleted(t *testing.T) {
 func TestEachPasswordHasItsOwnLoginAndOnlyThatOne(t *testing.T) {
 	st := openStore(t)
 	ctx := context.Background()
-	u := user(t, st, "inbox@reey.ru")
+	u := account(t, st, "inbox@reey.ru")
 
-	phone, err := st.AddPassword(ctx, u.ID, "iPhone", "phone password")
+	phone, err := st.AddCredential(ctx, u.ID, "iPhone", "phone password")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -474,18 +475,18 @@ func TestEachPasswordHasItsOwnLoginAndOnlyThatOne(t *testing.T) {
 		}
 	}
 
-	if _, err := st.AddPassword(ctx, u.ID, "iphone ", "another one"); err != nil {
+	if _, err := st.AddCredential(ctx, u.ID, "iphone ", "another one"); err != nil {
 		t.Errorf("labels compare as typed, so iphone is not iPhone: %v", err)
 	}
-	if _, err := st.AddPassword(ctx, u.ID, "iPhone", "another one"); !errors.Is(err, ErrConflict) {
+	if _, err := st.AddCredential(ctx, u.ID, "iPhone", "another one"); !errors.Is(err, ErrConflict) {
 		t.Errorf("a taken label: %v", err)
 	}
 
 	// The default goes like any other, and the plain address stops signing in.
-	all, _ := st.Passwords(ctx)
+	all, _ := st.Credentials(ctx)
 	for _, p := range all[u.ID] {
-		if p.Label == DefaultPasswordLabel {
-			if err := st.DeletePassword(ctx, u.ID, p.ID); err != nil {
+		if p.Label == DefaultCredentialLabel {
+			if err := st.DeleteCredential(ctx, u.ID, p.ID); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -501,12 +502,12 @@ func TestEachPasswordHasItsOwnLoginAndOnlyThatOne(t *testing.T) {
 func TestAPasswordRecordsWhenItWasLastUsed(t *testing.T) {
 	st := openStore(t)
 	ctx := context.Background()
-	u := user(t, st, "inbox@reey.ru")
+	u := account(t, st, "inbox@reey.ru")
 	before := st.Changes()
 	if _, err := st.Authenticate(ctx, "inbox@reey.ru", pw); err != nil {
 		t.Fatal(err)
 	}
-	all, _ := st.Passwords(ctx)
+	all, _ := st.Credentials(ctx)
 	if all[u.ID][0].LastUsedAt.IsZero() {
 		t.Error("a sign-in left no trace")
 	}
@@ -518,28 +519,28 @@ func TestAPasswordRecordsWhenItWasLastUsed(t *testing.T) {
 func TestIncomingMailIsKeptRefusedOrForwarded(t *testing.T) {
 	st := openStore(t)
 	ctx := context.Background()
-	inbox := user(t, st, "inbox@reey.ru")
-	noreply := user(t, st, "noreply@reey.ru")
-	billing := user(t, st, "billing@reey.ru")
+	inbox := account(t, st, "inbox@reey.ru")
+	noreply := account(t, st, "noreply@reey.ru")
+	billing := account(t, st, "billing@reey.ru")
 
 	if err := st.SetIncoming(ctx, noreply.ID, IncomingReject, ""); err != nil {
 		t.Fatal(err)
 	}
-	if r := resolve(t, st, "noreply+x@reey.ru"); !r.Ours || r.User != nil || !r.Refused || r.Drop {
+	if r := resolve(t, st, "noreply+x@reey.ru"); !r.Ours || r.Account != nil || !r.Refused || r.Drop {
 		t.Errorf("reject: %+v", r)
 	}
 	if err := st.SetIncoming(ctx, billing.ID, IncomingForward, inbox.ID); err != nil {
 		t.Fatal(err)
 	}
-	if r := resolve(t, st, "billing@reey.ru"); r.User == nil || r.User.ID != inbox.ID || r.Refused {
+	if r := resolve(t, st, "billing@reey.ru"); r.Account == nil || r.Account.ID != inbox.ID || r.Refused {
 		t.Errorf("forward: %+v", r)
 	}
 	// Forwarding into an address that refuses mail refuses it.
 	if err := st.SetIncoming(ctx, inbox.ID, IncomingForward, noreply.ID); err != nil {
 		t.Fatal(err)
 	}
-	if r := resolve(t, st, "billing@reey.ru"); r.User != nil || !r.Refused {
-		t.Errorf("forward to a refusing user: %+v", r)
+	if r := resolve(t, st, "billing@reey.ru"); r.Account != nil || !r.Refused {
+		t.Errorf("forward to a refusing account: %+v", r)
 	}
 	// A circle is refused when it would be made.
 	if err := st.SetIncoming(ctx, noreply.ID, IncomingForward, billing.ID); !errors.Is(err, ErrConflict) {
@@ -553,8 +554,142 @@ func TestIncomingMailIsKeptRefusedOrForwarded(t *testing.T) {
 			t.Errorf("%s to %q: %v", c.in, c.to, err)
 		}
 	}
-	// A user others forward to stays while they do.
-	if err := st.DeleteUser(ctx, inbox.ID); !errors.Is(err, ErrConflict) {
+	// An account others forward to stays while they do.
+	if err := st.DeleteAccount(ctx, inbox.ID); !errors.Is(err, ErrConflict) {
 		t.Errorf("deleting a forward's target: %v", err)
+	}
+}
+
+func TestADomainFollowsTheDefaultsUnlessItHasItsOwn(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	d, _ := st.CreateDomain(ctx, "reey.ru")
+	set, err := st.Settings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if set.DMARC != DMARCReject || set.SPF != SPFSoftFail {
+		t.Fatalf("defaults %+v", set)
+	}
+	policies := func() string {
+		d, _ := st.DomainByID(ctx, d.ID)
+		set, _ := st.Settings(ctx)
+		dmarc, spf := d.Policies(set)
+		return string(dmarc) + " " + string(spf)
+	}
+	if got := policies(); got != "reject ~all" {
+		t.Errorf("a new domain: %s", got)
+	}
+	st.SetDMARC(ctx, d.ID, DMARCQuarantine)
+	st.SetSettings(ctx, Settings{Unknown: UnknownReject, DMARC: DMARCNone, SPF: SPFFail})
+	if got := policies(); got != "quarantine -all" {
+		t.Errorf("its own DMARC, the default SPF: %s", got)
+	}
+	st.SetDMARC(ctx, d.ID, "")
+	if got := policies(); got != "none -all" {
+		t.Errorf("back to the defaults: %s", got)
+	}
+	for _, bad := range []Settings{{DMARC: "bounce", SPF: SPFFail}, {DMARC: DMARCReject, SPF: "+all"}} {
+		if err := st.SetSettings(ctx, bad); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%+v: %v", bad, err)
+		}
+	}
+	if err := st.SetSPF(ctx, d.ID, "+all"); !errors.Is(err, ErrInvalid) {
+		t.Errorf("+all: %v", err)
+	}
+}
+
+func TestADomainSendsThroughTheDefaultBuiltInOrItsOwnRelay(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	sealer, _ := seal.New(make([]byte, seal.KeySize))
+	st.SetSealer(sealer)
+	d, _ := st.CreateDomain(ctx, "reey.ru")
+	via := func(domain string) string {
+		t.Helper()
+		r, err := st.RelayFor(ctx, domain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r == nil {
+			return "built in"
+		}
+		return r.Label + " " + r.Password
+	}
+	if got := via("reey.ru"); got != "built in" {
+		t.Errorf("no relay at all: %s", got)
+	}
+	gmail, err := st.CreateRelay(ctx, Relay{Label: "Gmail", Host: "smtp.gmail.com", Port: 587, Security: SecurityStartTLS, Username: "me", Password: "gmail secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	yandex, _ := st.CreateRelay(ctx, Relay{Label: "Yandex", Host: "smtp.yandex.ru", Port: 465, Security: SecurityImplicit, Username: "r", Password: "yandex secret"})
+	if _, err := st.CreateRelay(ctx, Relay{Label: "gmail", Host: "x.example", Port: 25, Security: SecurityStartTLS}); !errors.Is(err, ErrConflict) {
+		t.Errorf("a taken label, another case: %v", err)
+	}
+	st.SetSettings(ctx, Settings{Unknown: UnknownReject, DMARC: DMARCReject, SPF: SPFSoftFail, RelayID: gmail.ID})
+	if got := via("reey.ru"); got != "Gmail gmail secret" {
+		t.Errorf("the default: %s", got)
+	}
+	st.SetDomainVia(ctx, d.ID, ViaBuiltIn)
+	if got := via("reey.ru"); got != "built in" {
+		t.Errorf("built in: %s", got)
+	}
+	st.SetDomainVia(ctx, d.ID, yandex.ID)
+	if got := via("reey.ru"); got != "Yandex yandex secret" {
+		t.Errorf("its own: %s", got)
+	}
+	if got := via("elsewhere.org"); got != "Gmail gmail secret" {
+		t.Errorf("a domain mailio does not have: %s", got)
+	}
+	if err := st.SetDomainVia(ctx, d.ID, "rl_nope"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a relay that does not exist: %v", err)
+	}
+
+	// A relay in use stays; the default too.
+	if err := st.DeleteRelay(ctx, yandex.ID); !errors.Is(err, ErrConflict) {
+		t.Errorf("deleting a domain's relay: %v", err)
+	}
+	if err := st.DeleteRelay(ctx, gmail.ID); !errors.Is(err, ErrConflict) {
+		t.Errorf("deleting the default: %v", err)
+	}
+	st.SetDomainVia(ctx, d.ID, "")
+	if got := via("reey.ru"); got != "Gmail gmail secret" {
+		t.Errorf("back to the default: %s", got)
+	}
+	if err := st.DeleteRelay(ctx, yandex.ID); err != nil {
+		t.Errorf("deleting an unused relay: %v", err)
+	}
+
+	// A port changed without the password keeps the password.
+	if _, err := st.UpdateRelay(ctx, gmail.ID, Relay{Label: "Gmail", Host: "smtp.gmail.com", Port: 465, Security: SecurityImplicit, Username: "me"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := via("reey.ru"); got != "Gmail gmail secret" {
+		t.Errorf("after a port change: %s", got)
+	}
+}
+
+// The one relay there was before the list keeps its password, sealed the old way, and is sealed
+// the new way when it is next saved.
+func TestTheRelayFromBeforeTheListStillOpens(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	sealer, _ := seal.New(make([]byte, seal.KeySize))
+	st.SetSealer(sealer)
+	sealed := sealer.Seal([]byte("old secret"), []byte(legacyRelayAAD))
+	if _, err := st.writer.Exec(`INSERT INTO relays (id, label, host, port, security, username, password_sealed, legacy_aad, created_at)
+		VALUES ('rl_01m6z3hmy1v8qbhpactxqd87qk', 'smtp.gmail.com', 'smtp.gmail.com', 587, 'starttls', 'me', ?, 1, 1)`, sealed); err != nil {
+		t.Fatal(err)
+	}
+	r, err := st.RelayByID(ctx, "rl_01m6z3hmy1v8qbhpactxqd87qk")
+	if err != nil || r.Password != "old secret" {
+		t.Fatalf("got %+v %v", r, err)
+	}
+	if _, err := st.UpdateRelay(ctx, r.ID, Relay{Label: "Gmail", Host: r.Host, Port: r.Port, Security: r.Security, Username: r.Username}); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := st.RelayByID(ctx, r.ID); err != nil || r.Password != "old secret" || r.Label != "Gmail" {
+		t.Errorf("after saving: %+v %v", r, err)
 	}
 }

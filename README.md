@@ -1,7 +1,7 @@
 # mailio
 
-A mail server in one static Go binary and one SQLite file. Domains, users and their settings live
-in the database and are managed in its admin interface; mail is read with
+A mail server in one static Go binary and one SQLite file. Domains, accounts and their settings
+live in the database and are managed in its admin interface; mail is read with
 [emguio](https://github.com/reeywhaar/emguio) or any mail client over IMAP.
 
 - **Receives on 25.** SPF, DKIM and DMARC are checked; mail its sender's DMARC policy rejects is
@@ -9,13 +9,15 @@ in the database and are managed in its admin interface; mail is read with
 - **Serves IMAP on 993** to every client, with the standard mailboxes: Inbox, Sent, Drafts,
   Archive, Junk, Trash.
 - **Sends on 465 and 587,** signed with each domain's DKIM key, directly or through a relay such
-  as Gmail when the host may not send on 25 itself. Failures are retried for five days and reported
-  to the sender.
+  as Gmail when the host may not send on 25 itself; relays are a list, one is the default, and a
+  domain can choose another. Failures are retried for five days and reported to the sender.
 - **Plus addresses.** `inbox+shop@example.com` arrives in `inbox@example.com`.
-- **A password per device.** Each has a label and its own login, `inbox+k3x9@example.com`, and
-  shows when it was last used. Delete the phone's without touching the laptop's.
-- **Per address:** keep the mail, refuse it (a no-reply address that only sends), or forward it
-  to another user. **Per domain:** reject, drop or junk mail for addresses nobody has.
+- **A credential per device.** Each has a label, its own login, `inbox+k3x9@example.com`, and a
+  generated password shown once, and shows when it was last used. Delete the phone's without
+  touching the laptop's.
+- **Per account:** keep the mail, refuse it (a no-reply address that only sends), or forward it
+  to another account. **Defaults, which a domain can override:** reject, drop or junk mail for
+  addresses nobody has, the DMARC and SPF it publishes, and the relay it sends through.
 - **Looks after itself** with a DNS API ([doapi](https://github.com/reeywhaar/doapi)): it
   publishes each domain's DKIM, SPF and DMARC, and gets and renews its certificate from Let's
   Encrypt.
@@ -62,10 +64,12 @@ docker compose logs mailio
 The log has a link. Open it and choose the first admin's name and password: a sign-in for the
 admin interface, not a mailbox. Then, in the admin interface:
 
-1. **Add a domain.** Under DNS… it lists the records to publish: MX, SPF, DMARC and its DKIM key.
-2. **Add a user,** with an address and a password. That password is labelled `default`, and its
-   login is the address itself.
-3. **Set a relay** under Sending, if the host's provider blocks outbound port 25, and press Test.
+1. **Add a domain,** and point its MX at the mail host. A click on its row opens its settings,
+   and the records mailio keeps for it: SPF, DMARC and its DKIM key.
+2. **Add an account,** with its address. Its first credential is labelled `default`, its login
+   is the address itself, and its password is generated and shown once.
+3. **Add a relay** under Sending → Configure sending…, if the host's provider blocks outbound
+   port 25, press Test, and make it the default.
 
 Locked out later:
 
@@ -76,7 +80,7 @@ docker compose exec mailio mailio admin reset
 | variable | |
 | --- | --- |
 | `MAILIO_PUBLIC_URL` | *required.* Where the admin interface is opened |
-| `MAILIO_SECRET_KEY` | *required.* Seals the relay's password; keep it apart from backups |
+| `MAILIO_SECRET_KEY` | *required.* Seals the relays' passwords; keep it apart from backups |
 | `MAILIO_MAIL_HOST` | the mail server's name, if not the public URL's host |
 | `MAILIO_DNS_API_URL` | a DNS API, to publish records and get the certificate |
 | `MAILIO_BACKUP_URL` | a backio agent's `POST /backup` |
@@ -91,11 +95,12 @@ the Postfix-based mailio.
 | --- | --- |
 | Incoming | IMAP, `mail.example.com`, port 993, SSL/TLS |
 | Outgoing | SMTP, `mail.example.com`, port 465 SSL/TLS, or 587 STARTTLS |
-| Username | the password's login: `inbox@example.com` for the default, `inbox+k3x9@example.com` for another |
-| Password | that password |
+| Username | the credential's login: `inbox@example.com` for the default, `inbox+k3x9@example.com` for another |
+| Password | the credential's password |
 
-A password is shown once, when it is made, and only its hash is kept. Give each device its own:
-when one is lost, delete its password and the others keep working.
+A password is shown once, when it is made, and only its hash is kept. Give each device its own
+credential: when one is lost, delete it and the others keep working, or give it a new password
+and the same login.
 
 ## Command line
 
@@ -142,7 +147,7 @@ docker build -t mailio:smoke . && IMAGE=mailio:smoke .github/smoke/smoke.sh
 ```
 main.go             the command line
 internal/
-  store/            SQLite: domains, users, passwords, mailboxes, messages, the queue
+  store/            SQLite: domains, accounts, credentials, mailboxes, messages, the queue
   smtpd/            25 in, with SPF, DKIM and DMARC; 465 and 587 out
   imapd/            993
   outbound/         the queue: the relay or each recipient's MX, retries, bounces

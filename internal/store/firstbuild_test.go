@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"golang.org/x/crypto/bcrypt"
@@ -54,7 +55,7 @@ CREATE INDEX sessions_expiry ON sessions (expires_at);
 `
 
 // A database the first build made opens with this one: admins get their table, sessions are
-// keyed by admin, and its mail users are untouched.
+// keyed by admin, and its mail accounts are untouched.
 func TestADatabaseFromTheFirstBuildIsRepaired(t *testing.T) {
 	dir := t.TempDir()
 	raw, err := sql.Open("sqlite", filepath.Join(dir, FileName))
@@ -84,7 +85,7 @@ func TestADatabaseFromTheFirstBuildIsRepaired(t *testing.T) {
 	defer st.Close()
 	ctx := context.Background()
 
-	// Its flagged user is a user, not an admin, so serve will log an admin link.
+	// Its flagged account is an account, not an admin, so serve will log an admin link.
 	if has, err := st.HasAdmin(ctx); err != nil || has {
 		t.Errorf("has admin: %v %v", has, err)
 	}
@@ -94,15 +95,18 @@ func TestADatabaseFromTheFirstBuildIsRepaired(t *testing.T) {
 	}
 	u, err := st.Authenticate(ctx, "inbox@reey.ru", pw)
 	if err != nil {
-		t.Fatalf("the mail user: %v", err)
+		t.Fatalf("the mail account: %v", err)
+	}
+	if !strings.HasPrefix(u.ID, "ac_") {
+		t.Errorf("the account kept its old id %s", u.ID)
 	}
 	if _, err := st.MailboxNamed(ctx, u.ID, Inbox); err != nil {
 		t.Errorf("the mail user has no INBOX: %v", err)
 	}
-	if _, err := st.CreateUser(ctx, "other@reey.ru", pw); err != nil {
+	if _, err := st.CreateAccount(ctx, "other@reey.ru", pw); err != nil {
 		t.Errorf("a new user: %v", err)
 	}
-	if err := st.DeleteUser(ctx, u.ID); err != nil && !errors.Is(err, ErrConflict) {
+	if err := st.DeleteAccount(ctx, u.ID); err != nil && !errors.Is(err, ErrConflict) {
 		t.Errorf("deleting the old user: %v", err)
 	}
 }

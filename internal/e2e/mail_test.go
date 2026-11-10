@@ -47,14 +47,14 @@ func (f *verdict) set(v smtpd.Verdict) {
 }
 
 type rig struct {
-	t      *testing.T
-	st     *store.Store
-	smtp   string
-	imap   string
-	checks *verdict
-	log    *bytes.Buffer
-	domain *store.Domain
-	user   *store.User
+	t       *testing.T
+	st      *store.Store
+	smtp    string
+	imap    string
+	checks  *verdict
+	log     *bytes.Buffer
+	domain  *store.Domain
+	account *store.Account
 }
 
 func newRig(t *testing.T) *rig {
@@ -72,7 +72,7 @@ func newRig(t *testing.T) *rig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	u, err := st.CreateUser(ctx, "inbox@reey.ru", "correct horse")
+	u, err := st.CreateAccount(ctx, "inbox@reey.ru", "correct horse")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func newRig(t *testing.T) *rig {
 	go in.Serve(smtpLn)
 	t.Cleanup(func() { in.Close() })
 
-	return &rig{t: t, st: st, smtp: smtpLn.Addr().String(), imap: imapLn.Addr().String(), checks: checks, log: &logged, domain: d, user: u}
+	return &rig{t: t, st: st, smtp: smtpLn.Addr().String(), imap: imapLn.Addr().String(), checks: checks, log: &logged, domain: d, account: u}
 }
 
 type syncWriter struct {
@@ -234,7 +234,7 @@ func TestMailForNobodyOrSomebodyElseIsRefused(t *testing.T) {
 func TestUnknownMailIsJunkWhenTheDomainSaysSo(t *testing.T) {
 	r := newRig(t)
 	ctx := context.Background()
-	if err := r.st.SetUnknown(ctx, r.domain.ID, store.UnknownJunk, r.user.ID); err != nil {
+	if err := r.st.SetUnknown(ctx, r.domain.ID, store.UnknownJunk, r.account.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.send("anna@example.com", "whoever@reey.ru", letter); err != nil {
@@ -355,18 +355,18 @@ func TestAWrongIMAPPasswordIsALineFail2banBansOn(t *testing.T) {
 
 func TestASecondPasswordSignsInWithItsOwnLogin(t *testing.T) {
 	r := newRig(t)
-	p, err := r.st.AddPassword(context.Background(), r.user.ID, "laptop", "laptop password")
+	p, err := r.st.AddCredential(context.Background(), r.account.ID, "laptop", "laptop password")
 	if err != nil {
 		t.Fatal(err)
 	}
-	login := p.LoginAddress(r.user)
-	dial := func(user, password string) error {
+	login := p.LoginAddress(r.account)
+	dial := func(login, password string) error {
 		c, err := imapclient.DialTLS(r.imap, &imapclient.Options{TLSConfig: &tls.Config{InsecureSkipVerify: true}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer c.Close()
-		return c.Login(user, password).Wait()
+		return c.Login(login, password).Wait()
 	}
 	if err := dial(login, "laptop password"); err != nil {
 		t.Errorf("the laptop's login: %v", err)
@@ -382,10 +382,10 @@ func TestASecondPasswordSignsInWithItsOwnLogin(t *testing.T) {
 func TestANoReplyAddressRefusesMailAndAForwardDeliversElsewhere(t *testing.T) {
 	r := newRig(t)
 	ctx := context.Background()
-	noreply, _ := r.st.CreateUser(ctx, "noreply@reey.ru", "correct horse")
-	billing, _ := r.st.CreateUser(ctx, "billing@reey.ru", "correct horse")
+	noreply, _ := r.st.CreateAccount(ctx, "noreply@reey.ru", "correct horse")
+	billing, _ := r.st.CreateAccount(ctx, "billing@reey.ru", "correct horse")
 	r.st.SetIncoming(ctx, noreply.ID, store.IncomingReject, "")
-	r.st.SetIncoming(ctx, billing.ID, store.IncomingForward, r.user.ID)
+	r.st.SetIncoming(ctx, billing.ID, store.IncomingForward, r.account.ID)
 
 	err := r.send("anna@example.com", "noreply@reey.ru", letter)
 	if err == nil || !strings.Contains(err.Error(), "550") || !strings.Contains(err.Error(), "does not receive mail") {

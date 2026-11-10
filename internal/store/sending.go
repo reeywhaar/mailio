@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"mailio/internal/ids"
 )
 
 // How the connection to a relay is encrypted. There is no third option: a password crossing the
@@ -16,51 +18,103 @@ const (
 	SecurityImplicit = "implicit"
 )
 
-// Relay is the server outbound mail is handed to, for a host whose provider blocks port 25.
+// Relay is a server outbound mail can be handed to, for a host whose provider blocks port 25.
+// Its label is unique, and what a domain or the default names it by in the admin interface.
 type Relay struct {
+	ID       string
+	Label    string
 	Host     string
 	Port     int
 	Security string
 	Username string
-	Password string
+	// Password is only filled by RelayByID, which opens it; HasPassword says whether there is one.
+	Password    string
+	HasPassword bool
+	CreatedAt   time.Time
 }
 
-func (s *Store) relayAAD() []byte { return []byte("relay-password") }
+// legacyRelayAAD is what the single relay before this list sealed its password to.
+const legacyRelayAAD = "relay-password"
 
-// Relay returns the relay, or nil when mailio delivers to recipients' servers itself.
-func (s *Store) Relay(ctx context.Context) (*Relay, error) {
+func relayAAD(id string) []byte { return []byte("relay-password:" + id) }
+
+const relayColumns = `id, label, host, port, security, username, password_sealed IS NOT NULL, created_at`
+
+func scanRelay(row interface{ Scan(...any) error }) (*Relay, error) {
 	var (
-		r      Relay
-		sealed []byte
+		r       Relay
+		created int64
 	)
-	err := s.reader.QueryRowContext(ctx,
-		`SELECT host, port, security, username, password_sealed FROM relay WHERE id = 1`).
-		Scan(&r.Host, &r.Port, &r.Security, &r.Username, &sealed)
+	if err := row.Scan(&r.ID, &r.Label, &r.Host, &r.Port, &r.Security, &r.Username, &r.HasPassword, &created); err != nil {
+		return nil, err
+	}
+	r.CreatedAt = fromUnix(created)
+	return &r, nil
+}
+
+// Relays lists the relays by label, without their passwords.
+func (s *Store) Relays(ctx context.Context) ([]Relay, error) {
+	rows, err := s.reader.QueryContext(ctx, `SELECT `+relayColumns+` FROM relays ORDER BY label`)
+	if err != nil {
+		return nil, fmt.Errorf("relays: %w", err)
+	}
+	defer rows.Close()
+	var out []Relay
+	for rows.Next() {
+		r, err := scanRelay(rows)
+		if err != nil {
+			return nil, fmt.Errorf("relays: %w", err)
+		}
+		out = append(out, *r)
+	}
+	return out, rows.Err()
+}
+
+// RelayByID returns one relay with its password opened, for handing mail to it.
+func (s *Store) RelayByID(ctx context.Context, id string) (*Relay, error) {
+	var (
+		sealed []byte
+		legacy bool
+	)
+	row := s.reader.QueryRowContext(ctx, `SELECT `+relayColumns+`, password_sealed, legacy_aad FROM relays WHERE id = ?`, id)
+	var (
+		r       Relay
+		created int64
+	)
+	err := row.Scan(&r.ID, &r.Label, &r.Host, &r.Port, &r.Security, &r.Username, &r.HasPassword, &created, &sealed, &legacy)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
+		return nil, NotFound("There is no such relay.")
 	}
 	if err != nil {
 		return nil, fmt.Errorf("relay: %w", err)
 	}
+	r.CreatedAt = fromUnix(created)
 	if sealed != nil {
 		if s.sealer == nil {
 			return nil, errors.New("relay: the password is sealed and this store has no key")
 		}
-		plain, err := s.sealer.Open(sealed, s.relayAAD())
+		aad := relayAAD(id)
+		if legacy {
+			aad = []byte(legacyRelayAAD)
+		}
+		plain, err := s.sealer.Open(sealed, aad)
 		if err != nil {
-			return nil, Invalid("The relay's password was sealed with another MAILIO_SECRET_KEY. Enter it again.")
+			return nil, Invalid("The password of %s was sealed with another MAILIO_SECRET_KEY. Enter it again.", r.Label)
 		}
 		r.Password = string(plain)
 	}
 	return &r, nil
 }
 
-// SetRelay writes the relay. An empty password keeps the stored one for the same username, so a
-// port can be corrected without retyping a credential the form was never shown.
-func (s *Store) SetRelay(ctx context.Context, r Relay) error {
+// checkRelay validates a relay, and with an empty password keeps existing's for the same
+// username, so a port can be corrected without retyping a credential the form was never shown.
+func checkRelay(r *Relay, existing *Relay) error {
+	r.Label = strings.TrimSpace(r.Label)
 	r.Host = strings.ToLower(strings.TrimSpace(r.Host))
 	r.Username = strings.TrimSpace(r.Username)
 	switch {
+	case r.Label == "" || len([]rune(r.Label)) > 64:
+		return Invalid("A relay needs a label, up to 64 characters.")
 	case r.Host == "" || strings.ContainsAny(r.Host, " /:@"):
 		return Invalid("A relay needs a host name, without a port.")
 	case r.Port < 1 || r.Port > 65535:
@@ -69,10 +123,6 @@ func (s *Store) SetRelay(ctx context.Context, r Relay) error {
 		return Invalid("Encryption is STARTTLS or TLS.")
 	}
 	if r.Username != "" && r.Password == "" {
-		existing, err := s.Relay(ctx)
-		if err != nil {
-			return err
-		}
 		if existing == nil || existing.Username != r.Username || existing.Password == "" {
 			return Invalid("Give the relay's password.")
 		}
@@ -81,32 +131,175 @@ func (s *Store) SetRelay(ctx context.Context, r Relay) error {
 	if r.Username == "" && r.Password != "" {
 		return Invalid("A password needs a username.")
 	}
-	var sealed []byte
-	if r.Password != "" {
-		if s.sealer == nil {
-			return errors.New("set relay: no key to seal the password with")
-		}
-		sealed = s.sealer.Seal([]byte(r.Password), s.relayAAD())
+	return nil
+}
+
+func (s *Store) sealRelay(r *Relay) ([]byte, error) {
+	if r.Password == "" {
+		return nil, nil
 	}
-	_, err := s.writer.ExecContext(ctx,
-		`INSERT INTO relay (id, host, port, security, username, password_sealed) VALUES (1, ?, ?, ?, ?, ?)
-		 ON CONFLICT (id) DO UPDATE SET host = excluded.host, port = excluded.port, security = excluded.security,
-		   username = excluded.username, password_sealed = excluded.password_sealed`,
-		r.Host, r.Port, r.Security, r.Username, sealed)
+	if s.sealer == nil {
+		return nil, errors.New("relay: no key to seal the password with")
+	}
+	return s.sealer.Seal([]byte(r.Password), relayAAD(r.ID)), nil
+}
+
+func relayTaken(label string) error { return Conflict("There is already a relay called %s.", label) }
+
+// CreateRelay adds a relay.
+func (s *Store) CreateRelay(ctx context.Context, r Relay) (*Relay, error) {
+	if err := checkRelay(&r, nil); err != nil {
+		return nil, err
+	}
+	now := s.Now()
+	r.ID, r.CreatedAt = ids.New(ids.Relay, now.UnixMilli()), now
+	sealed, err := s.sealRelay(&r)
 	if err != nil {
-		return fmt.Errorf("set relay: %w", err)
+		return nil, err
+	}
+	_, err = s.writer.ExecContext(ctx,
+		`INSERT INTO relays (id, label, host, port, security, username, password_sealed, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.ID, r.Label, r.Host, r.Port, r.Security, r.Username, sealed, unix(now))
+	if isUnique(err) {
+		return nil, relayTaken(r.Label)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("create relay: %w", err)
+	}
+	s.changed()
+	r.HasPassword, r.Password = sealed != nil, ""
+	return &r, nil
+}
+
+// UpdateRelay rewrites a relay. Its password is sealed afresh to its id.
+func (s *Store) UpdateRelay(ctx context.Context, id string, r Relay) (*Relay, error) {
+	existing, err := s.RelayByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkRelay(&r, existing); err != nil {
+		return nil, err
+	}
+	r.ID, r.CreatedAt = id, existing.CreatedAt
+	sealed, err := s.sealRelay(&r)
+	if err != nil {
+		return nil, err
+	}
+	_, err = s.writer.ExecContext(ctx,
+		`UPDATE relays SET label = ?, host = ?, port = ?, security = ?, username = ?, password_sealed = ?,
+		   legacy_aad = 0 WHERE id = ?`,
+		r.Label, r.Host, r.Port, r.Security, r.Username, sealed, id)
+	if isUnique(err) {
+		return nil, relayTaken(r.Label)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("update relay: %w", err)
+	}
+	s.changed()
+	r.HasPassword, r.Password = sealed != nil, ""
+	return &r, nil
+}
+
+// DeleteRelay removes a relay nothing sends through.
+func (s *Store) DeleteRelay(ctx context.Context, id string) error {
+	tx, err := s.writer.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("delete relay: %w", err)
+	}
+	defer tx.Rollback()
+	r, err := scanRelay(tx.QueryRowContext(ctx, `SELECT `+relayColumns+` FROM relays WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return NotFound("There is no such relay.")
+	}
+	if err != nil {
+		return fmt.Errorf("delete relay: %w", err)
+	}
+	var isDefault int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM settings WHERE relay_id = ?`, id).Scan(&isDefault); err != nil {
+		return fmt.Errorf("delete relay: %w", err)
+	}
+	if isDefault > 0 {
+		return Conflict("%s is the default. Choose another default first.", r.Label)
+	}
+	var domain string
+	err = tx.QueryRowContext(ctx, `SELECT name FROM domains WHERE relay_id = ? ORDER BY name LIMIT 1`, id).Scan(&domain)
+	if err == nil {
+		return Conflict("%s sends through %s. Change that first.", domain, r.Label)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("delete relay: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM relays WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("delete relay: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("delete relay: %w", err)
 	}
 	s.changed()
 	return nil
 }
 
-// ClearRelay goes back to delivering directly.
-func (s *Store) ClearRelay(ctx context.Context) error {
-	if _, err := s.writer.ExecContext(ctx, `DELETE FROM relay`); err != nil {
-		return fmt.Errorf("clear relay: %w", err)
+// How a domain's mail goes out when it does not follow the default.
+const (
+	// ViaBuiltIn delivers to each recipient's MX directly.
+	ViaBuiltIn = "builtin"
+	// ViaRelay hands it to the domain's chosen relay.
+	ViaRelay = "relay"
+)
+
+// SetDomainVia chooses how a domain's mail goes out: "" follows the default, ViaBuiltIn delivers
+// directly, and a relay's id sends through it.
+func (s *Store) SetDomainVia(ctx context.Context, domainID, choice string) error {
+	var via, relay any
+	switch choice {
+	case "":
+	case ViaBuiltIn:
+		via = ViaBuiltIn
+	default:
+		if _, err := s.RelayByID(ctx, choice); err != nil {
+			return err
+		}
+		via, relay = ViaRelay, choice
 	}
-	s.changed()
-	return nil
+	res, err := s.writer.ExecContext(ctx,
+		`UPDATE domains SET send_via = ?, relay_id = ? WHERE id = ? AND (send_via IS NOT ? OR relay_id IS NOT ?)`,
+		via, relay, domainID, via, relay)
+	if err != nil {
+		return fmt.Errorf("set domain relay: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		s.changed()
+		return nil
+	}
+	_, err = s.DomainByID(ctx, domainID)
+	return err
+}
+
+// RelayFor is the relay mail from a domain goes through, or nil to deliver directly: the
+// domain's own choice, else the default. A domain mailio does not receive for follows the
+// default.
+func (s *Store) RelayFor(ctx context.Context, domain string) (*Relay, error) {
+	relayID := ""
+	d, err := s.DomainByName(ctx, domain)
+	switch {
+	case err == nil && d.Via == ViaBuiltIn:
+		return nil, nil
+	case err == nil && d.Via == ViaRelay:
+		relayID = d.RelayID
+	case err == nil || errors.Is(err, ErrNotFound):
+		set, err := s.Settings(ctx)
+		if err != nil {
+			return nil, err
+		}
+		relayID = set.RelayID
+	default:
+		return nil, err
+	}
+	if relayID == "" {
+		return nil, nil
+	}
+	return s.RelayByID(ctx, relayID)
 }
 
 // SetDKIM stores a domain's signing key.
@@ -124,7 +317,7 @@ type OutboundRecipient struct {
 	ID        int64
 	MessageID int64
 	Sender    string
-	UserID    string
+	AccountID string
 	Recipient string
 	Attempts  int
 	CreatedAt time.Time
@@ -133,20 +326,20 @@ type OutboundRecipient struct {
 }
 
 // Enqueue queues a message for recipients on other servers. Due at once.
-func (s *Store) Enqueue(ctx context.Context, sender, userID string, raw []byte, recipients []string) error {
+func (s *Store) Enqueue(ctx context.Context, sender, accountID string, raw []byte, recipients []string) error {
 	tx, err := s.writer.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("enqueue: %w", err)
 	}
 	defer tx.Rollback()
 	now := s.Now()
-	var user any
-	if userID != "" {
-		user = userID
+	var account any
+	if accountID != "" {
+		account = accountID
 	}
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO outbound_messages (sender, user_id, raw, created_at) VALUES (?, ?, ?, ?)`,
-		sender, user, raw, unix(now))
+		`INSERT INTO outbound_messages (sender, account_id, raw, created_at) VALUES (?, ?, ?, ?)`,
+		sender, account, raw, unix(now))
 	if err != nil {
 		return fmt.Errorf("enqueue: %w", err)
 	}
@@ -165,7 +358,7 @@ func (s *Store) Enqueue(ctx context.Context, sender, userID string, raw []byte, 
 	return nil
 }
 
-const outboundColumns = `r.id, r.message_id, m.sender, coalesce(m.user_id, ''), r.recipient, r.attempts,
+const outboundColumns = `r.id, r.message_id, m.sender, coalesce(m.account_id, ''), r.recipient, r.attempts,
 	m.created_at, r.last_error, r.next_at`
 
 func scanOutbound(rows *sql.Rows) ([]OutboundRecipient, error) {
@@ -176,7 +369,7 @@ func scanOutbound(rows *sql.Rows) ([]OutboundRecipient, error) {
 			o              OutboundRecipient
 			created, after int64
 		)
-		if err := rows.Scan(&o.ID, &o.MessageID, &o.Sender, &o.UserID, &o.Recipient, &o.Attempts,
+		if err := rows.Scan(&o.ID, &o.MessageID, &o.Sender, &o.AccountID, &o.Recipient, &o.Attempts,
 			&created, &o.LastError, &after); err != nil {
 			return nil, err
 		}

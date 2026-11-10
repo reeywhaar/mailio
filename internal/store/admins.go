@@ -15,7 +15,7 @@ import (
 )
 
 // Admin is somebody who may sign in to the admin interface: a name and a password. An admin is
-// not a user and has no address, so the first one can exist before any domain does.
+// not an account and has no address, so the first one can exist before any domain does.
 type Admin struct {
 	ID        string
 	Name      string

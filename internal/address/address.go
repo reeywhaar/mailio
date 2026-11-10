@@ -1,7 +1,7 @@
-// Package address reads mail addresses and decides which part of one names a user.
+// Package address reads mail addresses and decides which part of one names an account.
 //
 // Everything is lowercased on the way in. Mail systems treat local parts as case-insensitive in
-// practice, whatever RFC 5321 permits, and an address that reaches a user spelled one way and
+// practice, whatever RFC 5321 permits, and an address that reaches an account spelled one way and
 // bounces spelled another is worse than two addresses that cannot be told apart.
 package address
 
@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-// Separator divides the name a user is registered under from a tag: mail to name+shop@ is for
+// Separator divides the name an account is registered under from a tag: mail to name+shop@ is for
 // name@. See docs/addresses.md.
 const Separator = "+"
 
@@ -28,7 +28,7 @@ type Address struct {
 
 func (a Address) String() string { return a.Local + "@" + a.Domain }
 
-// Name is the local part up to the separator: what a user is registered under.
+// Name is the local part up to the separator: what an account is registered under.
 func (a Address) Name() string {
 	name, _, _ := strings.Cut(a.Local, Separator)
 	return name
@@ -60,14 +60,14 @@ func Parse(s string) (Address, error) {
 	return a, nil
 }
 
-// ParseUser reads an address somebody wants to register a user under.
-func ParseUser(s string) (Address, error) {
+// ParseAccount reads an address somebody wants to register an account under.
+func ParseAccount(s string) (Address, error) {
 	a, err := Parse(s)
 	if err != nil {
 		return Address{}, err
 	}
 	if strings.Contains(a.Local, Separator) {
-		return Address{}, errors.New("A user's address cannot have a + in it: mail to name+anything already reaches name.")
+		return Address{}, errors.New("An account's address cannot have a + in it: mail to name+anything already reaches name.")
 	}
 	return a, nil
 }

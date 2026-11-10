@@ -70,7 +70,7 @@ say "logs an admin link"
 token=$(logs | sed -n 's/.*"link":"[^"]*#token=\([^"]*\)".*/\1/p' | tail -1)
 [ -n "$token" ] || die "no admin link in the log"
 
-say "admin, domain, user, mail in and out"
+say "admin, domain, account, mail in and out"
 SMOKE_TOKEN=$token python3 "$HERE/smoke.py" setup
 
 say "the log names no message"

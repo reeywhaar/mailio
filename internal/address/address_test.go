@@ -60,11 +60,11 @@ func TestWhatIsNotAnAddressIsRefused(t *testing.T) {
 	}
 }
 
-func TestAUserCannotBeRegisteredUnderATaggedAddress(t *testing.T) {
-	if _, err := ParseUser("inbox+shop@reey.ru"); err == nil {
-		t.Error("ParseUser accepted a +")
+func TestAnAccountCannotBeRegisteredUnderATaggedAddress(t *testing.T) {
+	if _, err := ParseAccount("inbox+shop@reey.ru"); err == nil {
+		t.Error("ParseAccount accepted a +")
 	}
-	if _, err := ParseUser("inbox@reey.ru"); err != nil {
+	if _, err := ParseAccount("inbox@reey.ru"); err != nil {
 		t.Error(err)
 	}
 }
