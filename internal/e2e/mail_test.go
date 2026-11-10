@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"log/slog"
 	"net"
 	"net/smtp"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
+	gosmtp "github.com/emersion/go-smtp"
 
 	"mailio/internal/certs"
 	"mailio/internal/imapd"
@@ -398,5 +400,50 @@ func TestANoReplyAddressRefusesMailAndAForwardDeliversElsewhere(t *testing.T) {
 	st, _ := c.Status("INBOX", &imap.StatusOptions{NumMessages: true}).Wait()
 	if *st.NumMessages != 1 {
 		t.Errorf("the forward's target has %d", *st.NumMessages)
+	}
+}
+
+// big is a message over 1 MB.
+var big = letter + strings.Repeat("A line of an attachment, encoded the way mail carries one.\r\n", 20000)
+
+// A message larger than its address takes is refused: at RCPT when the sender says its size up
+// front, after DATA when it does not. IMAP says the account's limit once signed in.
+func TestAMessageLargerThanTheAddressTakesIsRefused(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	if err := r.st.SetAccountMessageLimit(ctx, r.account.ID, 1<<20); err != nil {
+		t.Fatal(err)
+	}
+
+	err := r.send("anna@example.com", "inbox@reey.ru", big)
+	if err == nil || !strings.Contains(err.Error(), "552") || !strings.Contains(err.Error(), "up to 1 MB") {
+		t.Errorf("after DATA: %v", err)
+	}
+
+	c, err := gosmtp.Dial(r.smtp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if err := c.Hello("sender.test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Mail("anna@example.com", &gosmtp.MailOptions{Size: int64(len(big))}); err != nil {
+		t.Fatal(err)
+	}
+	var refused *gosmtp.SMTPError
+	if err := c.Rcpt("inbox@reey.ru", nil); !errors.As(err, &refused) || refused.Code != 552 {
+		t.Errorf("at RCPT: %v", err)
+	}
+
+	if err := r.send("anna@example.com", "inbox@reey.ru", letter); err != nil {
+		t.Errorf("a small one: %v", err)
+	}
+	caps, err := r.client(nil).Capability().Wait()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !caps.Has("APPENDLIMIT=1048576") {
+		t.Errorf("IMAP says %v", caps)
 	}
 }

@@ -25,6 +25,7 @@ import {
   DNSSummary,
   DeleteButton,
   Facts,
+  LimitField,
   Row,
   Rows,
   Section,
@@ -32,8 +33,12 @@ import {
   accountOption,
   dmarcLabels,
   keepsMail,
+  limitTyped,
+  mbText,
+  megabytes,
   relayName,
   spfLabels,
+  toBytes,
   unknownLabels,
   unknownSummary,
   useDraft,
@@ -77,6 +82,7 @@ export function Domains({ domains, ...ctx }: Context & { domains: Domain[] }) {
                 domain={d}
                 accounts={ctx.accounts}
                 domains={domains}
+                settings={ctx.settings}
               />
             </Rows>
           ))}
@@ -123,6 +129,13 @@ function DomainSummary({
           label: "Sending",
           inherited: domain.relay === null,
           value: relayName(domain.relay ?? settings.relay_id, relays),
+        },
+        {
+          label: "Largest message",
+          inherited: domain.max_message_bytes === null,
+          value: megabytes(
+            domain.max_message_bytes ?? settings.max_message_bytes,
+          ),
         },
         {
           label: "DMARC",
@@ -206,6 +219,8 @@ type Draft = {
   dmarc: DMARC | "";
   spf: SPF | "";
   relay: string;
+  /** The largest message in MB, as typed. */
+  limit: string;
 };
 
 function DomainDialog({
@@ -235,6 +250,7 @@ function DomainDialog({
     dmarc: domain.dmarc ?? "",
     spf: domain.spf ?? "",
     relay: domain.relay ?? "",
+    limit: mbText(domain.max_message_bytes),
   }));
 
   const set = (change: Partial<Draft>) => setDraft({ ...draft, ...change });
@@ -247,6 +263,7 @@ function DomainDialog({
         dmarc: draft.dmarc,
         spf: draft.spf,
         relay: draft.relay,
+        max_message_bytes: toBytes(draft.limit),
       }),
     );
     if (ok) onClose();
@@ -276,7 +293,11 @@ function DomainDialog({
             type="submit"
             form="domain"
             variant="solid"
-            disabled={busy || (draft.unknown === "junk" && !draft.junkTo)}
+            disabled={
+              busy ||
+              (draft.unknown === "junk" && !draft.junkTo) ||
+              !limitTyped(draft.limit)
+            }
           >
             Save
           </Button>
@@ -331,6 +352,14 @@ function DomainDialog({
             ))}
           </Select>
         </Field>
+        <LimitField
+          value={draft.limit}
+          onChange={(limit) => set({ limit })}
+          inherited={{
+            from: "the default",
+            bytes: settings.max_message_bytes,
+          }}
+        />
         <Field label="DMARC">
           <Select
             value={draft.dmarc}

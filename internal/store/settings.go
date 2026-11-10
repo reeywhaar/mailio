@@ -41,14 +41,25 @@ type Settings struct {
 	SPF     SPF
 	// RelayID is the default relay, or empty for built-in: each recipient's MX, directly.
 	RelayID string
+	// MaxMessageBytes is the largest message an account takes, sends or stores, unless its domain
+	// or the account itself says otherwise.
+	MaxMessageBytes int64
+}
+
+// checkLimit refuses a largest message too small to be one or too large to hold.
+func checkLimit(n int64) error {
+	if n < 1<<20 || n > MessageCeiling {
+		return Invalid("The largest message is from 1 MB to %s.", Megabytes(MessageCeiling))
+	}
+	return nil
 }
 
 // Settings reads the defaults.
 func (s *Store) Settings(ctx context.Context) (*Settings, error) {
 	var set Settings
 	if err := s.reader.QueryRowContext(ctx,
-		`SELECT unknown, dmarc, spf, coalesce(relay_id, '') FROM settings WHERE id = 1`).
-		Scan(&set.Unknown, &set.DMARC, &set.SPF, &set.RelayID); err != nil {
+		`SELECT unknown, dmarc, spf, coalesce(relay_id, ''), max_message_bytes FROM settings WHERE id = 1`).
+		Scan(&set.Unknown, &set.DMARC, &set.SPF, &set.RelayID, &set.MaxMessageBytes); err != nil {
 		return nil, fmt.Errorf("settings: %w", err)
 	}
 	return &set, nil
@@ -65,6 +76,9 @@ func (s *Store) SetSettings(ctx context.Context, set Settings) error {
 	if set.Unknown != UnknownReject && set.Unknown != UnknownDrop {
 		return Invalid("By default, mail for unknown addresses is rejected or dropped. Junk is chosen per domain.")
 	}
+	if err := checkLimit(set.MaxMessageBytes); err != nil {
+		return err
+	}
 	var relay any
 	if set.RelayID != "" {
 		if _, err := s.RelayByID(ctx, set.RelayID); err != nil {
@@ -73,9 +87,9 @@ func (s *Store) SetSettings(ctx context.Context, set Settings) error {
 		relay = set.RelayID
 	}
 	res, err := s.writer.ExecContext(ctx,
-		`UPDATE settings SET unknown = ?, dmarc = ?, spf = ?, relay_id = ?
-		  WHERE id = 1 AND (unknown <> ? OR dmarc <> ? OR spf <> ? OR relay_id IS NOT ?)`,
-		set.Unknown, set.DMARC, set.SPF, relay, set.Unknown, set.DMARC, set.SPF, relay)
+		`UPDATE settings SET unknown = ?, dmarc = ?, spf = ?, relay_id = ?, max_message_bytes = ?
+		  WHERE id = 1 AND (unknown <> ? OR dmarc <> ? OR spf <> ? OR relay_id IS NOT ? OR max_message_bytes <> ?)`,
+		set.Unknown, set.DMARC, set.SPF, relay, set.MaxMessageBytes, set.Unknown, set.DMARC, set.SPF, relay, set.MaxMessageBytes)
 	if err != nil {
 		return fmt.Errorf("set settings: %w", err)
 	}

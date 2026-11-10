@@ -23,9 +23,19 @@ func accountJSON(u *store.Account, passwords []store.Credential) map[string]any 
 		"domain_id":          u.DomainID,
 		"incoming":           u.Incoming,
 		"forward_account_id": forwardTo,
+		"max_message_bytes":  ownLimit(u.MaxMessageBytes),
 		"credentials":        list,
 		"created_at":         u.CreatedAt.Unix(),
 	}
+}
+
+// ownLimit is a largest message of a domain's or an account's own, or null where it follows the
+// one above.
+func ownLimit(n int64) any {
+	if n == 0 {
+		return nil
+	}
+	return n
 }
 
 // credentialJSON carries no password: only its hash is kept. The one answer that makes it adds it.
@@ -51,7 +61,8 @@ func adminJSON(a *store.Admin) map[string]any {
 	}
 }
 
-// domainJSON shows a domain's own DMARC, SPF and relay as null when it follows the default, and
+// domainJSON shows a domain's own DMARC, SPF, relay and largest message as null when it follows
+// the default, and
 // its records as they are published, defaults applied, each with what DNS served when last
 // checked. Its relay is "builtin" or a relay's id.
 func (s *Server) domainJSON(d *store.Domain, set *store.Settings) map[string]any {
@@ -77,6 +88,7 @@ func (s *Server) domainJSON(d *store.Domain, set *store.Settings) map[string]any
 		"dmarc":              orNull(string(d.DMARC)),
 		"spf":                orNull(string(d.SPF)),
 		"relay":              orNull(relay),
+		"max_message_bytes":  ownLimit(d.MaxMessageBytes),
 		"records":            records,
 		"dns_checked_at":     checkedAt,
 		"created_at":         d.CreatedAt.Unix(),
@@ -206,8 +218,8 @@ func (s *Server) createDomain(w http.ResponseWriter, r *http.Request) {
 	s.writeDomain(w, r, http.StatusCreated, d.ID)
 }
 
-// updateDomain sets a domain's own unknown addresses, DMARC, SPF and relay, "" returning one to
-// the default. A field left out is left alone.
+// updateDomain sets a domain's own unknown addresses, DMARC, SPF, relay and largest message, ""
+// or 0 returning one to the default. A field left out is left alone.
 func (s *Server) updateDomain(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, ids.Domain)
 	if !ok {
@@ -219,11 +231,20 @@ func (s *Server) updateDomain(w http.ResponseWriter, r *http.Request) {
 		DMARC            *store.DMARC   `json:"dmarc"`
 		SPF              *store.SPF     `json:"spf"`
 		Relay            *string        `json:"relay"`
+		MaxMessageBytes  *int64         `json:"max_message_bytes"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
 	ctx := r.Context()
+	// First: the one most likely refused, for a number out of range, which then changes nothing.
+	if req.MaxMessageBytes != nil {
+		if err := s.st.SetDomainMessageLimit(ctx, id, *req.MaxMessageBytes); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		s.log.Info("domain changed", "domain", id, "max_message_bytes", *req.MaxMessageBytes, "by", adminOf(r).ID)
+	}
 	if req.Unknown != nil {
 		var accountID string
 		if req.UnknownAccountID != nil {
@@ -333,28 +354,40 @@ func (s *Server) createAccount(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, out)
 }
 
-// updateAccount sets what mail to the account does: kept, refused, or forwarded to another account.
+// updateAccount sets what mail to the account does, kept, refused, or forwarded to another
+// account, and its own largest message, 0 returning it to its domain's. A field left out is left
+// alone.
 func (s *Server) updateAccount(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, ids.Account)
 	if !ok {
 		return
 	}
 	var req struct {
-		Incoming         store.Incoming `json:"incoming"`
-		ForwardAccountID *string        `json:"forward_account_id"`
+		Incoming         *store.Incoming `json:"incoming"`
+		ForwardAccountID *string         `json:"forward_account_id"`
+		MaxMessageBytes  *int64          `json:"max_message_bytes"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
-	var to string
-	if req.ForwardAccountID != nil {
-		to = *req.ForwardAccountID
+	if req.MaxMessageBytes != nil {
+		if err := s.st.SetAccountMessageLimit(r.Context(), id, *req.MaxMessageBytes); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		s.log.Info("account changed", "account", id, "max_message_bytes", *req.MaxMessageBytes, "by", adminOf(r).ID)
 	}
-	if err := s.st.SetIncoming(r.Context(), id, req.Incoming, to); err != nil {
-		s.fail(w, r, err)
-		return
+	if req.Incoming != nil {
+		var to string
+		if req.ForwardAccountID != nil {
+			to = *req.ForwardAccountID
+		}
+		if err := s.st.SetIncoming(r.Context(), id, *req.Incoming, to); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		s.log.Info("incoming mail changed", "account", id, "incoming", *req.Incoming, "by", adminOf(r).ID)
 	}
-	s.log.Info("incoming mail changed", "account", id, "incoming", req.Incoming, "by", adminOf(r).ID)
 	s.writeAccount(w, r, http.StatusOK, id)
 }
 

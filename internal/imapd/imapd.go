@@ -200,7 +200,21 @@ func (s *session) Login(username, password string) error {
 	return nil
 }
 
-func (s *session) AppendLimit() uint32 { return store.MaxMessageBytes }
+// AppendLimit is asked before sign-in too, for CAPABILITY, where it is the most any account takes.
+func (s *session) AppendLimit() uint32 { return uint32(s.limit()) }
+
+// limit is the largest message the account takes, read each time: a change in the admin
+// interface applies to a session already open.
+func (s *session) limit() int64 {
+	if s.account == nil {
+		return store.MessageCeiling
+	}
+	u, err := s.srv.st.AccountByID(ctx(), s.account.ID)
+	if err != nil {
+		return s.account.MessageLimit
+	}
+	return u.MessageLimit
+}
 
 func (s *session) Namespace() (*imap.NamespaceData, error) {
 	return &imap.NamespaceData{Personal: []imap.NamespaceDescriptor{{Delim: store.Delim}}}, nil
@@ -358,8 +372,9 @@ func (s *session) Append(name string, r imap.LiteralReader, options *imap.Append
 	if err != nil {
 		return nil, err
 	}
-	if r.Size() > store.MaxMessageBytes {
-		return nil, &imap.Error{Type: imap.StatusResponseTypeNo, Code: imap.ResponseCodeTooBig, Text: "Message too large"}
+	if limit := s.limit(); r.Size() > limit {
+		return nil, &imap.Error{Type: imap.StatusResponseTypeNo, Code: imap.ResponseCodeTooBig,
+			Text: fmt.Sprintf("Message too big: %s takes up to %s", s.account.Address(), store.Megabytes(limit))}
 	}
 	raw := make([]byte, r.Size())
 	if _, err := ioReadFull(r, raw); err != nil {

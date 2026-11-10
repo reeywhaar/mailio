@@ -31,7 +31,8 @@ func TestAJunkDefaultBecomesEachFollowingDomainsOwn(t *testing.T) {
 	}
 	st.Close()
 
-	// The settings as the migration before this one left them, with a junk default.
+	// The settings as the migration before this one left them, with a junk default, and the
+	// migrations since undone.
 	raw, err := sql.Open("sqlite", filepath.Join(dir, FileName))
 	if err != nil {
 		t.Fatal(err)
@@ -51,7 +52,9 @@ func TestAJunkDefaultBecomesEachFollowingDomainsOwn(t *testing.T) {
 		   relay_id TEXT REFERENCES relays (id),
 		   CHECK ((unknown = 'junk') = (unknown_account_id IS NOT NULL)))`,
 		`INSERT INTO settings (id, unknown, unknown_account_id) VALUES (1, 'junk', '` + inbox.ID + `')`,
-		fmt.Sprintf(`PRAGMA user_version = %d`, version-1),
+		`ALTER TABLE domains DROP COLUMN max_message_bytes`,
+		`ALTER TABLE accounts DROP COLUMN max_message_bytes`,
+		fmt.Sprintf(`PRAGMA user_version = %d`, version-2),
 	} {
 		if _, err := raw.Exec(q); err != nil {
 			t.Fatalf("%v\n%s", err, q)

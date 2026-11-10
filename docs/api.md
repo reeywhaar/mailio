@@ -17,19 +17,19 @@ CSRF defense; the `SameSite=Lax` cookie is the other.
 | `GET /api/me` | the signed-in admin |
 | `GET /api/domains` | every domain, each record with `managed` (false for MX), `status` (`ok`, `missing`, `different`, `several`, `failed`, or null before the first check), `found`, and `error` for a failed one, and the domain's `dns_checked_at` |
 | `POST /api/domains` | `{name}` |
-| `PATCH /api/domains/{id}` | `{unknown, unknown_account_id, dmarc, spf, relay}`, each optional; `""` returns one to the default, and `relay` is `"builtin"` or a relay's id. See [addresses.md](addresses.md) |
+| `PATCH /api/domains/{id}` | `{unknown, unknown_account_id, dmarc, spf, relay, max_message_bytes}`, each optional; `""` or `0` returns one to the default, and `relay` is `"builtin"` or a relay's id. See [addresses.md](addresses.md) |
 | `POST /api/domains/{id}/check` | looks up its records now → the domain |
 | `DELETE /api/domains/{id}` | `409` while it has accounts |
 | `GET /api/accounts` | every account, with its credentials and never a password |
 | `POST /api/accounts` | `{address}` → the account and `password`, its `default` credential's, generated and in this answer only |
-| `PATCH /api/accounts/{id}` | `{incoming, forward_account_id}`: `keep`, `reject`, or `forward` to an account |
+| `PATCH /api/accounts/{id}` | `{incoming, forward_account_id, max_message_bytes}`, each optional: `keep`, `reject`, or `forward` to an account, and its own largest message, `0` returning it to its domain's |
 | `DELETE /api/accounts/{id}` | `409` for an account getting junk, or forwarded to |
 | `POST /api/accounts/{id}/credentials` | `{label, password}` → `{id, label, login, password, …}`, the login newly tagged. An empty password is generated; either way it is in this answer only |
 | `POST /api/accounts/{id}/credentials/{cid}/reset` | `{password}`, empty for a generated one → the same credential and login with the new `password`, in this answer only |
 | `DELETE /api/accounts/{id}/credentials/{cid}` | the last may go too |
-| `GET /api/mail` | `{host, dns_api, certificate}` |
-| `GET /api/settings` | the defaults: `{unknown, dmarc, spf, relay_id}`, `unknown` being `reject` or `drop`, a null relay being built-in |
-| `PUT /api/settings` | the same, all of it |
+| `GET /api/mail` | `{host, dns_api, staging, certificate}` |
+| `GET /api/settings` | the defaults: `{unknown, dmarc, spf, relay_id, max_message_bytes}`, `unknown` being `reject` or `drop`, a null relay being built-in |
+| `PUT /api/settings` | the same, all of it; `max_message_bytes` left out stays as it is |
 | `GET /api/relays` | every relay, by label, without its password: `{…, has_password}` |
 | `POST /api/relays` | `{label, host, port, security, username, password}`. `409` for a label taken |
 | `PUT /api/relays/{id}` | the same; an empty password keeps the stored one |

@@ -39,6 +39,10 @@ type Account struct {
 	// Incoming is what mail to the account does; ForwardAccountID is set exactly when it forwards.
 	Incoming         Incoming
 	ForwardAccountID string
+	// MaxMessageBytes is the account's own largest message, or 0 to follow its domain's.
+	// MessageLimit is the one that applies: its own, its domain's, or the default.
+	MaxMessageBytes int64
+	MessageLimit    int64
 }
 
 // Incoming is what an account does with mail sent to it.
@@ -60,7 +64,9 @@ func (i Incoming) valid() bool {
 // Address is what the account signs in with and receives at.
 func (u *Account) Address() string { return u.Local + "@" + u.Domain }
 
-const accountColumns = `u.id, u.local_part, d.name, u.domain_id, u.created_at, u.incoming, coalesce(u.forward_account_id, '')`
+const accountColumns = `u.id, u.local_part, d.name, u.domain_id, u.created_at, u.incoming, coalesce(u.forward_account_id, ''),
+	coalesce(u.max_message_bytes, 0),
+	coalesce(u.max_message_bytes, d.max_message_bytes, (SELECT max_message_bytes FROM settings WHERE id = 1))`
 const accountFrom = ` FROM accounts u JOIN domains d ON d.id = u.domain_id`
 
 func scanAccount(row interface{ Scan(...any) error }) (*Account, error) {
@@ -68,7 +74,7 @@ func scanAccount(row interface{ Scan(...any) error }) (*Account, error) {
 		u       Account
 		created int64
 	)
-	if err := row.Scan(&u.ID, &u.Local, &u.Domain, &u.DomainID, &created, &u.Incoming, &u.ForwardAccountID); err != nil {
+	if err := row.Scan(&u.ID, &u.Local, &u.Domain, &u.DomainID, &created, &u.Incoming, &u.ForwardAccountID, &u.MaxMessageBytes, &u.MessageLimit); err != nil {
 		return nil, err
 	}
 	u.CreatedAt = fromUnix(created)
@@ -129,6 +135,10 @@ func (s *Store) CreateAccount(ctx context.Context, addr, password string) (*Acco
 		return nil, err
 	}
 	if err := createStandardMailboxes(ctx, tx, u.ID, now); err != nil {
+		return nil, err
+	}
+	// Read back for the limit it follows, which the database works out.
+	if u, err = accountWhere(ctx, tx, "u.id = ?", u.ID); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -300,6 +310,28 @@ func (s *Store) SetIncoming(ctx context.Context, id string, in Incoming, forward
 		s.changed()
 	}
 	return nil
+}
+
+// SetAccountMessageLimit sets an account's own largest message, or with 0 returns it to its
+// domain's.
+func (s *Store) SetAccountMessageLimit(ctx context.Context, id string, n int64) error {
+	if n != 0 {
+		if err := checkLimit(n); err != nil {
+			return err
+		}
+	}
+	v := orNull(n)
+	res, err := s.writer.ExecContext(ctx,
+		`UPDATE accounts SET max_message_bytes = ? WHERE id = ? AND max_message_bytes IS NOT ?`, v, id, v)
+	if err != nil {
+		return fmt.Errorf("set largest message: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		s.changed()
+		return nil
+	}
+	_, err = s.AccountByID(ctx, id)
+	return err
 }
 
 // sentOn refuses while mail is sent on to the account, forwarded or as a domain's junk: it has to

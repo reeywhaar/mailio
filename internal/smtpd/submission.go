@@ -48,7 +48,8 @@ func (sub *Submission) Server(cfg *tls.Config) *smtp.Server {
 	s := smtp.NewServer(sub)
 	s.Domain = sub.host
 	s.TLSConfig = cfg
-	s.MaxMessageBytes = store.MaxMessageBytes
+	// The most any account can send; its own limit is checked at MAIL and after DATA.
+	s.MaxMessageBytes = store.MessageCeiling
 	s.MaxRecipients = MaxRecipients
 	s.ReadTimeout = 5 * time.Minute
 	s.WriteTimeout = time.Minute
@@ -68,6 +69,11 @@ type subSession struct {
 	account *store.Account
 	from    string
 	rcpts   []string
+	// size is what the client said the message is, or 0. limit is the smallest of the account's
+	// own and those of the local recipients, and limitFor that recipient, or "" for the account.
+	size     int64
+	limit    int64
+	limitFor string
 }
 
 var _ smtp.AuthSession = (*subSession)(nil)
@@ -105,11 +111,12 @@ func (s *subSession) Auth(mech string) (sasl.Server, error) {
 func (s *subSession) Reset() {
 	s.from = ""
 	s.rcpts = nil
+	s.size, s.limit, s.limitFor = 0, 0, ""
 }
 
 func (s *subSession) Logout() error { return nil }
 
-func (s *subSession) Mail(from string, _ *smtp.MailOptions) error {
+func (s *subSession) Mail(from string, opts *smtp.MailOptions) error {
 	if s.account == nil {
 		return smtp.ErrAuthRequired
 	}
@@ -120,7 +127,23 @@ func (s *subSession) Mail(from string, _ *smtp.MailOptions) error {
 	}
 	s.Reset()
 	s.from = a.String()
+	s.limit = s.account.MessageLimit
+	if opts != nil {
+		s.size = opts.Size
+	}
+	if s.size > s.limit {
+		return s.tooBig()
+	}
 	return nil
+}
+
+// tooBig refuses a message larger than the account sends, or than a local recipient takes.
+func (s *subSession) tooBig() error {
+	if s.limitFor != "" {
+		return tooBig(s.limitFor, s.limit)
+	}
+	return &smtp.SMTPError{Code: 552, EnhancedCode: smtp.EnhancedCode{5, 2, 3},
+		Message: fmt.Sprintf("Message too big: %s sends up to %s", s.account.Address(), store.Megabytes(s.limit))}
 }
 
 func (s *subSession) Rcpt(to string, _ *smtp.RcptOptions) error {
@@ -139,6 +162,12 @@ func (s *subSession) Rcpt(to string, _ *smtp.RcptOptions) error {
 	if res.Refused {
 		return errNoMail
 	}
+	if res.Account != nil && res.Limit < s.limit {
+		if s.size > res.Limit {
+			return tooBig(a.String(), res.Limit)
+		}
+		s.limit, s.limitFor = res.Limit, a.String()
+	}
 	s.rcpts = append(s.rcpts, a.String())
 	return nil
 }
@@ -150,6 +179,10 @@ func (s *subSession) Data(r io.Reader) error {
 	body, err := io.ReadAll(r)
 	if err != nil {
 		return err
+	}
+	if int64(len(body)) > s.limit {
+		s.sub.log.Info("mail refused: larger than allowed", "account", s.account.ID, "bytes", len(body), "limit", s.limit)
+		return s.tooBig()
 	}
 	ctx := context.Background()
 	raw, err := s.sub.prepare(ctx, s.account, NormalizeCRLF(body))

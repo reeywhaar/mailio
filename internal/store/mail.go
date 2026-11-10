@@ -13,9 +13,22 @@ import (
 // Inbox is the one mailbox whose name is case-insensitive, and the one every account always has.
 const Inbox = "INBOX"
 
-// MaxMessageBytes is the largest message mailio takes, by SMTP or by IMAP APPEND. Larger than any
-// provider sends, and small enough that a message is held in memory without thought.
-const MaxMessageBytes = 50 << 20
+// DefaultMessageBytes is the largest message a new server takes, by SMTP or by IMAP APPEND, until
+// the defaults, a domain or an account say otherwise. Larger than most providers send.
+const DefaultMessageBytes = 50 << 20
+
+// MessageCeiling is the most any of them can be set to: a message is held in memory whole while
+// it is received, signed and stored.
+const MessageCeiling = 100 << 20
+
+// stamped is room for what mailio adds to a message it takes: Return-Path, Received,
+// Authentication-Results, a DKIM signature.
+const stamped = 64 << 10
+
+// Megabytes is a size as the admin interface writes it: 50 MB, 12.5 MB.
+func Megabytes(n int64) string {
+	return strings.TrimSuffix(fmt.Sprintf("%.1f", float64(n)/(1<<20)), ".0") + " MB"
+}
 
 // Delim separates the levels of a mailbox name.
 const Delim = '/'
@@ -319,8 +332,8 @@ type Delivery struct {
 // Deliver puts one message into every mailbox named, in one transaction: an SMTP 250 is said only
 // once all of them have it.
 func (s *Store) Deliver(ctx context.Context, raw []byte, at time.Time, to []Delivery) error {
-	if len(raw) > MaxMessageBytes {
-		return Invalid("That message is larger than %d bytes.", MaxMessageBytes)
+	if len(raw) > MessageCeiling+stamped {
+		return Invalid("That message is larger than %s.", Megabytes(MessageCeiling))
 	}
 	s.appendMu.Lock()
 	defer s.appendMu.Unlock()
@@ -354,8 +367,8 @@ func (s *Store) Deliver(ctx context.Context, raw []byte, at time.Time, to []Deli
 
 // Append adds one message to one mailbox, which is IMAP APPEND, and returns its UID.
 func (s *Store) Append(ctx context.Context, mailboxID int64, raw []byte, flags []string, at time.Time) (uint32, error) {
-	if len(raw) > MaxMessageBytes {
-		return 0, Invalid("That message is larger than %d bytes.", MaxMessageBytes)
+	if len(raw) > MessageCeiling+stamped {
+		return 0, Invalid("That message is larger than %s.", Megabytes(MessageCeiling))
 	}
 	s.appendMu.Lock()
 	defer s.appendMu.Unlock()

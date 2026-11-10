@@ -44,6 +44,30 @@ checked in the transaction that saves, so there are no chains and no circles to 
 Delivery still follows at most 5 forwards before refusing the mail, for anything saved before
 the rule.
 
+## The largest message is a default, a domain's own, or an account's own
+
+The default is 50 MB, set under Defaults. A domain's own wins over it, and an account's own over
+its domain's. Any of them is from 1 MB to 100 MB: a message is held in memory whole while it is
+received, signed and stored. A MB here is 1,048,576 bytes.
+
+It is the largest the account receives, sends and stores:
+
+| | refused |
+| --- | --- |
+| mail sent to it | `552 5.2.3` at `RCPT TO` when the sender gives the size up front, as most servers do, and after `DATA` otherwise |
+| mail it sends | at `MAIL FROM` when the client gives the size, and after `DATA` otherwise, so the mail app says so at once |
+| `APPEND` over IMAP | `TOOBIG`; once signed in, `APPENDLIMIT` is the account's |
+
+**Mail sent on has to fit every account it reaches.** Mail forwarded, or a domain's junk, takes
+the smaller of the address it was sent to and the account that keeps it, and mail sent from one
+account here to another fits both.
+
+After `DATA`, one answer speaks for every recipient, so a message too big for one address here is
+refused for all of them. A sender that gives the size up front hears it per address instead.
+
+Mail sent through a relay meets the relay's limit as well, which mailio does not know: Gmail
+takes about 34 MB. A larger one comes back as a bounce in the sender's INBOX.
+
 ## An admin is not an account
 
 An admin signs in to the admin interface with a name, not an address, and has no mailbox. So the

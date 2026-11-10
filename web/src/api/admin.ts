@@ -39,6 +39,8 @@ export type Settings = {
   dmarc: DMARC;
   spf: SPF;
   relay_id: string | null;
+  /** The largest message an account takes, sends or stores, in bytes. */
+  max_message_bytes: number;
 };
 
 /** A domain's relay that is not one of the list: straight to each recipient's server. */
@@ -55,19 +57,22 @@ export type Domain = {
   spf: SPF | null;
   /** BUILT_IN, a relay's id, or null for the default. */
   relay: string | null;
+  /** Its own largest message in bytes, or null for the default's. */
+  max_message_bytes: number | null;
   records: DNSRecord[];
   /** When its records were last checked; null for not yet. */
   dns_checked_at: number | null;
   created_at: number;
 };
 
-/** A domain's settings as its dialog saves them: "" returns one to the default. */
+/** A domain's settings as its dialog saves them: "" or 0 returns one to the default. */
 export type DomainChange = {
   unknown?: Unknown | "";
   unknown_account_id?: string | null;
   dmarc?: DMARC | "";
   spf?: SPF | "";
   relay?: string;
+  max_message_bytes?: number;
 };
 
 export type MailStatus = {
@@ -140,8 +145,18 @@ export type Account = {
   incoming: Incoming;
   /** Who gets the mail, set exactly when incoming is "forward". */
   forward_account_id: string | null;
+  /** Its own largest message in bytes, or null for its domain's. */
+  max_message_bytes: number | null;
   credentials: Credential[];
   created_at: number;
+};
+
+/** An account's settings as its dialog saves them: 0 returns its largest message to its domain's. */
+export type AccountChange = {
+  incoming?: Incoming;
+  /** Who gets the mail when it forwards, and null otherwise. */
+  forward_account_id?: string | null;
+  max_message_bytes?: number;
 };
 
 /** Somebody who signs in here: a name, not an address, and never an account. */
@@ -205,15 +220,8 @@ export const createAccount = (address: string) =>
     body: { address },
   });
 
-export const setIncoming = (
-  id: string,
-  incoming: Incoming,
-  forwardAccountID: string | null,
-) =>
-  request<Account>(`/api/accounts/${id}`, {
-    method: "PATCH",
-    body: { incoming, forward_account_id: forwardAccountID },
-  });
+export const updateAccount = (id: string, change: AccountChange) =>
+  request<Account>(`/api/accounts/${id}`, { method: "PATCH", body: change });
 
 export const deleteAccount = (id: string) =>
   request<void>(`/api/accounts/${id}`, { method: "DELETE" });

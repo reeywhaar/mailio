@@ -194,7 +194,7 @@ func TestADomainPublishesTheDefaultsItFollows(t *testing.T) {
 	fake := &doapi{zone: dnsapi.Zone{Name: "reey.ru"}}
 	srv := httptest.NewServer(fake)
 	defer srv.Close()
-	st.SetSettings(ctx, store.Settings{Unknown: store.UnknownReject, DMARC: store.DMARCQuarantine, SPF: store.SPFFail})
+	st.SetSettings(ctx, store.Settings{Unknown: store.UnknownReject, DMARC: store.DMARCQuarantine, SPF: store.SPFFail, MaxMessageBytes: store.DefaultMessageBytes})
 	if _, err := Sync(ctx, st, dnsapi.New(srv.URL), "mail.vyrtsev.com", slog.New(slog.DiscardHandler)); err != nil {
 		t.Fatal(err)
 	}

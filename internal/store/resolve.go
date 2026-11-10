@@ -23,6 +23,9 @@ type Recipient struct {
 	Refused bool
 	// Tag is what followed the + in the address.
 	Tag string
+	// Limit is the largest message it takes: the smallest of the address's own, its domain's for
+	// an address nobody has, and that of each account the mail is sent on to.
+	Limit int64
 }
 
 // Resolve decides where mail to a goes: the account registered under its name, or failing that what
@@ -39,6 +42,7 @@ func (s *Store) Resolve(ctx context.Context, a address.Address) (*Recipient, err
 	r := &Recipient{Ours: true, Tag: a.Tag()}
 	u, err := accountWhere(ctx, s.reader, "u.domain_id = ? AND u.local_part = ?", d.ID, a.Name())
 	if err == nil {
+		r.Limit = u.MessageLimit
 		return r, s.follow(ctx, r, u)
 	}
 	if !errors.Is(err, ErrNotFound) {
@@ -49,6 +53,7 @@ func (s *Store) Resolve(ctx context.Context, a address.Address) (*Recipient, err
 	if err != nil {
 		return nil, err
 	}
+	r.Limit = d.MessageLimit(set)
 	unknown, junkTo := d.UnknownFor(set)
 	switch unknown {
 	case UnknownDrop:
@@ -68,6 +73,7 @@ func (s *Store) Resolve(ctx context.Context, a address.Address) (*Recipient, err
 // when one of them refuses mail.
 func (s *Store) follow(ctx context.Context, r *Recipient, u *Account) error {
 	for hops := 0; ; hops++ {
+		r.Limit = min(r.Limit, u.MessageLimit)
 		switch {
 		case u.Incoming == IncomingReject || hops > maxForwards:
 			r.Account, r.Refused = nil, true

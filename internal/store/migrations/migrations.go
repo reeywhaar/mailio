@@ -30,6 +30,7 @@ var all = []Migration{
 	defaults,
 	accounts,
 	junkPerDomain,
+	messageLimits,
 }
 
 func exec(sqlText string) func(context.Context, *sql.Tx) error {

@@ -28,6 +28,7 @@ const inbox: Account = {
   domain_id: "dm_1",
   incoming: "keep",
   forward_account_id: null,
+  max_message_bytes: null,
   credentials: [
     {
       id: "cr_1",
@@ -57,6 +58,7 @@ const reey: Domain = {
   dmarc: null,
   spf: null,
   relay: null,
+  max_message_bytes: null,
   records: [
     {
       type: "MX",
@@ -86,6 +88,7 @@ const defaults: Settings = {
   dmarc: "reject",
   spf: "~all",
   relay_id: null,
+  max_message_bytes: 50 * 1024 * 1024,
 };
 
 /** Every route a page load reads, as these tests start from; each test replaces what it is about. */
@@ -141,7 +144,7 @@ test("domains, accounts and admins are rows that summarize them", async () => {
   // The signed-in admin is marked, and is not an account.
   expect(screen.getByRole("button", { name: /^misha/ })).toBeTruthy();
   expect(screen.getByText("you")).toBeTruthy();
-  expect(screen.getAllByText("default").length).toBe(4);
+  expect(screen.getAllByText("default").length).toBe(5);
 });
 
 test("a domain's dialog holds its changes and sends them in one request on Save", async () => {
@@ -182,6 +185,7 @@ test("a domain's dialog holds its changes and sends them in one request on Save"
         dmarc: "quarantine",
         spf: "",
         relay: "",
+        max_message_bytes: 0,
       },
     },
   ]);
@@ -387,7 +391,46 @@ test("forwarding an account's mail is held until Save", async () => {
       {
         method: "PATCH",
         path: "/api/accounts/ac_1",
-        body: { incoming: "forward", forward_account_id: "ac_2" },
+        body: {
+          incoming: "forward",
+          forward_account_id: "ac_2",
+          max_message_bytes: 0,
+        },
+      },
+    ]),
+  );
+});
+
+test("an account's largest message is typed in MB, and empty is its domain's", async () => {
+  const { sent } = routes({
+    "GET /api/domains": () => ({
+      body: [{ ...reey, max_message_bytes: 25 * 1024 * 1024 }],
+    }),
+    "PATCH /api/accounts/ac_1": () => ({ body: inbox }),
+  });
+  mount();
+  await open(/^inbox@reey\.ru/);
+  const d = within(dialog("inbox@reey.ru"));
+  expect(d.getByText("Empty: the domain's, 25 MB.")).toBeTruthy();
+  const field = d.getByLabelText("Largest message");
+  fireEvent.change(field, { target: { value: "many" } });
+  expect(d.getByText("A number of MB.")).toBeTruthy();
+  expect(
+    (d.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled,
+  ).toBe(true);
+
+  fireEvent.change(field, { target: { value: "10" } });
+  fireEvent.click(d.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(writes(sent)).toEqual([
+      {
+        method: "PATCH",
+        path: "/api/accounts/ac_1",
+        body: {
+          incoming: "keep",
+          forward_account_id: null,
+          max_message_bytes: 10 * 1024 * 1024,
+        },
       },
     ]),
   );

@@ -142,7 +142,7 @@ func newRig(t *testing.T) *rig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetSettings(ctx, store.Settings{Unknown: store.UnknownReject, DMARC: store.DMARCReject, SPF: store.SPFSoftFail, RelayID: rl.ID}); err != nil {
+	if err := st.SetSettings(ctx, store.Settings{Unknown: store.UnknownReject, DMARC: store.DMARCReject, SPF: store.SPFSoftFail, RelayID: rl.ID, MaxMessageBytes: store.DefaultMessageBytes}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -348,4 +348,33 @@ type openMX struct{ r *relay }
 
 func (m *openMX) NewSession(*gosmtp.Conn) (gosmtp.Session, error) {
 	return &relaySession{r: m.r, authed: true}, nil
+}
+
+// An account sends nothing larger than its own limit, nor larger than a local recipient takes,
+// and its client hears so at once rather than from a bounce later.
+func TestASubmissionLargerThanAllowedIsRefused(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	big := letter + strings.Repeat("A line of an attachment, encoded the way mail carries one.\r\n", 20000)
+	inbox, _ := r.st.Authenticate(ctx, "inbox@reey.ru", "correct horse")
+	other, _ := r.st.Authenticate(ctx, "other@reey.ru", "correct horse")
+
+	if err := r.st.SetAccountMessageLimit(ctx, other.ID, 1<<20); err != nil {
+		t.Fatal(err)
+	}
+	err := r.submit("inbox@reey.ru", "correct horse", "inbox@reey.ru", []string{"someone@example.com", "other@reey.ru"}, big)
+	if err == nil || !strings.Contains(err.Error(), "552") || !strings.Contains(err.Error(), "other@reey.ru") {
+		t.Errorf("a local recipient's: %v", err)
+	}
+	if err := r.submit("inbox@reey.ru", "correct horse", "inbox@reey.ru", []string{"someone@example.com"}, big); err != nil {
+		t.Errorf("within the sender's: %v", err)
+	}
+
+	if err := r.st.SetAccountMessageLimit(ctx, inbox.ID, 1<<20); err != nil {
+		t.Fatal(err)
+	}
+	err = r.submit("inbox@reey.ru", "correct horse", "inbox@reey.ru", []string{"someone@example.com"}, big)
+	if err == nil || !strings.Contains(err.Error(), "552") || !strings.Contains(err.Error(), "inbox@reey.ru sends up to 1 MB") {
+		t.Errorf("the sender's own: %v", err)
+	}
 }

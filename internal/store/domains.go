@@ -48,6 +48,8 @@ type Domain struct {
 	// ViaRelay goes through RelayID.
 	Via     string
 	RelayID string
+	// MaxMessageBytes is the domain's own largest message, or 0 to follow the default.
+	MaxMessageBytes int64
 }
 
 // UnknownFor is what the domain does with mail for addresses nobody has: its own, or the
@@ -57,6 +59,14 @@ func (d *Domain) UnknownFor(set *Settings) (Unknown, string) {
 		return d.Unknown, d.UnknownAccountID
 	}
 	return set.Unknown, ""
+}
+
+// MessageLimit is the largest message the domain's addresses take: its own, or the default's.
+func (d *Domain) MessageLimit(set *Settings) int64 {
+	if d.MaxMessageBytes > 0 {
+		return d.MaxMessageBytes
+	}
+	return set.MaxMessageBytes
 }
 
 // Policies are what mailio publishes for the domain: its own, or the defaults.
@@ -72,14 +82,14 @@ func (d *Domain) Policies(set *Settings) (DMARC, SPF) {
 }
 
 const domainColumns = `id, name, unknown, coalesce(unknown_account_id, ''), unknown_own, created_at, dkim_selector, dkim_key,
-	coalesce(dmarc, ''), coalesce(spf, ''), coalesce(send_via, ''), coalesce(relay_id, '')`
+	coalesce(dmarc, ''), coalesce(spf, ''), coalesce(send_via, ''), coalesce(relay_id, ''), coalesce(max_message_bytes, 0)`
 
 func scanDomain(row interface{ Scan(...any) error }) (*Domain, error) {
 	var (
 		d       Domain
 		created int64
 	)
-	if err := row.Scan(&d.ID, &d.Name, &d.Unknown, &d.UnknownAccountID, &d.UnknownOwn, &created, &d.DKIMSelector, &d.DKIMKey, &d.DMARC, &d.SPF, &d.Via, &d.RelayID); err != nil {
+	if err := row.Scan(&d.ID, &d.Name, &d.Unknown, &d.UnknownAccountID, &d.UnknownOwn, &created, &d.DKIMSelector, &d.DKIMKey, &d.DMARC, &d.SPF, &d.Via, &d.RelayID, &d.MaxMessageBytes); err != nil {
 		return nil, err
 	}
 	d.CreatedAt = fromUnix(created)
@@ -233,7 +243,7 @@ func (s *Store) SetDMARC(ctx context.Context, domainID string, policy DMARC) err
 	if policy != "" && !policy.valid() {
 		return Invalid("A DMARC policy is reject, quarantine or none.")
 	}
-	return s.setDomainColumn(ctx, domainID, "dmarc", string(policy))
+	return s.setDomainColumn(ctx, domainID, "dmarc", orNull(policy))
 }
 
 // SetSPF sets how a domain's own SPF ends, or with "" returns it to the default.
@@ -241,16 +251,32 @@ func (s *Store) SetSPF(ctx context.Context, domainID string, spf SPF) error {
 	if spf != "" && !spf.valid() {
 		return Invalid("An SPF ends in -all, ~all or ?all.")
 	}
-	return s.setDomainColumn(ctx, domainID, "spf", string(spf))
+	return s.setDomainColumn(ctx, domainID, "spf", orNull(spf))
 }
 
-// setDomainColumn writes one of the override columns, null for "". column is a constant of the
-// callers', never input.
-func (s *Store) setDomainColumn(ctx context.Context, domainID, column, value string) error {
-	var v any
-	if value != "" {
-		v = value
+// SetDomainMessageLimit sets a domain's own largest message, or with 0 returns it to the default.
+func (s *Store) SetDomainMessageLimit(ctx context.Context, domainID string, n int64) error {
+	if n != 0 {
+		if err := checkLimit(n); err != nil {
+			return err
+		}
 	}
+	return s.setDomainColumn(ctx, domainID, "max_message_bytes", orNull(n))
+}
+
+// orNull is a value as an override column holds it: null for the zero value, which follows the
+// default.
+func orNull[T comparable](v T) any {
+	var zero T
+	if v == zero {
+		return nil
+	}
+	return v
+}
+
+// setDomainColumn writes one of the override columns, v nil for null. column is a constant of the
+// callers', never input.
+func (s *Store) setDomainColumn(ctx context.Context, domainID, column string, v any) error {
 	res, err := s.writer.ExecContext(ctx,
 		`UPDATE domains SET `+column+` = ? WHERE id = ? AND `+column+` IS NOT ?`, v, domainID, v)
 	if err != nil {

@@ -496,6 +496,47 @@ func TestTheDefaultsAndADomainsOwn(t *testing.T) {
 	}
 }
 
+func TestTheLargestMessageIsTheDefaultOrADomainsOrAnAccountsOwn(t *testing.T) {
+	h := signedIn(t)
+	const mb = 1 << 20
+	_, set := h.do("GET", "/api/settings", nil)
+	if set["max_message_bytes"] != float64(50*mb) {
+		t.Errorf("the default: %v", set["max_message_bytes"])
+	}
+	// Left out, it stays.
+	_, set = h.do("PUT", "/api/settings", map[string]any{"unknown": "drop", "dmarc": "reject", "spf": "~all"})
+	if set["unknown"] != "drop" || set["max_message_bytes"] != float64(50*mb) {
+		t.Errorf("left out: %v", set)
+	}
+	code, set := h.do("PUT", "/api/settings", map[string]any{"unknown": "drop", "dmarc": "reject", "spf": "~all", "max_message_bytes": 30 * mb})
+	if code != http.StatusOK || set["max_message_bytes"] != float64(30*mb) {
+		t.Errorf("set: %d %v", code, set)
+	}
+
+	_, d := h.do("POST", "/api/domains", map[string]any{"name": "reey.ru"})
+	id := d["id"].(string)
+	if d["max_message_bytes"] != nil {
+		t.Errorf("a new domain: %v", d["max_message_bytes"])
+	}
+	code, d = h.do("PATCH", "/api/domains/"+id, map[string]any{"max_message_bytes": 20 * mb})
+	if code != http.StatusOK || d["max_message_bytes"] != float64(20*mb) {
+		t.Errorf("its own: %d %v", code, d["max_message_bytes"])
+	}
+	code, d = h.do("PATCH", "/api/domains/"+id, map[string]any{"max_message_bytes": 0})
+	if code != http.StatusOK || d["max_message_bytes"] != nil {
+		t.Errorf("back to the default: %d %v", code, d["max_message_bytes"])
+	}
+
+	_, a := h.do("POST", "/api/accounts", map[string]any{"address": "inbox@reey.ru"})
+	code, a = h.do("PATCH", "/api/accounts/"+a["id"].(string), map[string]any{"max_message_bytes": 10 * mb})
+	if code != http.StatusOK || a["max_message_bytes"] != float64(10*mb) || a["incoming"] != "keep" {
+		t.Errorf("an account's own, its incoming untouched: %d %v", code, a)
+	}
+	if code, _ := h.do("PATCH", "/api/accounts/"+a["id"].(string), map[string]any{"max_message_bytes": 1000}); code != http.StatusBadRequest {
+		t.Errorf("1000 bytes: %d", code)
+	}
+}
+
 // lookup is DNS as a map, for the checker.
 type lookup map[string][]string
 

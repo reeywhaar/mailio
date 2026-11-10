@@ -42,7 +42,9 @@ func (in *Inbound) Server(cfg *tls.Config) *smtp.Server {
 	s := smtp.NewServer(in)
 	s.Domain = in.host
 	s.TLSConfig = cfg
-	s.MaxMessageBytes = store.MaxMessageBytes
+	// The most any address here can take. Each address's own limit is checked at RCPT when the
+	// sender says the size up front, and after DATA in any case.
+	s.MaxMessageBytes = store.MessageCeiling
 	s.MaxRecipients = MaxRecipients
 	s.ReadTimeout = 5 * time.Minute
 	s.WriteTimeout = time.Minute
@@ -62,18 +64,27 @@ type inSession struct {
 	ip    net.IP
 	from  string
 	rcpts []*store.Recipient
+	// size is what the sender said the message is, or 0. limit is the smallest a recipient takes,
+	// and limitFor that recipient.
+	size     int64
+	limit    int64
+	limitFor string
 }
 
 func (s *inSession) Reset() {
 	s.from = ""
 	s.rcpts = nil
+	s.size, s.limit, s.limitFor = 0, 0, ""
 }
 
 func (s *inSession) Logout() error { return nil }
 
-func (s *inSession) Mail(from string, _ *smtp.MailOptions) error {
+func (s *inSession) Mail(from string, opts *smtp.MailOptions) error {
 	s.Reset()
 	s.from = from
+	if opts != nil {
+		s.size = opts.Size
+	}
 	return nil
 }
 
@@ -97,9 +108,22 @@ func (s *inSession) Rcpt(to string, _ *smtp.RcptOptions) error {
 	case r.Account == nil && !r.Drop:
 		s.in.log.Info("mail refused: no such account", "ip", s.ip.String())
 		return &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 1, 1}, Message: "No such user here"}
+	case s.size > r.Limit:
+		s.in.log.Info("mail refused: larger than the address takes", "ip", s.ip.String(), "bytes", s.size, "limit", r.Limit)
+		return tooBig(a.String(), r.Limit)
+	}
+	if s.limitFor == "" || r.Limit < s.limit {
+		s.limit, s.limitFor = r.Limit, a.String()
 	}
 	s.rcpts = append(s.rcpts, r)
 	return nil
+}
+
+// tooBig is a message larger than one address takes: 5.2.3 is that address's limit, not the
+// server's.
+func tooBig(addr string, limit int64) error {
+	return &smtp.SMTPError{Code: 552, EnhancedCode: smtp.EnhancedCode{5, 2, 3},
+		Message: fmt.Sprintf("Message too big for %s, which takes up to %s", addr, store.Megabytes(limit))}
 }
 
 // errNoMail is an address that exists and takes no mail: one that only sends.
@@ -111,6 +135,11 @@ func (s *inSession) Data(r io.Reader) error {
 	body, err := io.ReadAll(r)
 	if err != nil {
 		return err
+	}
+	// Refused for every recipient: one answer to DATA speaks for all of them.
+	if s.limitFor != "" && int64(len(body)) > s.limit {
+		s.in.log.Info("mail refused: larger than the address takes", "ip", s.ip.String(), "bytes", len(body), "limit", s.limit)
+		return tooBig(s.limitFor, s.limit)
 	}
 	body = NormalizeCRLF(body)
 	ctx := context.Background()

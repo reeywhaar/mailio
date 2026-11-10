@@ -6,11 +6,12 @@ import {
   deleteAccount,
   deleteCredential,
   resetCredential,
-  setIncoming,
+  updateAccount,
   type Account,
   type Credential,
   type Domain,
   type Incoming,
+  type Settings,
 } from "@app/api/admin";
 import { Button } from "@app/components/Button";
 import { Dialog } from "@app/components/Dialog";
@@ -22,11 +23,16 @@ import {
   Row,
   ShownCredential,
   Facts,
+  LimitField,
   Summary,
   Toward,
   accountOption,
   incomingLabels,
   keepsMail,
+  limitTyped,
+  mbText,
+  megabytes,
+  toBytes,
   sendersTo,
   Senders,
   useDraft,
@@ -43,11 +49,13 @@ export function DomainAccounts({
   domain,
   accounts,
   domains,
+  settings,
 }: {
   domain: Domain;
   /** Every account: a forward can go to one at another domain. */
   accounts: Account[];
   domains: Domain[];
+  settings: Settings;
 }) {
   const [adding, setAdding] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
@@ -84,7 +92,9 @@ export function DomainAccounts({
             open
             account={account}
             accounts={accounts}
+            domain={domain}
             domains={domains}
+            settings={settings}
             onClose={() => setOpen(null)}
           />
         ) : null}
@@ -114,6 +124,14 @@ function AccountSummary({
     <Summary
       parts={[
         { label: "Incoming", value: incoming },
+        ...(account.max_message_bytes
+          ? [
+              {
+                label: "Largest message",
+                value: megabytes(account.max_message_bytes),
+              },
+            ]
+          : []),
         { label: "Credentials", value: account.credentials.length },
       ]}
     />
@@ -208,20 +226,25 @@ function AddAccountDialog({
   );
 }
 
-type Draft = { incoming: Incoming; forwardTo: string };
+/** An account's settings as its dialog holds them until Save; limit is in MB, as typed. */
+type Draft = { incoming: Incoming; forwardTo: string; limit: string };
 
-/** An account: what its mail does, held until Save, and its credentials. */
+/** An account: what its mail does and its largest message, held until Save, and its credentials. */
 function AccountDialog({
   open,
   account,
   accounts,
+  domain,
   domains,
+  settings,
   onClose,
 }: {
   open: boolean;
   account: Account;
   accounts: Account[];
+  domain: Domain;
   domains: Domain[];
+  settings: Settings;
   onClose: () => void;
 }) {
   const { save, busy, error } = useSave();
@@ -231,6 +254,7 @@ function AccountDialog({
   const [draft, setDraft] = useDraft<Draft>(open, () => ({
     incoming: account.incoming,
     forwardTo: account.forward_account_id ?? others.find(keepsMail)?.id ?? "",
+    limit: mbText(account.max_message_bytes),
   }));
   const blocked = senders.length > 0 && draft.incoming !== "keep";
   // The credential being added (null) or given a new password; undefined is no dialog.
@@ -241,11 +265,12 @@ function AccountDialog({
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     const ok = await save(() =>
-      setIncoming(
-        account.id,
-        draft.incoming,
-        draft.incoming === "forward" ? draft.forwardTo : null,
-      ),
+      updateAccount(account.id, {
+        incoming: draft.incoming,
+        forward_account_id:
+          draft.incoming === "forward" ? draft.forwardTo : null,
+        max_message_bytes: toBytes(draft.limit),
+      }),
     );
     if (ok) onClose();
   };
@@ -277,7 +302,8 @@ function AccountDialog({
             disabled={
               busy ||
               blocked ||
-              (draft.incoming === "forward" && !draft.forwardTo)
+              (draft.incoming === "forward" && !draft.forwardTo) ||
+              !limitTyped(draft.limit)
             }
           >
             Save
@@ -329,6 +355,14 @@ function AccountDialog({
             </Select>
           </Field>
         ) : null}
+        <LimitField
+          value={draft.limit}
+          onChange={(limit) => setDraft({ ...draft, limit })}
+          inherited={{
+            from: "the domain's",
+            bytes: domain.max_message_bytes ?? settings.max_message_bytes,
+          }}
+        />
         {error ? <p className="text-sm text-accent">{error}</p> : null}
       </form>
 

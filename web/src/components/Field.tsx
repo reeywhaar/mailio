@@ -2,15 +2,20 @@ import type { ReactNode, SelectHTMLAttributes } from "react";
 
 import { fieldLook, fieldSizes } from "@app/components/TextField";
 
-/** A control and the label that names it, which is also what a click on the words focuses. */
+/**
+ * A control and the label that names it, which is also what a click on the words focuses. An
+ * error, what is wrong with what was typed, takes the hint's place.
+ */
 export function Field({
   label,
   hint,
+  error,
   className = "",
   children,
 }: {
   label: string;
   hint?: string;
+  error?: string;
   className?: string;
   children: ReactNode;
 }) {
@@ -21,7 +26,11 @@ export function Field({
         <span className="caps text-sm text-muted">{label}</span>
         {children}
       </label>
-      {hint ? <span className="text-xs text-faint">{hint}</span> : null}
+      {error ? (
+        <span className="text-xs text-accent">{error}</span>
+      ) : hint ? (
+        <span className="text-xs text-faint">{hint}</span>
+      ) : null}
     </div>
   );
 }

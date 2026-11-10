@@ -17,6 +17,7 @@ import { ApiError, messageOf } from "@app/api/transport";
 import { Button, type Size } from "@app/components/Button";
 import { CopyBlock } from "@app/components/CopyBlock";
 import { Dialog } from "@app/components/Dialog";
+import { Field } from "@app/components/Field";
 import { TextField } from "@app/components/TextField";
 import { leaveFor } from "@app/leave";
 import { generatePassword } from "@app/password";
@@ -269,6 +270,71 @@ export function PasswordField({
       />
       <Button onClick={() => onChange(generatePassword())}>Generate</Button>
     </span>
+  );
+}
+
+const MB = 1 << 20;
+
+/** A size as the interface writes it: 50 MB. */
+export const megabytes = (bytes: number) =>
+  `${Math.round((bytes / MB) * 10) / 10} MB`;
+
+/** A largest message as its field holds it: MB, and "" for none of its own. */
+export const mbText = (bytes: number | null) =>
+  bytes ? String(Math.round((bytes / MB) * 10) / 10) : "";
+
+/**
+ * A largest-message field's text as bytes: 0 for empty, which follows the one above, and NaN for
+ * anything but a number. The server says the range.
+ */
+export function toBytes(text: string) {
+  const t = text.trim().replace(",", ".");
+  if (!t) return 0;
+  const n = Number(t);
+  return Number.isFinite(n) && n > 0 ? Math.round(n * MB) : NaN;
+}
+
+/** Whether a largest-message field holds something to send. */
+export const limitTyped = (text: string) => !Number.isNaN(toBytes(text));
+
+/**
+ * The largest message, in MB. With `inherited`, empty follows it: the default for a domain, the
+ * domain's for an account.
+ */
+export function LimitField({
+  value,
+  onChange,
+  inherited,
+  hint,
+}: {
+  value: string;
+  onChange: (text: string) => void;
+  inherited?: { from: string; bytes: number };
+  hint?: string;
+}) {
+  return (
+    <Field
+      label="Largest message"
+      hint={
+        inherited
+          ? `Empty: ${inherited.from}, ${megabytes(inherited.bytes)}.`
+          : hint
+      }
+      error={limitTyped(value) ? undefined : "A number of MB."}
+    >
+      <span className="flex items-center gap-2">
+        <TextField
+          inputMode="decimal"
+          autoComplete="off"
+          aria-label="Largest message"
+          placeholder={inherited ? mbText(inherited.bytes) : undefined}
+          className="w-28"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        <span className="text-muted">MB</span>
+      </span>
+    </Field>
   );
 }
 

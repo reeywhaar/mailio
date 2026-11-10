@@ -583,7 +583,7 @@ func TestADomainFollowsTheDefaultsUnlessItHasItsOwn(t *testing.T) {
 		t.Errorf("a new domain: %s", got)
 	}
 	st.SetDMARC(ctx, d.ID, DMARCQuarantine)
-	st.SetSettings(ctx, Settings{Unknown: UnknownReject, DMARC: DMARCNone, SPF: SPFFail})
+	st.SetSettings(ctx, Settings{Unknown: UnknownReject, DMARC: DMARCNone, SPF: SPFFail, MaxMessageBytes: DefaultMessageBytes})
 	if got := policies(); got != "quarantine -all" {
 		t.Errorf("its own DMARC, the default SPF: %s", got)
 	}
@@ -592,10 +592,12 @@ func TestADomainFollowsTheDefaultsUnlessItHasItsOwn(t *testing.T) {
 		t.Errorf("back to the defaults: %s", got)
 	}
 	for _, bad := range []Settings{
-		{Unknown: UnknownReject, DMARC: "bounce", SPF: SPFFail},
-		{Unknown: UnknownReject, DMARC: DMARCReject, SPF: "+all"},
+		{Unknown: UnknownReject, DMARC: "bounce", SPF: SPFFail, MaxMessageBytes: DefaultMessageBytes},
+		{Unknown: UnknownReject, DMARC: DMARCReject, SPF: "+all", MaxMessageBytes: DefaultMessageBytes},
 		// Junk goes to one account, which only a domain can choose.
-		{Unknown: UnknownJunk, DMARC: DMARCReject, SPF: SPFSoftFail},
+		{Unknown: UnknownJunk, DMARC: DMARCReject, SPF: SPFSoftFail, MaxMessageBytes: DefaultMessageBytes},
+		{Unknown: UnknownReject, DMARC: DMARCReject, SPF: SPFSoftFail},
+		{Unknown: UnknownReject, DMARC: DMARCReject, SPF: SPFSoftFail, MaxMessageBytes: MessageCeiling + 1},
 	} {
 		if err := st.SetSettings(ctx, bad); !errors.Is(err, ErrInvalid) {
 			t.Errorf("%+v: %v", bad, err)
@@ -634,7 +636,7 @@ func TestADomainSendsThroughTheDefaultBuiltInOrItsOwnRelay(t *testing.T) {
 	if _, err := st.CreateRelay(ctx, Relay{Label: "gmail", Host: "x.example", Port: 25, Security: SecurityStartTLS}); !errors.Is(err, ErrConflict) {
 		t.Errorf("a taken label, another case: %v", err)
 	}
-	st.SetSettings(ctx, Settings{Unknown: UnknownReject, DMARC: DMARCReject, SPF: SPFSoftFail, RelayID: gmail.ID})
+	st.SetSettings(ctx, Settings{Unknown: UnknownReject, DMARC: DMARCReject, SPF: SPFSoftFail, RelayID: gmail.ID, MaxMessageBytes: DefaultMessageBytes})
 	if got := via("reey.ru"); got != "Gmail gmail secret" {
 		t.Errorf("the default: %s", got)
 	}

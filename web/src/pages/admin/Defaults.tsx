@@ -12,9 +12,14 @@ import { Dialog } from "@app/components/Dialog";
 import { Field, Select } from "@app/components/Field";
 import {
   Facts,
+  LimitField,
   Section,
   dmarcLabels,
+  limitTyped,
+  mbText,
+  megabytes,
   spfLabels,
+  toBytes,
   unknownLabels,
   useDraft,
   useSave,
@@ -35,6 +40,7 @@ export function Defaults({ settings }: { settings: Settings }) {
           ["Unknown addresses", unknownLabels[settings.unknown]],
           ["DMARC", dmarcLabels[settings.dmarc]],
           ["SPF", spfLabels[settings.spf]],
+          ["Largest message", megabytes(settings.max_message_bytes)],
         ]}
       />
       <DefaultsDialog
@@ -56,10 +62,17 @@ function DefaultsDialog({
   settings: Settings;
 }) {
   const { save, busy, error } = useSave();
-  const [draft, setDraft] = useDraft(open, () => settings);
+  const [draft, setDraft] = useDraft(open, () => ({
+    ...settings,
+    limit: mbText(settings.max_message_bytes),
+  }));
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (await save(() => setSettings(draft))) onClose();
+    const { limit, ...set } = draft;
+    const ok = await save(() =>
+      setSettings({ ...set, max_message_bytes: toBytes(limit) }),
+    );
+    if (ok) onClose();
   };
   return (
     <Dialog
@@ -69,7 +82,12 @@ function DefaultsDialog({
       footer={
         <>
           <Button onClick={onClose}>Cancel</Button>
-          <Button type="submit" form="defaults" variant="solid" disabled={busy}>
+          <Button
+            type="submit"
+            form="defaults"
+            variant="solid"
+            disabled={busy || !limitTyped(draft.limit)}
+          >
             Save
           </Button>
         </>
@@ -119,6 +137,11 @@ function DefaultsDialog({
             ))}
           </Select>
         </Field>
+        <LimitField
+          value={draft.limit}
+          onChange={(limit) => setDraft({ ...draft, limit })}
+          hint="For mail received, sent and stored. A domain or an account can have its own."
+        />
         {error ? <p className="text-sm text-accent">{error}</p> : null}
       </form>
     </Dialog>
