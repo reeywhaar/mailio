@@ -26,12 +26,21 @@ waiting, if the other process holds the lock at that moment.
 
 ## Mail is rows, and bodies are rows apart
 
-`mailboxes` per account, `messages` per mailbox with IMAP's UID, flags and arrival time, and the
-message itself in `bodies`, so listing a mailbox never reads a body. A message is stored as it
+`mailboxes` per account, `messages` per mailbox with IMAP's UID, flags, arrival time and when it
+was put in that mailbox, and the message itself in `bodies`, so listing a mailbox never reads a
+body. A message is stored as it
 arrived, with mailio's Received and Authentication-Results headers in front.
 
 Mailboxes and messages are keyed by rowid, not by a prefixed ULID: nothing outside the database
 names them. What a client sees is the mailbox's name and the message's UID.
+
+## Trash empties itself
+
+Each hour mailio deletes for good what has been in an account's Trash longer than it keeps it: 30
+days by default, a domain's own, or an account's own, set in their dialogs, and 0 keeps it
+forever. The time counts from when the message was put in Trash, which a move records and its
+arrival time does not; messages there before mailio recorded it count from the upgrade. A client
+with Trash open hears of each one going, as it would of an expunge by another client.
 
 ## A UID is given inside the insert's transaction
 

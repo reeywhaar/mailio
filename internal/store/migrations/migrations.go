@@ -41,6 +41,7 @@ var all = []Migration{
 	catchAll,
 	accountRelay,
 	aliases,
+	trashDays,
 }
 
 func exec(sqlText string) func(context.Context, *sql.Tx) error {

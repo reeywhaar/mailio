@@ -14,6 +14,11 @@ import {
   Facts,
   LimitField,
   Section,
+  TrashField,
+  daysText,
+  daysTyped,
+  toDays,
+  trashKept,
   dmarcLabels,
   limitTyped,
   mbText,
@@ -41,6 +46,7 @@ export function Defaults({ settings }: { settings: Settings }) {
           ["DMARC", dmarcLabels[settings.dmarc]],
           ["SPF", spfLabels[settings.spf]],
           ["Largest message", megabytes(settings.max_message_bytes)],
+          ["Trash kept", trashKept(settings.trash_days)],
         ]}
       />
       <DefaultsDialog
@@ -65,12 +71,18 @@ function DefaultsDialog({
   const [draft, setDraft] = useDraft(open, () => ({
     ...settings,
     limit: mbText(settings.max_message_bytes),
+    trash: daysText(settings.trash_days),
   }));
+  const trashDays = toDays(draft.trash);
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    const { limit, ...set } = draft;
+    const { limit, trash, ...set } = draft;
     const ok = await save(() =>
-      setSettings({ ...set, max_message_bytes: toBytes(limit) }),
+      setSettings({
+        ...set,
+        max_message_bytes: toBytes(limit),
+        trash_days: toDays(trash) ?? settings.trash_days,
+      }),
     );
     if (ok) onClose();
   };
@@ -86,7 +98,12 @@ function DefaultsDialog({
             type="submit"
             form="defaults"
             variant="solid"
-            disabled={busy || !limitTyped(draft.limit)}
+            disabled={
+              busy ||
+              !limitTyped(draft.limit) ||
+              trashDays === null ||
+              !daysTyped(draft.trash)
+            }
           >
             Save
           </Button>
@@ -141,6 +158,11 @@ function DefaultsDialog({
           value={draft.limit}
           onChange={(limit) => setDraft({ ...draft, limit })}
           hint="For mail received, sent and stored. A domain or an account can have its own."
+        />
+        <TrashField
+          value={draft.trash}
+          onChange={(trash) => setDraft({ ...draft, trash })}
+          hint="Then deleted for good. 0: forever. A domain or an account can have its own."
         />
         {error ? <p className="text-sm text-accent">{error}</p> : null}
       </form>

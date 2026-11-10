@@ -174,17 +174,19 @@ func web(log *slog.Logger) fs.FS {
 	return nil
 }
 
-// sweep collects lapsed sessions and admin links, which are already unusable.
+// sweep collects lapsed sessions and admin links, which are already unusable, and empties each
+// account's Trash of what it has kept long enough.
 func sweep(ctx context.Context, st *store.Store, log *slog.Logger) {
 	t := time.NewTicker(time.Hour)
 	defer t.Stop()
 	for {
 		sessions, err1 := st.SweepSessions(ctx)
 		links, err2 := st.SweepAdminLinks(ctx)
-		if err := errors.Join(err1, err2); err != nil && ctx.Err() == nil {
+		trash, err3 := st.EmptyTrash(ctx)
+		if err := errors.Join(err1, err2, err3); err != nil && ctx.Err() == nil {
 			log.Error("sweep failed", "error", err)
-		} else if sessions+links > 0 {
-			log.Info("swept", "sessions", sessions, "admin_links", links)
+		} else if sessions+links > 0 || trash > 0 {
+			log.Info("swept", "sessions", sessions, "admin_links", links, "trash", trash)
 		}
 		select {
 		case <-ctx.Done():

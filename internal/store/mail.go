@@ -64,9 +64,11 @@ type Message struct {
 }
 
 // MailListener hears about every message added to a mailbox, after it is committed and in UID
-// order per mailbox. IMAP is the listener: it tells open sessions about new mail.
+// order per mailbox, and about messages the store deletes for good itself, which a session did
+// not. IMAP is the listener: it tells open sessions.
 type MailListener interface {
 	Appended(mailboxID int64, uid uint32)
+	Expunged(mailboxID int64, uids []uint32)
 }
 
 // SetMailListener installs the listener. Set once, before anything is delivered.
@@ -349,7 +351,7 @@ func (s *Store) Deliver(ctx context.Context, raw []byte, at time.Time, to []Deli
 	}
 	var done []added
 	for _, d := range to {
-		uid, err := insertMessage(ctx, tx, d.MailboxID, raw, d.Flags, at)
+		uid, err := insertMessage(ctx, tx, d.MailboxID, raw, d.Flags, at, s.Now())
 		if err != nil {
 			return err
 		}
@@ -378,7 +380,7 @@ func (s *Store) Append(ctx context.Context, mailboxID int64, raw []byte, flags [
 		return 0, fmt.Errorf("append: %w", err)
 	}
 	defer tx.Rollback()
-	uid, err := insertMessage(ctx, tx, mailboxID, raw, flags, at)
+	uid, err := insertMessage(ctx, tx, mailboxID, raw, flags, at, s.Now())
 	if err != nil {
 		return 0, err
 	}
@@ -416,7 +418,7 @@ func (s *Store) Copy(ctx context.Context, from int64, uids []uint32, to int64) (
 		if err != nil {
 			return nil, nil, fmt.Errorf("copy: %w", err)
 		}
-		n, err := insertMessage(ctx, tx, to, raw, splitFlags(flags), fromUnix(received))
+		n, err := insertMessage(ctx, tx, to, raw, splitFlags(flags), fromUnix(received), s.Now())
 		if err != nil {
 			return nil, nil, err
 		}
@@ -439,7 +441,9 @@ func (s *Store) appended(mailboxID int64, uid uint32) {
 	}
 }
 
-func insertMessage(ctx context.Context, tx *sql.Tx, mailboxID int64, raw []byte, flags []string, at time.Time) (uint32, error) {
+// insertMessage adds one message to a mailbox: at is when it arrived, which a copy keeps, and
+// added when it entered this mailbox, which Trash counts from.
+func insertMessage(ctx context.Context, tx *sql.Tx, mailboxID int64, raw []byte, flags []string, at, added time.Time) (uint32, error) {
 	var uid uint32
 	err := tx.QueryRowContext(ctx,
 		`UPDATE mailboxes SET uid_next = uid_next + 1 WHERE id = ? RETURNING uid_next - 1`, mailboxID).Scan(&uid)
@@ -450,8 +454,8 @@ func insertMessage(ctx context.Context, tx *sql.Tx, mailboxID int64, raw []byte,
 		return 0, fmt.Errorf("insert message: %w", err)
 	}
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO messages (mailbox_id, uid, flags, received_at, size) VALUES (?, ?, ?, ?, ?)`,
-		mailboxID, uid, joinFlags(NormalizeFlags(flags)), unix(at), len(raw))
+		`INSERT INTO messages (mailbox_id, uid, flags, received_at, size, added_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		mailboxID, uid, joinFlags(NormalizeFlags(flags)), unix(at), len(raw), unix(added))
 	if err != nil {
 		return 0, fmt.Errorf("insert message: %w", err)
 	}
@@ -489,6 +493,56 @@ func (s *Store) Expunge(ctx context.Context, mailboxID int64, uids []uint32) err
 	}
 	s.changed()
 	return nil
+}
+
+// trashDays is how long an account's Trash keeps a message, in a query joining the account as u
+// and its domain as d: its own, its domain's, or the default. 0 keeps it forever.
+const trashDays = `coalesce(u.trash_days, d.trash_days, (SELECT trash_days FROM settings WHERE id = 1))`
+
+// EmptyTrash deletes for good what has been in an account's Trash longer than the account keeps
+// it, and tells the listener. It answers how many went.
+func (s *Store) EmptyTrash(ctx context.Context) (int, error) {
+	rows, err := s.reader.QueryContext(ctx,
+		`SELECT m.mailbox_id, m.uid FROM messages m
+		   JOIN mailboxes b ON b.id = m.mailbox_id
+		   JOIN accounts u ON u.id = b.account_id
+		   JOIN domains d ON d.id = u.domain_id
+		  WHERE b.special_use = '\Trash' AND `+trashDays+` > 0 AND m.added_at <= ? - `+trashDays+` * 86400
+		  ORDER BY m.mailbox_id, m.uid`, unix(s.Now()))
+	if err != nil {
+		return 0, fmt.Errorf("empty trash: %w", err)
+	}
+	stale := map[int64][]uint32{}
+	var boxes []int64
+	for rows.Next() {
+		var (
+			box int64
+			uid uint32
+		)
+		if err := rows.Scan(&box, &uid); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("empty trash: %w", err)
+		}
+		if stale[box] == nil {
+			boxes = append(boxes, box)
+		}
+		stale[box] = append(stale[box], uid)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("empty trash: %w", err)
+	}
+	n := 0
+	for _, box := range boxes {
+		if err := s.Expunge(ctx, box, stale[box]); err != nil {
+			return n, err
+		}
+		n += len(stale[box])
+		if s.listener != nil {
+			s.listener.Expunged(box, stale[box])
+		}
+	}
+	return n, nil
 }
 
 func uidsJSON(uids []uint32) string {
@@ -562,7 +616,7 @@ func (s *Store) Import(ctx context.Context, mailboxID int64, msgs []Imported) er
 	defer tx.Rollback()
 	var uids []uint32
 	for _, m := range msgs {
-		uid, err := insertMessage(ctx, tx, mailboxID, m.Raw, m.Flags, m.At)
+		uid, err := insertMessage(ctx, tx, mailboxID, m.Raw, m.Flags, m.At, s.Now())
 		if err != nil {
 			return err
 		}

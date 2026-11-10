@@ -459,3 +459,39 @@ func TestAMessageLargerThanTheAddressTakesIsRefused(t *testing.T) {
 		t.Errorf("IMAP says %v", caps)
 	}
 }
+
+// Emptying a Trash tells a client that has it open.
+func TestAClientWatchingTrashHearsItEmptied(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	trash, err := r.st.SpecialMailbox(ctx, r.account.ID, `\Trash`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.st.Deliver(ctx, []byte(letter), time.Now(), []store.Delivery{{MailboxID: trash.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var expunged []uint32
+	c := r.client(&imapclient.UnilateralDataHandler{Expunge: func(seq uint32) {
+		mu.Lock()
+		expunged = append(expunged, seq)
+		mu.Unlock()
+	}})
+	if _, err := c.Select("Trash", nil).Wait(); err != nil {
+		t.Fatal(err)
+	}
+
+	r.st.SetClock(func() time.Time { return time.Now().AddDate(0, 0, 31) })
+	if n, err := r.st.EmptyTrash(ctx); err != nil || n != 1 {
+		t.Fatalf("emptied %d: %v", n, err)
+	}
+	if err := c.Noop().Wait(); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(expunged) != 1 || expunged[0] != 1 {
+		t.Errorf("the client heard %v", expunged)
+	}
+}

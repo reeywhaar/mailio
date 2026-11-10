@@ -47,6 +47,8 @@ export type Settings = {
   relay_id: string | null;
   /** The largest message an account takes, sends or stores, in bytes. */
   max_message_bytes: number;
+  /** How long Trash keeps a message, in days; 0 keeps it forever. */
+  trash_days: number;
 };
 
 /** A domain's relay that is not one of the list: straight to each recipient's server. */
@@ -65,13 +67,18 @@ export type Domain = {
   relay: string | null;
   /** Its own largest message in bytes, or null for the default's. */
   max_message_bytes: number | null;
+  /** Its accounts' Trash days, 0 forever, or null for the default's. */
+  trash_days: number | null;
   records: DNSRecord[];
   /** When its records were last checked; null for not yet. */
   dns_checked_at: number | null;
   created_at: number;
 };
 
-/** A domain's settings as its dialog saves them: "" or 0 returns one to the default. */
+/**
+ * A domain's settings as its dialog saves them: "", 0, or for trash days null, returns one to the
+ * default.
+ */
 export type DomainChange = {
   unknown?: Unknown | "";
   unknown_account_id?: string | null;
@@ -79,6 +86,7 @@ export type DomainChange = {
   spf?: SPF | "";
   relay?: string;
   max_message_bytes?: number;
+  trash_days?: number | null;
 };
 
 export type MailStatus = {
@@ -160,17 +168,23 @@ export type Account = {
   max_message_bytes: number | null;
   /** BUILT_IN, a relay's id, or null for its domain's. */
   relay: string | null;
+  /** Its Trash days, 0 forever, or null for its domain's. */
+  trash_days: number | null;
   credentials: Credential[];
   created_at: number;
 };
 
-/** An account's settings as its dialog saves them: "" or 0 returns one to its domain's. */
+/**
+ * An account's settings as its dialog saves them: "", 0, or for trash days null, returns one to its
+ * domain's.
+ */
 export type AccountChange = {
   incoming?: Incoming;
   /** Who gets the mail when it forwards, and null otherwise. */
   forward_account_id?: string | null;
   max_message_bytes?: number;
   relay?: string;
+  trash_days?: number | null;
 };
 
 /** Somebody who signs in here: a name, not an address, and never an account. */

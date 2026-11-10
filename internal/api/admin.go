@@ -30,6 +30,7 @@ func accountJSON(u *store.Account, passwords []store.Credential) map[string]any 
 		"forward_account_id": forwardTo,
 		"max_message_bytes":  ownLimit(u.MaxMessageBytes),
 		"relay":              relayChoice(u.Via, u.RelayID),
+		"trash_days":         u.TrashDays,
 		"credentials":        list,
 		"created_at":         u.CreatedAt.Unix(),
 	}
@@ -100,6 +101,7 @@ func (s *Server) domainJSON(d *store.Domain, set *store.Settings) map[string]any
 		"spf":                orNull(string(d.SPF)),
 		"relay":              relayChoice(d.Via, d.RelayID),
 		"max_message_bytes":  ownLimit(d.MaxMessageBytes),
+		"trash_days":         d.TrashDays,
 		"records":            records,
 		"dns_checked_at":     checkedAt,
 		"created_at":         d.CreatedAt.Unix(),
@@ -229,8 +231,8 @@ func (s *Server) createDomain(w http.ResponseWriter, r *http.Request) {
 	s.writeDomain(w, r, http.StatusCreated, d.ID)
 }
 
-// updateDomain sets a domain's own unknown addresses, DMARC, SPF, relay and largest message, ""
-// or 0 returning one to the default. A field left out is left alone.
+// updateDomain sets a domain's own catch-all, DMARC, SPF, relay, largest message and trash days,
+// "", 0 or, for trash days, null returning one to the default. A field left out is left alone.
 func (s *Server) updateDomain(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, ids.Domain)
 	if !ok {
@@ -243,11 +245,19 @@ func (s *Server) updateDomain(w http.ResponseWriter, r *http.Request) {
 		SPF              *store.SPF     `json:"spf"`
 		Relay            *string        `json:"relay"`
 		MaxMessageBytes  *int64         `json:"max_message_bytes"`
+		TrashDays        optional[int]  `json:"trash_days"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
 	ctx := r.Context()
+	if req.TrashDays.Set {
+		if err := s.st.SetDomainTrashDays(ctx, id, req.TrashDays.Value); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		s.log.Info("domain changed", "domain", id, "trash_days", req.TrashDays.Value, "by", adminOf(r).ID)
+	}
 	// First: the one most likely refused, for a number out of range, which then changes nothing.
 	if req.MaxMessageBytes != nil {
 		if err := s.st.SetDomainMessageLimit(ctx, id, *req.MaxMessageBytes); err != nil {
@@ -378,8 +388,8 @@ func (s *Server) createAccount(w http.ResponseWriter, r *http.Request) {
 }
 
 // updateAccount sets what mail to the account does, kept, refused, or forwarded to another
-// account, its own largest message, 0 returning it to its domain's, and its own relay, ""
-// returning it to its domain's. A field left out is left alone.
+// account, and its own largest message, relay and trash days, 0, "" and null returning each to its
+// domain's. A field left out is left alone.
 func (s *Server) updateAccount(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, ids.Account)
 	if !ok {
@@ -390,9 +400,17 @@ func (s *Server) updateAccount(w http.ResponseWriter, r *http.Request) {
 		ForwardAccountID *string         `json:"forward_account_id"`
 		MaxMessageBytes  *int64          `json:"max_message_bytes"`
 		Relay            *string         `json:"relay"`
+		TrashDays        optional[int]   `json:"trash_days"`
 	}
 	if !decode(w, r, &req) {
 		return
+	}
+	if req.TrashDays.Set {
+		if err := s.st.SetAccountTrashDays(r.Context(), id, req.TrashDays.Value); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		s.log.Info("account changed", "account", id, "trash_days", req.TrashDays.Value, "by", adminOf(r).ID)
 	}
 	if req.MaxMessageBytes != nil {
 		if err := s.st.SetAccountMessageLimit(r.Context(), id, *req.MaxMessageBytes); err != nil {

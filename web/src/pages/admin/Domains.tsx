@@ -28,6 +28,11 @@ import {
   Facts,
   LimitField,
   Row,
+  TrashField,
+  daysText,
+  daysTyped,
+  toDays,
+  trashKept,
   Rows,
   Section,
   Summary,
@@ -140,6 +145,11 @@ function DomainSummary({
           ),
         },
         {
+          label: "Trash kept",
+          inherited: domain.trash_days === null,
+          value: trashKept(domain.trash_days ?? settings.trash_days),
+        },
+        {
           label: "DMARC",
           inherited: domain.dmarc === null,
           value: domain.dmarc ?? settings.dmarc,
@@ -222,8 +232,9 @@ type Draft = {
   dmarc: DMARC | "";
   spf: SPF | "";
   relay: string;
-  /** The largest message in MB, as typed. */
+  /** The largest message in MB, and Trash days, as typed. */
   limit: string;
+  trash: string;
 };
 
 function DomainDialog({
@@ -254,6 +265,7 @@ function DomainDialog({
     spf: domain.spf ?? "",
     relay: domain.relay ?? "",
     limit: mbText(domain.max_message_bytes),
+    trash: daysText(domain.trash_days),
   }));
 
   const set = (change: Partial<Draft>) => setDraft({ ...draft, ...change });
@@ -267,6 +279,7 @@ function DomainDialog({
         spf: draft.spf,
         relay: draft.relay,
         max_message_bytes: toBytes(draft.limit),
+        trash_days: toDays(draft.trash),
       }),
     );
     if (ok) onClose();
@@ -299,7 +312,8 @@ function DomainDialog({
             disabled={
               busy ||
               (toAccount(draft.unknown) && !draft.to) ||
-              !limitTyped(draft.limit)
+              !limitTyped(draft.limit) ||
+              !daysTyped(draft.trash)
             }
           >
             Save
@@ -368,6 +382,11 @@ function DomainDialog({
             from: "the default",
             bytes: settings.max_message_bytes,
           }}
+        />
+        <TrashField
+          value={draft.trash}
+          onChange={(trash) => set({ trash })}
+          inherited={{ from: "the default", days: settings.trash_days }}
         />
         <Field label="DMARC">
           <Select

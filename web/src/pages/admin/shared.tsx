@@ -314,26 +314,110 @@ export function LimitField({
   hint?: string;
 }) {
   return (
-    <Field
+    <UnitField
       label="Largest message"
+      unit="MB"
+      inputMode="decimal"
+      value={value}
+      onChange={onChange}
+      placeholder={inherited ? mbText(inherited.bytes) : undefined}
       hint={
         inherited
           ? `Empty: ${inherited.from}, ${megabytes(inherited.bytes)}.`
           : hint
       }
       error={limitTyped(value) ? undefined : "A number of MB."}
-    >
+    />
+  );
+}
+
+/** How long Trash keeps a message, as the interface writes it: 30 days, or Forever for 0. */
+export const trashKept = (days: number) =>
+  days === 0 ? "Forever" : days === 1 ? "1 day" : `${days} days`;
+
+/** Trash days as their field holds them: "" for none of its own. */
+export const daysText = (days: number | null) =>
+  days === null ? "" : String(days);
+
+/**
+ * A trash field's text as days: null for empty, which follows the one above, and NaN for anything
+ * but a whole number. The server says the range.
+ */
+export function toDays(text: string) {
+  const t = text.trim();
+  if (!t) return null;
+  return /^\d+$/.test(t) ? Number(t) : NaN;
+}
+
+/** Whether a trash field holds something to send. */
+export const daysTyped = (text: string) => !Number.isNaN(toDays(text));
+
+/**
+ * How long Trash keeps a message, in days, 0 for forever. With `inherited`, empty follows it: the
+ * default for a domain, the domain's for an account.
+ */
+export function TrashField({
+  value,
+  onChange,
+  inherited,
+  hint,
+}: {
+  value: string;
+  onChange: (text: string) => void;
+  inherited?: { from: string; days: number };
+  hint?: string;
+}) {
+  return (
+    <UnitField
+      label="Trash kept"
+      unit="days"
+      inputMode="numeric"
+      value={value}
+      onChange={onChange}
+      placeholder={inherited ? String(inherited.days) : undefined}
+      hint={
+        inherited
+          ? `Empty: ${inherited.from}, ${trashKept(inherited.days)}. 0: forever.`
+          : hint
+      }
+      error={daysTyped(value) ? undefined : "A whole number of days."}
+    />
+  );
+}
+
+/** A number beside its unit, for a field that takes one. */
+function UnitField({
+  label,
+  unit,
+  inputMode,
+  value,
+  onChange,
+  placeholder,
+  hint,
+  error,
+}: {
+  label: string;
+  unit: string;
+  inputMode: "decimal" | "numeric";
+  value: string;
+  onChange: (text: string) => void;
+  placeholder?: string;
+  hint?: string;
+  error?: string;
+}) {
+  return (
+    <Field label={label} hint={hint} error={error}>
       <span className="flex items-center gap-2">
         <TextField
-          inputMode="decimal"
+          inputMode={inputMode}
           autoComplete="off"
-          aria-label="Largest message"
-          placeholder={inherited ? mbText(inherited.bytes) : undefined}
+          aria-label={label}
+          placeholder={placeholder}
           className="w-28"
           value={value}
           onChange={(e) => onChange(e.target.value)}
         />
-        <span className="text-muted">MB</span>
+        <span className="text-muted">{unit}</span>
       </span>
     </Field>
   );

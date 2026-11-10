@@ -132,7 +132,7 @@ func settingsJSON(set *store.Settings) map[string]any {
 	}
 	return map[string]any{
 		"unknown": set.Unknown, "dmarc": set.DMARC, "spf": set.SPF, "relay_id": orNull(set.RelayID),
-		"max_message_bytes": set.MaxMessageBytes,
+		"max_message_bytes": set.MaxMessageBytes, "trash_days": set.TrashDays,
 	}
 }
 
@@ -146,7 +146,7 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 // putSettings writes the defaults every domain without its own follows. A null relay is built
-// in. A largest message left out stays as it is.
+// in. A largest message or trash days left out stay as they are.
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Unknown         store.Unknown `json:"unknown"`
@@ -154,6 +154,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		SPF             store.SPF     `json:"spf"`
 		RelayID         *string       `json:"relay_id"`
 		MaxMessageBytes *int64        `json:"max_message_bytes"`
+		TrashDays       *int          `json:"trash_days"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -162,22 +163,24 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	if req.RelayID != nil {
 		set.RelayID = *req.RelayID
 	}
+	cur, err := s.st.Settings(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	set.MaxMessageBytes, set.TrashDays = cur.MaxMessageBytes, cur.TrashDays
 	if req.MaxMessageBytes != nil {
 		set.MaxMessageBytes = *req.MaxMessageBytes
-	} else {
-		cur, err := s.st.Settings(r.Context())
-		if err != nil {
-			s.fail(w, r, err)
-			return
-		}
-		set.MaxMessageBytes = cur.MaxMessageBytes
+	}
+	if req.TrashDays != nil {
+		set.TrashDays = *req.TrashDays
 	}
 	if err := s.st.SetSettings(r.Context(), set); err != nil {
 		s.fail(w, r, err)
 		return
 	}
 	s.log.Info("settings changed", "unknown", set.Unknown, "dmarc", set.DMARC, "spf", set.SPF,
-		"relay", set.RelayID, "max_message_bytes", set.MaxMessageBytes, "by", adminOf(r).ID)
+		"relay", set.RelayID, "max_message_bytes", set.MaxMessageBytes, "trash_days", set.TrashDays, "by", adminOf(r).ID)
 	s.changed()
 	s.getSettings(w, r)
 }

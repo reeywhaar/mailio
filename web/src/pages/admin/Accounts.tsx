@@ -29,6 +29,11 @@ import {
   Facts,
   LimitField,
   Summary,
+  TrashField,
+  daysText,
+  daysTyped,
+  toDays,
+  trashKept,
   Toward,
   accountOption,
   addressOf,
@@ -169,6 +174,9 @@ function AccountSummary({
               },
             ]
           : []),
+        ...(account.trash_days !== null
+          ? [{ label: "Trash kept", value: trashKept(account.trash_days) }]
+          : []),
         { label: "Credentials", value: account.credentials.length },
       ]}
     />
@@ -302,13 +310,14 @@ function AddAccountDialog({
 
 /**
  * An account's settings as its dialog holds them until Save: relay "" is its domain's, and limit
- * is in MB, as typed.
+ * in MB and trash in days are as typed.
  */
 type Draft = {
   incoming: Incoming;
   forwardTo: string;
   relay: string;
   limit: string;
+  trash: string;
 };
 
 /** An account: what its mail does and its largest message, held until Save, and its credentials. */
@@ -340,6 +349,7 @@ function AccountDialog({
     forwardTo: account.forward_account_id ?? others.find(keepsMail)?.id ?? "",
     relay: account.relay ?? "",
     limit: mbText(account.max_message_bytes),
+    trash: daysText(account.trash_days),
   }));
   const blocked = senders.length > 0 && draft.incoming !== "keep";
   // The credential being added (null) or given a new password; undefined is no dialog.
@@ -356,6 +366,7 @@ function AccountDialog({
           draft.incoming === "forward" ? draft.forwardTo : null,
         max_message_bytes: toBytes(draft.limit),
         relay: draft.relay,
+        trash_days: toDays(draft.trash),
       }),
     );
     if (ok) onClose();
@@ -389,7 +400,8 @@ function AccountDialog({
               busy ||
               blocked ||
               (draft.incoming === "forward" && !draft.forwardTo) ||
-              !limitTyped(draft.limit)
+              !limitTyped(draft.limit) ||
+              !daysTyped(draft.trash)
             }
           >
             Save
@@ -463,6 +475,14 @@ function AccountDialog({
           inherited={{
             from: "the domain's",
             bytes: domain.max_message_bytes ?? settings.max_message_bytes,
+          }}
+        />
+        <TrashField
+          value={draft.trash}
+          onChange={(trash) => setDraft({ ...draft, trash })}
+          inherited={{
+            from: "the domain's",
+            days: domain.trash_days ?? settings.trash_days,
           }}
         />
         {error ? <p className="text-sm text-accent">{error}</p> : null}

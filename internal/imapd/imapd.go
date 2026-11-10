@@ -80,6 +80,35 @@ func (s *Server) Appended(mailboxID int64, uid uint32) {
 	mb.tracker.QueueNumMessages(uint32(len(mb.uids)))
 }
 
+// Expunged is the store telling us it deleted messages for good itself, emptying a Trash.
+func (s *Server) Expunged(mailboxID int64, uids []uint32) {
+	s.mu.Lock()
+	mb := s.open[mailboxID]
+	s.mu.Unlock()
+	if mb == nil {
+		return
+	}
+	mb.mu.Lock()
+	defer mb.mu.Unlock()
+	mb.remove(uids)
+}
+
+// remove takes messages out of the list and queues the EXPUNGE every watching session is owed.
+// The caller holds mb.mu. A UID already gone is skipped, so hearing of one twice is harmless.
+func (mb *mailbox) remove(uids []uint32) {
+	gone := make(map[imap.UID]bool, len(uids))
+	for _, u := range uids {
+		gone[imap.UID(u)] = true
+	}
+	// From the end, so each sequence number is still right when it is sent.
+	for i := len(mb.uids) - 1; i >= 0; i-- {
+		if gone[mb.uids[i]] {
+			mb.tracker.QueueExpunge(uint32(i) + 1)
+			mb.uids = append(mb.uids[:i], mb.uids[i+1:]...)
+		}
+	}
+}
+
 // mailboxFor opens a mailbox's list, loading it on first use. Holding s.mu across the load is
 // what stops two sessions loading it twice, and an append being heard before the list exists.
 func (s *Server) mailboxFor(ctx context.Context, id int64) (*mailbox, error) {
@@ -681,17 +710,7 @@ func (s *session) expunge(uids []uint32) error {
 	if err := s.srv.st.Expunge(ctx(), sel.box.ID, uids); err != nil {
 		return err
 	}
-	gone := make(map[imap.UID]bool, len(uids))
-	for _, u := range uids {
-		gone[imap.UID(u)] = true
-	}
-	// From the end, so each sequence number is still right when it is sent.
-	for i := len(sel.mb.uids) - 1; i >= 0; i-- {
-		if gone[sel.mb.uids[i]] {
-			sel.mb.tracker.QueueExpunge(uint32(i) + 1)
-			sel.mb.uids = append(sel.mb.uids[:i], sel.mb.uids[i+1:]...)
-		}
-	}
+	sel.mb.remove(uids)
 	return nil
 }
 

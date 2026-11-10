@@ -256,10 +256,11 @@ deliver over it all the same, and mail clients warn.
 
 ## Defaults, and each domain's own
 
-The catch-all, DMARC, SPF, the relay and the largest message have a server-wide default,
-under Defaults and Sending in the admin interface, and each domain can override any of them in
-its settings, opened by a click on its row. A domain that does not follows the default, whatever
-it becomes later. The relay and the largest message can be overridden once more, by an account.
+The catch-all, DMARC, SPF, the relay, the largest message and how long Trash keeps mail have a
+server-wide default, under Defaults and Sending in the admin interface, and each domain can
+override any of them in its settings, opened by a click on its row. A domain that does not
+follows the default, whatever it becomes later. The relay, the largest message and Trash can be
+overridden once more, by an account.
 
 | | default | a domain's own |
 | --- | --- | --- |
@@ -268,6 +269,7 @@ it becomes later. The relay and the largest message can be overridden once more,
 | SPF ending | `~all` | `-all`, `~all` or `?all` |
 | relay | built-in, or one of the relays | built-in, or one of the relays, an account's own too |
 | largest message | 50 MB | up to 100 MB, an account's own too; see [addresses.md](addresses.md) |
+| Trash kept | 30 days | days, or 0 for forever, an account's own too; see [storage.md](storage.md) |
 
 ## DNS records
 

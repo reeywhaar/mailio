@@ -47,6 +47,8 @@ type Account struct {
 	// ViaRelay goes through RelayID.
 	Via     string
 	RelayID string
+	// TrashDays is how long its Trash keeps a message, 0 forever, or nil to follow its domain's.
+	TrashDays *int
 	// Alias is only an address: its mail always goes to ForwardAccountID, which signs in for it,
 	// holds its mail and sends as it.
 	Alias bool
@@ -74,7 +76,7 @@ func (u *Account) Address() string { return u.Local + "@" + u.Domain }
 const accountColumns = `u.id, u.local_part, d.name, u.domain_id, u.created_at, u.incoming, coalesce(u.forward_account_id, ''),
 	coalesce(u.max_message_bytes, 0),
 	coalesce(u.max_message_bytes, d.max_message_bytes, (SELECT max_message_bytes FROM settings WHERE id = 1)),
-	coalesce(u.send_via, ''), coalesce(u.relay_id, ''), u.alias`
+	coalesce(u.send_via, ''), coalesce(u.relay_id, ''), u.trash_days, u.alias`
 const accountFrom = ` FROM accounts u JOIN domains d ON d.id = u.domain_id`
 
 func scanAccount(row interface{ Scan(...any) error }) (*Account, error) {
@@ -82,7 +84,7 @@ func scanAccount(row interface{ Scan(...any) error }) (*Account, error) {
 		u       Account
 		created int64
 	)
-	if err := row.Scan(&u.ID, &u.Local, &u.Domain, &u.DomainID, &created, &u.Incoming, &u.ForwardAccountID, &u.MaxMessageBytes, &u.MessageLimit, &u.Via, &u.RelayID, &u.Alias); err != nil {
+	if err := row.Scan(&u.ID, &u.Local, &u.Domain, &u.DomainID, &created, &u.Incoming, &u.ForwardAccountID, &u.MaxMessageBytes, &u.MessageLimit, &u.Via, &u.RelayID, &u.TrashDays, &u.Alias); err != nil {
 		return nil, err
 	}
 	u.CreatedAt = fromUnix(created)
@@ -391,6 +393,26 @@ func (s *Store) SetAccountMessageLimit(ctx context.Context, id string, n int64) 
 		`UPDATE accounts SET max_message_bytes = ? WHERE id = ? AND max_message_bytes IS NOT ?`, v, id, v)
 	if err != nil {
 		return fmt.Errorf("set largest message: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		s.changed()
+		return nil
+	}
+	_, err = s.AccountByID(ctx, id)
+	return err
+}
+
+// SetAccountTrashDays sets how long an account's Trash keeps a message, 0 forever, or with nil
+// returns it to its domain's.
+func (s *Store) SetAccountTrashDays(ctx context.Context, id string, days *int) error {
+	v, err := trashValue(days)
+	if err != nil {
+		return err
+	}
+	res, err := s.writer.ExecContext(ctx,
+		`UPDATE accounts SET trash_days = ? WHERE id = ? AND trash_days IS NOT ?`, v, id, v)
+	if err != nil {
+		return fmt.Errorf("set trash days: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
 		s.changed()

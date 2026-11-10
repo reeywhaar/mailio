@@ -582,6 +582,36 @@ func TestAnAliasIsMadeOfAnAccountAndHasNoPassword(t *testing.T) {
 	}
 }
 
+func TestTrashDaysAreTheDefaultOrADomainsOrAnAccountsOwn(t *testing.T) {
+	h := signedIn(t)
+	if _, set := h.do("GET", "/api/settings", nil); set["trash_days"] != float64(30) {
+		t.Errorf("the default: %v", set["trash_days"])
+	}
+	_, set := h.do("PUT", "/api/settings", map[string]any{"unknown": "reject", "dmarc": "reject", "spf": "~all", "trash_days": 14})
+	if set["trash_days"] != float64(14) {
+		t.Errorf("set: %v", set["trash_days"])
+	}
+	_, d := h.do("POST", "/api/domains", map[string]any{"name": "example.org"})
+	id := d["id"].(string)
+	// 0 is forever, its own; null goes back to the default.
+	if code, d := h.do("PATCH", "/api/domains/"+id, map[string]any{"trash_days": 0}); code != http.StatusOK || d["trash_days"] != float64(0) {
+		t.Errorf("forever: %d %v", code, d["trash_days"])
+	}
+	if code, d := h.do("PATCH", "/api/domains/"+id, map[string]any{"dmarc": "none"}); code != http.StatusOK || d["trash_days"] != float64(0) {
+		t.Errorf("left out: %d %v", code, d["trash_days"])
+	}
+	if code, d := h.do("PATCH", "/api/domains/"+id, map[string]any{"trash_days": nil}); code != http.StatusOK || d["trash_days"] != nil {
+		t.Errorf("back to the default: %d %v", code, d["trash_days"])
+	}
+	_, a := h.do("POST", "/api/accounts", map[string]any{"address": "inbox@example.org"})
+	if code, a := h.do("PATCH", "/api/accounts/"+a["id"].(string), map[string]any{"trash_days": 7}); code != http.StatusOK || a["trash_days"] != float64(7) {
+		t.Errorf("an account's own: %d %v", code, a["trash_days"])
+	}
+	if code, _ := h.do("PATCH", "/api/accounts/"+a["id"].(string), map[string]any{"trash_days": -1}); code != http.StatusBadRequest {
+		t.Errorf("-1: %d", code)
+	}
+}
+
 // lookup is DNS as a map, for the checker.
 type lookup map[string][]string
 
