@@ -119,7 +119,7 @@ func New(cfg *config.Config, log *slog.Logger, st *store.Store, mail Mail, dns D
 	s.mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusNotFound, CodeNotFound, "There is no such route.")
 	})
-	s.mux.Handle("/", bundle(web))
+	s.mux.Handle("/", bundle(web, s.cfg.MailHost))
 	return s
 }
 
