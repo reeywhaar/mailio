@@ -442,7 +442,7 @@ func (s *Store) appended(mailboxID int64, uid uint32) {
 }
 
 // insertMessage adds one message to a mailbox: at is when it arrived, which a copy keeps, and
-// added when it entered this mailbox, which Trash counts from.
+// added when it entered this mailbox, which Trash and Junk count from.
 func insertMessage(ctx context.Context, tx *sql.Tx, mailboxID int64, raw []byte, flags []string, at, added time.Time) (uint32, error) {
 	var uid uint32
 	err := tx.QueryRowContext(ctx,
@@ -495,22 +495,29 @@ func (s *Store) Expunge(ctx context.Context, mailboxID int64, uids []uint32) err
 	return nil
 }
 
-// trashDays is how long an account's Trash keeps a message, in a query joining the account as u
-// and its domain as d: its own, its domain's, or the default. 0 keeps it forever.
-const trashDays = `coalesce(u.trash_days, d.trash_days, (SELECT trash_days FROM settings WHERE id = 1))`
+// EmptyTrashAndJunk deletes for good what has been in an account's Trash or Junk longer than it
+// keeps it there: its own days, its domain's, or the default; 0 keeps it forever. It tells the
+// listener, and answers how many went from each.
+func (s *Store) EmptyTrashAndJunk(ctx context.Context) (trash, junk int, err error) {
+	if trash, err = s.empty(ctx, Trash); err != nil {
+		return trash, 0, err
+	}
+	junk, err = s.empty(ctx, Junk)
+	return trash, junk, err
+}
 
-// EmptyTrash deletes for good what has been in an account's Trash longer than the account keeps
-// it, and tells the listener. It answers how many went.
-func (s *Store) EmptyTrash(ctx context.Context) (int, error) {
+func (s *Store) empty(ctx context.Context, k Kept) (int, error) {
+	// k.column is one of two constants, never input.
+	days := `coalesce(u.` + k.column + `, d.` + k.column + `, (SELECT ` + k.column + ` FROM settings WHERE id = 1))`
 	rows, err := s.reader.QueryContext(ctx,
 		`SELECT m.mailbox_id, m.uid FROM messages m
 		   JOIN mailboxes b ON b.id = m.mailbox_id
 		   JOIN accounts u ON u.id = b.account_id
 		   JOIN domains d ON d.id = u.domain_id
-		  WHERE b.special_use = '\Trash' AND `+trashDays+` > 0 AND m.added_at <= ? - `+trashDays+` * 86400
-		  ORDER BY m.mailbox_id, m.uid`, unix(s.Now()))
+		  WHERE b.special_use = ? AND `+days+` > 0 AND m.added_at <= ? - `+days+` * 86400
+		  ORDER BY m.mailbox_id, m.uid`, k.SpecialUse, unix(s.Now()))
 	if err != nil {
-		return 0, fmt.Errorf("empty trash: %w", err)
+		return 0, fmt.Errorf("empty %s: %w", k.Name, err)
 	}
 	stale := map[int64][]uint32{}
 	var boxes []int64
@@ -521,7 +528,7 @@ func (s *Store) EmptyTrash(ctx context.Context) (int, error) {
 		)
 		if err := rows.Scan(&box, &uid); err != nil {
 			rows.Close()
-			return 0, fmt.Errorf("empty trash: %w", err)
+			return 0, fmt.Errorf("empty %s: %w", k.Name, err)
 		}
 		if stale[box] == nil {
 			boxes = append(boxes, box)
@@ -530,7 +537,7 @@ func (s *Store) EmptyTrash(ctx context.Context) (int, error) {
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("empty trash: %w", err)
+		return 0, fmt.Errorf("empty %s: %w", k.Name, err)
 	}
 	n := 0
 	for _, box := range boxes {

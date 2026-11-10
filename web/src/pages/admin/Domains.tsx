@@ -28,11 +28,11 @@ import {
   Facts,
   LimitField,
   Row,
-  TrashField,
+  KeptField,
   daysText,
   daysTyped,
   toDays,
-  trashKept,
+  daysKept,
   Rows,
   Section,
   Summary,
@@ -149,7 +149,12 @@ function DomainSummary({
         {
           label: "Trash kept",
           inherited: domain.trash_days === null,
-          value: trashKept(domain.trash_days ?? settings.trash_days),
+          value: daysKept(domain.trash_days ?? settings.trash_days),
+        },
+        {
+          label: "Junk kept",
+          inherited: domain.junk_days === null,
+          value: daysKept(domain.junk_days ?? settings.junk_days),
         },
         {
           label: "DMARC",
@@ -234,9 +239,10 @@ type Draft = {
   dmarc: DMARC | "";
   spf: SPF | "";
   relay: string;
-  /** The largest message in MB, and Trash days, as typed. */
+  /** The largest message in MB, and Trash and Junk days, as typed. */
   limit: string;
   trash: string;
+  junk: string;
 };
 
 function DomainDialog({
@@ -268,6 +274,7 @@ function DomainDialog({
     relay: domain.relay ?? "",
     limit: mbText(domain.max_message_bytes),
     trash: daysText(domain.trash_days),
+    junk: daysText(domain.junk_days),
   }));
 
   const set = (change: Partial<Draft>) => setDraft({ ...draft, ...change });
@@ -282,6 +289,7 @@ function DomainDialog({
         relay: draft.relay,
         max_message_bytes: toBytes(draft.limit),
         trash_days: toDays(draft.trash),
+        junk_days: toDays(draft.junk),
       }),
     );
     if (ok) onClose();
@@ -315,7 +323,8 @@ function DomainDialog({
               busy ||
               (toAccount(draft.unknown) && !draft.to) ||
               !limitTyped(draft.limit) ||
-              !daysTyped(draft.trash)
+              !daysTyped(draft.trash) ||
+              !daysTyped(draft.junk)
             }
           >
             Save
@@ -381,10 +390,17 @@ function DomainDialog({
             bytes: settings.max_message_bytes,
           }}
         />
-        <TrashField
+        <KeptField
+          box="Trash"
           value={draft.trash}
           onChange={(trash) => set({ trash })}
           inherited={{ from: "the default", days: settings.trash_days }}
+        />
+        <KeptField
+          box="Junk"
+          value={draft.junk}
+          onChange={(junk) => set({ junk })}
+          inherited={{ from: "the default", days: settings.junk_days }}
         />
         <Field label="DMARC" hint={dmarcHint}>
           <Select

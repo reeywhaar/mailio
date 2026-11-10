@@ -56,9 +56,10 @@ type Domain struct {
 	RelayID string
 	// MaxMessageBytes is the domain's own largest message, or 0 to follow the default.
 	MaxMessageBytes int64
-	// TrashDays is how long its accounts' Trash keeps a message, 0 forever, or nil to follow the
-	// default.
+	// TrashDays and JunkDays are how long its accounts' Trash and Junk keep a message, 0 forever,
+	// or nil to follow the default.
 	TrashDays *int
+	JunkDays  *int
 }
 
 // UnknownFor is what the domain does with mail for addresses nobody has: its own, or the
@@ -91,14 +92,14 @@ func (d *Domain) Policies(set *Settings) (DMARC, SPF) {
 }
 
 const domainColumns = `id, name, unknown, coalesce(unknown_account_id, ''), unknown_own, created_at, dkim_selector, dkim_key,
-	coalesce(dmarc, ''), coalesce(spf, ''), coalesce(send_via, ''), coalesce(relay_id, ''), coalesce(max_message_bytes, 0), trash_days`
+	coalesce(dmarc, ''), coalesce(spf, ''), coalesce(send_via, ''), coalesce(relay_id, ''), coalesce(max_message_bytes, 0), trash_days, junk_days`
 
 func scanDomain(row interface{ Scan(...any) error }) (*Domain, error) {
 	var (
 		d       Domain
 		created int64
 	)
-	if err := row.Scan(&d.ID, &d.Name, &d.Unknown, &d.UnknownAccountID, &d.UnknownOwn, &created, &d.DKIMSelector, &d.DKIMKey, &d.DMARC, &d.SPF, &d.Via, &d.RelayID, &d.MaxMessageBytes, &d.TrashDays); err != nil {
+	if err := row.Scan(&d.ID, &d.Name, &d.Unknown, &d.UnknownAccountID, &d.UnknownOwn, &created, &d.DKIMSelector, &d.DKIMKey, &d.DMARC, &d.SPF, &d.Via, &d.RelayID, &d.MaxMessageBytes, &d.TrashDays, &d.JunkDays); err != nil {
 		return nil, err
 	}
 	d.CreatedAt = fromUnix(created)
@@ -274,22 +275,14 @@ func (s *Store) SetDomainMessageLimit(ctx context.Context, domainID string, n in
 	return s.setDomainColumn(ctx, domainID, "max_message_bytes", orNull(n))
 }
 
-// SetDomainTrashDays sets how long a domain's accounts' Trash keeps a message, 0 forever, or with
-// nil returns it to the default.
-func (s *Store) SetDomainTrashDays(ctx context.Context, domainID string, days *int) error {
-	v, err := trashValue(days)
+// SetDomainKept sets how long a domain's accounts' Trash or Junk keeps a message, 0 forever, or
+// with nil returns it to the default.
+func (s *Store) SetDomainKept(ctx context.Context, domainID string, k Kept, days *int) error {
+	v, err := k.value(days)
 	if err != nil {
 		return err
 	}
-	return s.setDomainColumn(ctx, domainID, "trash_days", v)
-}
-
-// trashValue is days as an override column holds it: null for nil, which follows the one above.
-func trashValue(days *int) (any, error) {
-	if days == nil {
-		return nil, nil
-	}
-	return *days, checkTrashDays(*days)
+	return s.setDomainColumn(ctx, domainID, k.column, v)
 }
 
 // orNull is a value as an override column holds it: null for the zero value, which follows the

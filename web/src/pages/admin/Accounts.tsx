@@ -29,11 +29,11 @@ import {
   Facts,
   LimitField,
   Summary,
-  TrashField,
+  KeptField,
   daysText,
   daysTyped,
   toDays,
-  trashKept,
+  daysKept,
   Toward,
   AccountOptions,
   addressOf,
@@ -175,7 +175,10 @@ function AccountSummary({
             ]
           : []),
         ...(account.trash_days !== null
-          ? [{ label: "Trash kept", value: trashKept(account.trash_days) }]
+          ? [{ label: "Trash kept", value: daysKept(account.trash_days) }]
+          : []),
+        ...(account.junk_days !== null
+          ? [{ label: "Junk kept", value: daysKept(account.junk_days) }]
           : []),
         { label: "Credentials", value: account.credentials.length },
       ]}
@@ -310,7 +313,7 @@ function AddAccountDialog({
 
 /**
  * An account's settings as its dialog holds them until Save: relay "" is its domain's, and limit
- * in MB and trash in days are as typed.
+ * in MB and trash and junk in days are as typed.
  */
 type Draft = {
   incoming: Incoming;
@@ -318,6 +321,7 @@ type Draft = {
   relay: string;
   limit: string;
   trash: string;
+  junk: string;
 };
 
 /** An account: what its mail does and its largest message, held until Save, and its credentials. */
@@ -350,6 +354,7 @@ function AccountDialog({
     relay: account.relay ?? "",
     limit: mbText(account.max_message_bytes),
     trash: daysText(account.trash_days),
+    junk: daysText(account.junk_days),
   }));
   const blocked = senders.length > 0 && draft.incoming !== "keep";
   // The credential being added (null) or given a new password; undefined is no dialog.
@@ -367,6 +372,7 @@ function AccountDialog({
         max_message_bytes: toBytes(draft.limit),
         relay: draft.relay,
         trash_days: toDays(draft.trash),
+        junk_days: toDays(draft.junk),
       }),
     );
     if (ok) onClose();
@@ -401,7 +407,8 @@ function AccountDialog({
               blocked ||
               (draft.incoming === "forward" && !draft.forwardTo) ||
               !limitTyped(draft.limit) ||
-              !daysTyped(draft.trash)
+              !daysTyped(draft.trash) ||
+              !daysTyped(draft.junk)
             }
           >
             Save
@@ -473,12 +480,22 @@ function AccountDialog({
             bytes: domain.max_message_bytes ?? settings.max_message_bytes,
           }}
         />
-        <TrashField
+        <KeptField
+          box="Trash"
           value={draft.trash}
           onChange={(trash) => setDraft({ ...draft, trash })}
           inherited={{
             from: "the domain's",
             days: domain.trash_days ?? settings.trash_days,
+          }}
+        />
+        <KeptField
+          box="Junk"
+          value={draft.junk}
+          onChange={(junk) => setDraft({ ...draft, junk })}
+          inherited={{
+            from: "the domain's",
+            days: domain.junk_days ?? settings.junk_days,
           }}
         />
         {error ? <p className="text-sm text-accent">{error}</p> : null}

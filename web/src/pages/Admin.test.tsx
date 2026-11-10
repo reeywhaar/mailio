@@ -32,6 +32,7 @@ const inbox: Account = {
   max_message_bytes: null,
   relay: null,
   trash_days: null,
+  junk_days: null,
   credentials: [
     {
       id: "cr_1",
@@ -63,6 +64,7 @@ const exampleOrg: Domain = {
   relay: null,
   max_message_bytes: null,
   trash_days: null,
+  junk_days: null,
   records: [
     {
       type: "MX",
@@ -94,6 +96,7 @@ const defaults: Settings = {
   relay_id: null,
   max_message_bytes: 50 * 1024 * 1024,
   trash_days: 30,
+  junk_days: 30,
 };
 
 /** Every route a page load reads, as these tests start from; each test replaces what it is about. */
@@ -153,7 +156,7 @@ test("domains, accounts and admins are rows that summarize them", async () => {
   // The signed-in admin is marked, and is not an account.
   expect(screen.getByRole("button", { name: /^misha/ })).toBeTruthy();
   expect(screen.getByText("you")).toBeTruthy();
-  expect(screen.getAllByText("default").length).toBe(6);
+  expect(screen.getAllByText("default").length).toBe(7);
 });
 
 test("a domain's dialog holds its changes and sends them in one request on Save", async () => {
@@ -201,6 +204,7 @@ test("a domain's dialog holds its changes and sends them in one request on Save"
         relay: "",
         max_message_bytes: 0,
         trash_days: null,
+        junk_days: null,
       },
     },
   ]);
@@ -464,6 +468,7 @@ test("forwarding an account's mail is held until Save", async () => {
           max_message_bytes: 0,
           relay: "",
           trash_days: null,
+          junk_days: null,
         },
       },
     ]),
@@ -501,13 +506,14 @@ test("an account's largest message is typed in MB, and empty is its domain's", a
           max_message_bytes: 10 * 1024 * 1024,
           relay: "",
           trash_days: null,
+          junk_days: null,
         },
       },
     ]),
   );
 });
 
-test("a domain's Trash days are typed, 0 keeping it forever, and empty is the default", async () => {
+test("a domain's Trash and Junk days are typed, 0 keeping them forever, and empty is the default", async () => {
   const { sent } = routes({
     "PATCH /api/domains/dm_1": () => ({
       body: { ...exampleOrg, trash_days: 0 },
@@ -516,11 +522,14 @@ test("a domain's Trash days are typed, 0 keeping it forever, and empty is the de
   mount();
   await open(/^example\.org/);
   const d = within(dialog("example.org"));
-  expect(d.getByText("Empty: the default, 30 days. 0: forever.")).toBeTruthy();
+  expect(
+    d.getAllByText("Empty: the default, 30 days. 0: forever.").length,
+  ).toBe(2);
   const field = d.getByLabelText("Trash kept");
   fireEvent.change(field, { target: { value: "a week" } });
   expect(d.getByText("A whole number of days.")).toBeTruthy();
   fireEvent.change(field, { target: { value: "0" } });
+  fireEvent.change(d.getByLabelText("Junk kept"), { target: { value: "3" } });
   fireEvent.click(d.getByRole("button", { name: "Save" }));
   await waitFor(() =>
     expect(writes(sent)).toEqual([
@@ -535,6 +544,7 @@ test("a domain's Trash days are typed, 0 keeping it forever, and empty is the de
           relay: "",
           max_message_bytes: 0,
           trash_days: 0,
+          junk_days: 3,
         },
       },
     ]),

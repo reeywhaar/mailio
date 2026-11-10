@@ -44,20 +44,40 @@ type Settings struct {
 	// MaxMessageBytes is the largest message an account takes, sends or stores, unless its domain
 	// or the account itself says otherwise.
 	MaxMessageBytes int64
-	// TrashDays is how long Trash keeps a message before deleting it for good, unless a domain or
-	// an account says otherwise; 0 keeps it forever.
+	// TrashDays and JunkDays are how long Trash and Junk keep a message before deleting it for
+	// good, unless a domain or an account says otherwise; 0 keeps it forever.
 	TrashDays int
+	JunkDays  int
 }
 
-// maxTrashDays is ten years: longer is forever, which is 0.
-const maxTrashDays = 3650
+// Kept is a mailbox that empties itself of what it has kept long enough, and the column, in
+// settings, domains and accounts alike, saying how long that is.
+type Kept struct {
+	Name, SpecialUse, column string
+}
 
-// checkTrashDays refuses a number of days Trash cannot keep.
-func checkTrashDays(n int) error {
-	if n < 0 || n > maxTrashDays {
-		return Invalid("Trash keeps a message from 1 to %d days, or 0 for forever.", maxTrashDays)
+var (
+	Trash = Kept{"Trash", `\Trash`, "trash_days"}
+	Junk  = Kept{"Junk", `\Junk`, "junk_days"}
+)
+
+// maxKeptDays is ten years: longer is forever, which is 0.
+const maxKeptDays = 3650
+
+// check refuses a number of days the mailbox cannot keep a message.
+func (k Kept) check(n int) error {
+	if n < 0 || n > maxKeptDays {
+		return Invalid("%s keeps a message from 1 to %d days, or 0 for forever.", k.Name, maxKeptDays)
 	}
 	return nil
+}
+
+// value is days as an override column holds them: null for nil, which follows the one above.
+func (k Kept) value(days *int) (any, error) {
+	if days == nil {
+		return nil, nil
+	}
+	return *days, k.check(*days)
 }
 
 // checkLimit refuses a largest message too small to be one or too large to hold.
@@ -72,8 +92,8 @@ func checkLimit(n int64) error {
 func (s *Store) Settings(ctx context.Context) (*Settings, error) {
 	var set Settings
 	if err := s.reader.QueryRowContext(ctx,
-		`SELECT unknown, dmarc, spf, coalesce(relay_id, ''), max_message_bytes, trash_days FROM settings WHERE id = 1`).
-		Scan(&set.Unknown, &set.DMARC, &set.SPF, &set.RelayID, &set.MaxMessageBytes, &set.TrashDays); err != nil {
+		`SELECT unknown, dmarc, spf, coalesce(relay_id, ''), max_message_bytes, trash_days, junk_days FROM settings WHERE id = 1`).
+		Scan(&set.Unknown, &set.DMARC, &set.SPF, &set.RelayID, &set.MaxMessageBytes, &set.TrashDays, &set.JunkDays); err != nil {
 		return nil, fmt.Errorf("settings: %w", err)
 	}
 	return &set, nil
@@ -93,7 +113,10 @@ func (s *Store) SetSettings(ctx context.Context, set Settings) error {
 	if err := checkLimit(set.MaxMessageBytes); err != nil {
 		return err
 	}
-	if err := checkTrashDays(set.TrashDays); err != nil {
+	if err := Trash.check(set.TrashDays); err != nil {
+		return err
+	}
+	if err := Junk.check(set.JunkDays); err != nil {
 		return err
 	}
 	var relay any
@@ -104,10 +127,11 @@ func (s *Store) SetSettings(ctx context.Context, set Settings) error {
 		relay = set.RelayID
 	}
 	res, err := s.writer.ExecContext(ctx,
-		`UPDATE settings SET unknown = ?1, dmarc = ?2, spf = ?3, relay_id = ?4, max_message_bytes = ?5, trash_days = ?6
+		`UPDATE settings SET unknown = ?1, dmarc = ?2, spf = ?3, relay_id = ?4, max_message_bytes = ?5, trash_days = ?6,
+		                    junk_days = ?7
 		  WHERE id = 1 AND (unknown <> ?1 OR dmarc <> ?2 OR spf <> ?3 OR relay_id IS NOT ?4 OR max_message_bytes <> ?5
-		                    OR trash_days <> ?6)`,
-		set.Unknown, set.DMARC, set.SPF, relay, set.MaxMessageBytes, set.TrashDays)
+		                    OR trash_days <> ?6 OR junk_days <> ?7)`,
+		set.Unknown, set.DMARC, set.SPF, relay, set.MaxMessageBytes, set.TrashDays, set.JunkDays)
 	if err != nil {
 		return fmt.Errorf("set settings: %w", err)
 	}

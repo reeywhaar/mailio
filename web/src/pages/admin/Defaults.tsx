@@ -14,11 +14,11 @@ import {
   Facts,
   LimitField,
   Section,
-  TrashField,
+  KeptField,
   daysText,
   daysTyped,
   toDays,
-  trashKept,
+  daysKept,
   dmarcHint,
   dmarcLabels,
   limitTyped,
@@ -31,6 +31,9 @@ import {
   useDraft,
   useSave,
 } from "@app/pages/admin/shared";
+
+// A default's days are required: there is nothing above it to follow.
+const daysSet = (text: string) => daysTyped(text) && toDays(text) !== null;
 
 const defaultUnknowns: DefaultUnknown[] = ["reject", "drop"];
 
@@ -48,7 +51,8 @@ export function Defaults({ settings }: { settings: Settings }) {
           ["DMARC", dmarcLabels[settings.dmarc]],
           ["SPF", spfLabels[settings.spf]],
           ["Largest message", megabytes(settings.max_message_bytes)],
-          ["Trash kept", trashKept(settings.trash_days)],
+          ["Trash kept", daysKept(settings.trash_days)],
+          ["Junk kept", daysKept(settings.junk_days)],
         ]}
       />
       <DefaultsDialog
@@ -74,16 +78,17 @@ function DefaultsDialog({
     ...settings,
     limit: mbText(settings.max_message_bytes),
     trash: daysText(settings.trash_days),
+    junk: daysText(settings.junk_days),
   }));
-  const trashDays = toDays(draft.trash);
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    const { limit, trash, ...set } = draft;
+    const { limit, trash, junk, ...set } = draft;
     const ok = await save(() =>
       setSettings({
         ...set,
         max_message_bytes: toBytes(limit),
         trash_days: toDays(trash) ?? settings.trash_days,
+        junk_days: toDays(junk) ?? settings.junk_days,
       }),
     );
     if (ok) onClose();
@@ -103,8 +108,8 @@ function DefaultsDialog({
             disabled={
               busy ||
               !limitTyped(draft.limit) ||
-              trashDays === null ||
-              !daysTyped(draft.trash)
+              !daysSet(draft.trash) ||
+              !daysSet(draft.junk)
             }
           >
             Save
@@ -161,10 +166,17 @@ function DefaultsDialog({
           onChange={(limit) => setDraft({ ...draft, limit })}
           hint="For mail received, sent and stored. A domain or an account can have its own."
         />
-        <TrashField
+        <KeptField
+          box="Trash"
           value={draft.trash}
           onChange={(trash) => setDraft({ ...draft, trash })}
-          hint="Then deleted for good. 0: forever. A domain or an account can have its own."
+          hint="Then deleted for good. 0: forever."
+        />
+        <KeptField
+          box="Junk"
+          value={draft.junk}
+          onChange={(junk) => setDraft({ ...draft, junk })}
+          hint="Then deleted for good. 0: forever."
         />
         {error ? <p className="text-sm text-accent">{error}</p> : null}
       </form>

@@ -610,6 +610,16 @@ func TestTrashDaysAreTheDefaultOrADomainsOrAnAccountsOwn(t *testing.T) {
 	if code, _ := h.do("PATCH", "/api/accounts/"+a["id"].(string), map[string]any{"trash_days": -1}); code != http.StatusBadRequest {
 		t.Errorf("-1: %d", code)
 	}
+	// Junk the same, apart.
+	if _, set := h.do("GET", "/api/settings", nil); set["junk_days"] != float64(30) {
+		t.Errorf("junk, the default: %v", set["junk_days"])
+	}
+	if code, d := h.do("PATCH", "/api/domains/"+id, map[string]any{"junk_days": 3}); code != http.StatusOK || d["junk_days"] != float64(3) || d["trash_days"] != nil {
+		t.Errorf("junk, its own: %d %v", code, d)
+	}
+	if code, a := h.do("PATCH", "/api/accounts/"+a["id"].(string), map[string]any{"junk_days": 0}); code != http.StatusOK || a["junk_days"] != float64(0) || a["trash_days"] != float64(7) {
+		t.Errorf("junk, an account's own: %d %v", code, a)
+	}
 }
 
 // lookup is DNS as a map, for the checker.

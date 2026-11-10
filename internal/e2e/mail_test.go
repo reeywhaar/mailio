@@ -483,7 +483,7 @@ func TestAClientWatchingTrashHearsItEmptied(t *testing.T) {
 	}
 
 	r.st.SetClock(func() time.Time { return time.Now().AddDate(0, 0, 31) })
-	if n, err := r.st.EmptyTrash(ctx); err != nil || n != 1 {
+	if n, _, err := r.st.EmptyTrashAndJunk(ctx); err != nil || n != 1 {
 		t.Fatalf("emptied %d: %v", n, err)
 	}
 	if err := c.Noop().Wait(); err != nil {

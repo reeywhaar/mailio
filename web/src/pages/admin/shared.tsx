@@ -331,16 +331,16 @@ export function LimitField({
   );
 }
 
-/** How long Trash keeps a message, as the interface writes it: 30 days, or Forever for 0. */
-export const trashKept = (days: number) =>
+/** How long Trash or Junk keeps a message, as the interface writes it: 30 days, or Forever for 0. */
+export const daysKept = (days: number) =>
   days === 0 ? "Forever" : days === 1 ? "1 day" : `${days} days`;
 
-/** Trash days as their field holds them: "" for none of its own. */
+/** Days as their field holds them: "" for none of its own. */
 export const daysText = (days: number | null) =>
   days === null ? "" : String(days);
 
 /**
- * A trash field's text as days: null for empty, which follows the one above, and NaN for anything
+ * A days field's text as days: null for empty, which follows the one above, and NaN for anything
  * but a whole number. The server says the range.
  */
 export function toDays(text: string) {
@@ -349,19 +349,21 @@ export function toDays(text: string) {
   return /^\d+$/.test(t) ? Number(t) : NaN;
 }
 
-/** Whether a trash field holds something to send. */
+/** Whether a days field holds something to send. */
 export const daysTyped = (text: string) => !Number.isNaN(toDays(text));
 
 /**
- * How long Trash keeps a message, in days, 0 for forever. With `inherited`, empty follows it: the
- * default for a domain, the domain's for an account.
+ * How long Trash or Junk keeps a message, in days, 0 for forever. With `inherited`, empty follows
+ * it: the default for a domain, the domain's for an account.
  */
-export function TrashField({
+export function KeptField({
+  box,
   value,
   onChange,
   inherited,
   hint,
 }: {
+  box: "Trash" | "Junk";
   value: string;
   onChange: (text: string) => void;
   inherited?: { from: string; days: number };
@@ -369,7 +371,7 @@ export function TrashField({
 }) {
   return (
     <UnitField
-      label="Trash kept"
+      label={`${box} kept`}
       unit="days"
       inputMode="numeric"
       value={value}
@@ -377,7 +379,7 @@ export function TrashField({
       placeholder={inherited ? String(inherited.days) : undefined}
       hint={
         inherited
-          ? `Empty: ${inherited.from}, ${trashKept(inherited.days)}. 0: forever.`
+          ? `Empty: ${inherited.from}, ${daysKept(inherited.days)}. 0: forever.`
           : hint
       }
       error={daysTyped(value) ? undefined : "A whole number of days."}

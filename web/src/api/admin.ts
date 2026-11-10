@@ -47,8 +47,9 @@ export type Settings = {
   relay_id: string | null;
   /** The largest message an account takes, sends or stores, in bytes. */
   max_message_bytes: number;
-  /** How long Trash keeps a message, in days; 0 keeps it forever. */
+  /** How long Trash and Junk keep a message, in days; 0 keeps it forever. */
   trash_days: number;
+  junk_days: number;
 };
 
 /** A domain's relay that is not one of the list: straight to each recipient's server. */
@@ -67,8 +68,9 @@ export type Domain = {
   relay: string | null;
   /** Its own largest message in bytes, or null for the default's. */
   max_message_bytes: number | null;
-  /** Its accounts' Trash days, 0 forever, or null for the default's. */
+  /** Its accounts' Trash and Junk days, 0 forever, or null for the default's. */
   trash_days: number | null;
+  junk_days: number | null;
   records: DNSRecord[];
   /** When its records were last checked; null for not yet. */
   dns_checked_at: number | null;
@@ -76,7 +78,7 @@ export type Domain = {
 };
 
 /**
- * A domain's settings as its dialog saves them: "", 0, or for trash days null, returns one to the
+ * A domain's settings as its dialog saves them: "", 0, or for days null, returns one to the
  * default.
  */
 export type DomainChange = {
@@ -87,6 +89,7 @@ export type DomainChange = {
   relay?: string;
   max_message_bytes?: number;
   trash_days?: number | null;
+  junk_days?: number | null;
 };
 
 export type MailStatus = {
@@ -168,14 +171,15 @@ export type Account = {
   max_message_bytes: number | null;
   /** BUILT_IN, a relay's id, or null for its domain's. */
   relay: string | null;
-  /** Its Trash days, 0 forever, or null for its domain's. */
+  /** Its Trash and Junk days, 0 forever, or null for its domain's. */
   trash_days: number | null;
+  junk_days: number | null;
   credentials: Credential[];
   created_at: number;
 };
 
 /**
- * An account's settings as its dialog saves them: "", 0, or for trash days null, returns one to its
+ * An account's settings as its dialog saves them: "", 0, or for days null, returns one to its
  * domain's.
  */
 export type AccountChange = {
@@ -185,6 +189,7 @@ export type AccountChange = {
   max_message_bytes?: number;
   relay?: string;
   trash_days?: number | null;
+  junk_days?: number | null;
 };
 
 /** Somebody who signs in here: a name, not an address, and never an account. */

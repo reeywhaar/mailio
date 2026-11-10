@@ -49,9 +49,9 @@ func TestTrashKeepsAMessageItsDaysThenItGoes(t *testing.T) {
 	after := func(days int) int {
 		t.Helper()
 		now = now.AddDate(0, 0, days)
-		n, err := st.EmptyTrash(ctx)
-		if err != nil {
-			t.Fatal(err)
+		n, junk, err := st.EmptyTrashAndJunk(ctx)
+		if err != nil || junk != 0 {
+			t.Fatalf("%d from Junk: %v", junk, err)
 		}
 		return n
 	}
@@ -71,27 +71,58 @@ func TestTrashKeepsAMessageItsDaysThenItGoes(t *testing.T) {
 	}
 
 	week, forever := 7, 0
-	must(st.SetDomainTrashDays(ctx, d.ID, &week))
+	must(st.SetDomainKept(ctx, d.ID, Trash, &week))
 	trashIt()
 	if n := after(7); n != 1 {
 		t.Errorf("7 days, the domain's: %d went", n)
 	}
-	must(st.SetAccountTrashDays(ctx, inbox.ID, &forever))
+	must(st.SetAccountKept(ctx, inbox.ID, Trash, &forever))
 	trashIt()
 	if n := after(1000); n != 0 {
 		t.Errorf("forever, the account's: %d went", n)
 	}
-	must(st.SetAccountTrashDays(ctx, inbox.ID, nil))
+	must(st.SetAccountKept(ctx, inbox.ID, Trash, nil))
 	if n := after(0); n != 1 {
 		t.Errorf("back to the domain's: %d went", n)
 	}
 
-	for _, bad := range []int{-1, maxTrashDays + 1} {
-		if err := st.SetAccountTrashDays(ctx, inbox.ID, &bad); !errors.Is(err, ErrInvalid) {
+	for _, bad := range []int{-1, maxKeptDays + 1} {
+		if err := st.SetAccountKept(ctx, inbox.ID, Trash, &bad); !errors.Is(err, ErrInvalid) {
 			t.Errorf("an account's %d: %v", bad, err)
 		}
-		if err := st.SetDomainTrashDays(ctx, d.ID, &bad); !errors.Is(err, ErrInvalid) {
+		if err := st.SetDomainKept(ctx, d.ID, Junk, &bad); !errors.Is(err, ErrInvalid) {
 			t.Errorf("a domain's %d: %v", bad, err)
 		}
+	}
+}
+
+// Junk keeps a message as Trash does, by days of its own, and emptying one leaves the other.
+func TestJunkKeepsAMessageItsOwnDays(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	now := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	st.SetClock(func() time.Time { return now })
+	inbox := account(t, st, "inbox@example.org")
+	junk, _ := st.SpecialMailbox(ctx, inbox.ID, `\Junk`)
+	trash, _ := st.SpecialMailbox(ctx, inbox.ID, `\Trash`)
+	raw := []byte("Subject: offer\r\n\r\nbody\r\n")
+	if err := st.Deliver(ctx, raw, now, []Delivery{{MailboxID: junk.ID}, {MailboxID: trash.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	three := 3
+	if err := st.SetAccountKept(ctx, inbox.ID, Junk, &three); err != nil {
+		t.Fatal(err)
+	}
+	now = now.AddDate(0, 0, 3)
+	gone, went, err := st.EmptyTrashAndJunk(ctx)
+	if err != nil || gone != 0 || went != 1 {
+		t.Errorf("after 3 days: %d from Trash, %d from Junk, %v", gone, went, err)
+	}
+	if uids, _ := st.UIDs(ctx, trash.ID); len(uids) != 1 {
+		t.Errorf("Trash has %d", len(uids))
+	}
+	a, _ := st.AccountByID(ctx, inbox.ID)
+	if a.JunkDays == nil || *a.JunkDays != 3 || a.TrashDays != nil {
+		t.Errorf("its own: junk %v, trash %v", a.JunkDays, a.TrashDays)
 	}
 }

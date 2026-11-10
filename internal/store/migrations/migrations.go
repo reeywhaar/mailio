@@ -42,6 +42,7 @@ var all = []Migration{
 	accountRelay,
 	aliases,
 	trashDays,
+	junkDays,
 }
 
 func exec(sqlText string) func(context.Context, *sql.Tx) error {
