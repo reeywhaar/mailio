@@ -15,6 +15,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -191,6 +192,7 @@ func TestEveryAdminRouteNeedsASession(t *testing.T) {
 	for _, c := range [][2]string{
 		{"GET", "/api/domains"}, {"POST", "/api/domains"}, {"PATCH", "/api/domains/dm_x"}, {"DELETE", "/api/domains/dm_x"},
 		{"GET", "/api/accounts"}, {"POST", "/api/accounts"}, {"PATCH", "/api/accounts/ac_x"}, {"DELETE", "/api/accounts/ac_x"},
+		{"DELETE", "/api/accounts/ac_x/mail"},
 		{"POST", "/api/accounts/ac_x/credentials"}, {"DELETE", "/api/accounts/ac_x/credentials/cr_x"},
 		{"POST", "/api/accounts/ac_x/credentials/cr_x/reset"},
 		{"GET", "/api/admins"}, {"POST", "/api/admins"}, {"PATCH", "/api/admins/ad_x"}, {"DELETE", "/api/admins/ad_x"},
@@ -619,6 +621,34 @@ func TestTrashDaysAreTheDefaultOrADomainsOrAnAccountsOwn(t *testing.T) {
 	}
 	if code, a := h.do("PATCH", "/api/accounts/"+a["id"].(string), map[string]any{"junk_days": 0}); code != http.StatusOK || a["junk_days"] != float64(0) || a["trash_days"] != float64(7) {
 		t.Errorf("junk, an account's own: %d %v", code, a)
+	}
+}
+
+func TestAnAccountShowsItsMessagesAndHasThemCleared(t *testing.T) {
+	h := signedIn(t)
+	ctx := context.Background()
+	h.do("POST", "/api/domains", map[string]any{"name": "example.org"})
+	_, a := h.do("POST", "/api/accounts", map[string]any{"address": "inbox@example.org"})
+	id := a["id"].(string)
+	if a["messages"] != float64(0) {
+		t.Errorf("a new account: %v", a["messages"])
+	}
+	box, _ := h.st.MailboxNamed(ctx, id, store.Inbox)
+	for range 2 {
+		if err := h.st.Deliver(ctx, []byte("Subject: hi\r\n\r\nbody\r\n"), time.Now(), []store.Delivery{{MailboxID: box.ID}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list := h.list("/api/accounts")
+	if len(list) != 1 || list[0]["messages"] != float64(2) || list[0]["bytes"] != float64(2*len("Subject: hi\r\n\r\nbody\r\n")) {
+		t.Errorf("listed: %v", list)
+	}
+	code, a := h.do("DELETE", "/api/accounts/"+id+"/mail", nil)
+	if code != http.StatusOK || a["messages"] != float64(0) || a["bytes"] != float64(0) {
+		t.Errorf("cleared: %d %v", code, a)
+	}
+	if _, err := h.st.MailboxNamed(ctx, id, store.Inbox); err != nil {
+		t.Errorf("its INBOX went too: %v", err)
 	}
 }
 

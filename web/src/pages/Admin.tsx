@@ -74,7 +74,7 @@ export function Admin() {
       queue.data &&
       settings.data ? (
         <>
-          <MailServer mail={mail.data} />
+          <MailServer mail={mail.data} accounts={accounts.data} />
           <Sending settings={settings.data} relays={relays.data} />
           <Defaults settings={settings.data} />
           <Domains

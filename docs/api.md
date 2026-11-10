@@ -20,9 +20,10 @@ CSRF defense; the `SameSite=Lax` cookie is the other.
 | `PATCH /api/domains/{id}` | `{unknown, unknown_account_id, dmarc, spf, relay, max_message_bytes, trash_days, junk_days}`, each optional; `unknown` is the catch-all, `reject`, `drop`, `forward` or `junk`, the last two with `unknown_account_id`; `""`, `0`, or for the days `null` returns one to the default, the days `0` keeping Trash or Junk forever, and `relay` is `"builtin"` or a relay's id. See [addresses.md](addresses.md) |
 | `POST /api/domains/{id}/check` | looks up its records now → the domain |
 | `DELETE /api/domains/{id}` | `409` while it has accounts |
-| `GET /api/accounts` | every account and alias, `kind` saying which, with its credentials and never a password; an alias's account is its `forward_account_id` |
+| `GET /api/accounts` | every account and alias, `kind` saying which, with its credentials and never a password, and the `messages` its mailboxes hold and their `bytes`; an alias's account is its `forward_account_id` |
 | `POST /api/accounts` | `{address}` → the account and `password`, its `default` credential's, generated and in this answer only. `{address, alias_of}` → an alias of that account, with no password |
 | `PATCH /api/accounts/{id}` | `{incoming, forward_account_id, max_message_bytes, relay, trash_days, junk_days}`, each optional: `keep`, `reject`, or `forward` to an account; its own largest message, `0` returning it to its domain's; its own relay, `"builtin"` or a relay's id, `""` returning it to its domain's; its own trash and junk days, `null` returning them to its domain's |
+| `DELETE /api/accounts/{id}/mail` | deletes every message in its mailboxes, which stay → the account |
 | `DELETE /api/accounts/{id}` | `409` for an account getting a domain's catch-all, or forwarded to |
 | `POST /api/accounts/{id}/credentials` | `{label, password}` → `{id, label, login, password, …}`, the login newly tagged. An empty password is generated; either way it is in this answer only |
 | `POST /api/accounts/{id}/credentials/{cid}/reset` | `{password}`, empty for a generated one → the same credential and login with the new `password`, in this answer only |

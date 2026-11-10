@@ -3,6 +3,7 @@ import { useState, type FormEvent } from "react";
 import {
   BUILT_IN,
   addCredential,
+  clearMail,
   createAccount,
   createAlias,
   deleteAccount,
@@ -43,6 +44,7 @@ import {
   mbText,
   megabytes,
   relayName,
+  sizeText,
   toBytes,
   sendersTo,
   Senders,
@@ -163,6 +165,8 @@ function AccountSummary({
     <Summary
       parts={[
         { label: "Incoming", value: incoming },
+        { label: "Messages", value: account.messages.toLocaleString() },
+        { label: "Size", value: sizeText(account.bytes) },
         ...(account.relay
           ? [{ label: "Sending", value: relayName(account.relay, relays) }]
           : []),
@@ -545,6 +549,34 @@ function AccountDialog({
         ) : (
           <p className="text-faint">No credentials.</p>
         )}
+      </div>
+
+      <div className="flex flex-col gap-2 border-t border-line pt-3 text-sm">
+        <span className="caps text-accent">Danger zone</span>
+        <div className="flex items-center gap-3">
+          <Facts
+            items={[
+              ["Messages", account.messages.toLocaleString()],
+              ["Size", sizeText(account.bytes)],
+            ]}
+          />
+          <span className="flex-1" />
+          <DeleteButton
+            size="bar"
+            disabled={busy || account.messages === 0}
+            label="Clear all mail…"
+            what="mail"
+            title="Clear all mail"
+            confirm="Clear"
+            facts={[
+              ["Address", account.address],
+              ["Messages", account.messages.toLocaleString()],
+              ["Size", sizeText(account.bytes)],
+            ]}
+            note="Every message in every mailbox is deleted for good. The mailboxes stay."
+            onDelete={() => clearMail(account.id)}
+          />
+        </div>
       </div>
 
       <CredentialDialog

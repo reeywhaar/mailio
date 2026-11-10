@@ -184,6 +184,8 @@ export function useSettling(shown: unknown, ms = 500) {
  */
 export function DeleteButton({
   what,
+  title = `Delete ${what}`,
+  confirm: confirmLabel = "Delete",
   facts,
   note,
   onDelete,
@@ -194,6 +196,9 @@ export function DeleteButton({
 }: {
   /** What is deleted, for the title: "credential". */
   what: string;
+  /** The confirm dialog's title and button, for a delete that is not of the thing itself. */
+  title?: string;
+  confirm?: string;
   facts: [string, ReactNode][];
   note?: string;
   onDelete: () => Promise<unknown>;
@@ -224,7 +229,7 @@ export function DeleteButton({
       <Dialog
         open={open}
         onClose={close}
-        title={`Delete ${what}`}
+        title={title}
         footer={
           <>
             <Button onClick={close}>Cancel</Button>
@@ -233,7 +238,7 @@ export function DeleteButton({
               disabled={busy}
               onClick={() => void confirm()}
             >
-              Delete
+              {confirmLabel}
             </Button>
           </>
         }
@@ -275,6 +280,30 @@ export function PasswordField({
 }
 
 const MB = 1 << 20;
+
+/** Stored mail as the interface writes it: 820 B, 12 KB, 3.4 MB, 1.2 GB. */
+export function sizeText(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let n = bytes / 1024;
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024;
+    i++;
+  }
+  return `${n >= 10 ? Math.round(n) : Math.round(n * 10) / 10} ${units[i]}`;
+}
+
+/** What some accounts hold between them: a domain's, or everybody's. */
+export function stored(accounts: Account[]) {
+  return accounts.reduce(
+    (sum, a) => ({
+      messages: sum.messages + a.messages,
+      bytes: sum.bytes + a.bytes,
+    }),
+    { messages: 0, bytes: 0 },
+  );
+}
 
 /** A size as the interface writes it: 50 MB. */
 export const megabytes = (bytes: number) =>

@@ -126,3 +126,44 @@ func TestJunkKeepsAMessageItsOwnDays(t *testing.T) {
 		t.Errorf("its own: junk %v, trash %v", a.JunkDays, a.TrashDays)
 	}
 }
+
+// Clearing an account's mail deletes every message it holds and keeps its mailboxes; another
+// account's mail stays, and the listener hears of each one.
+func TestClearingAnAccountsMailKeepsItsMailboxes(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	h := &heard{expunged: map[int64][]uint32{}}
+	st.SetMailListener(h)
+	inbox := account(t, st, "inbox@example.org")
+	other := account(t, st, "other@example.org")
+	box, _ := st.MailboxNamed(ctx, inbox.ID, Inbox)
+	sent, _ := st.SpecialMailbox(ctx, inbox.ID, `\Sent`)
+	theirs, _ := st.MailboxNamed(ctx, other.ID, Inbox)
+	raw := []byte("Subject: hi\r\n\r\nbody\r\n")
+	for _, to := range [][]Delivery{{{MailboxID: box.ID}, {MailboxID: sent.ID}}, {{MailboxID: box.ID}, {MailboxID: theirs.ID}}} {
+		if err := st.Deliver(ctx, raw, time.Now(), to); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if stored, _ := st.StoredMail(ctx); stored[inbox.ID] != (Stored{3, 3 * int64(len(raw))}) || stored[other.ID].Messages != 1 {
+		t.Fatalf("stored before: %v", stored)
+	}
+
+	n, err := st.ClearMail(ctx, inbox.ID)
+	if err != nil || n != 3 {
+		t.Fatalf("cleared %d: %v", n, err)
+	}
+	stored, _ := st.StoredMail(ctx)
+	if stored[inbox.ID] != (Stored{}) || stored[other.ID].Messages != 1 {
+		t.Errorf("stored after: %v", stored)
+	}
+	if boxes, _ := st.Mailboxes(ctx, inbox.ID); len(boxes) != len(StandardMailboxes) {
+		t.Errorf("%d mailboxes left", len(boxes))
+	}
+	if len(h.expunged[box.ID]) != 2 || len(h.expunged[sent.ID]) != 1 {
+		t.Errorf("the listener heard %v", h.expunged)
+	}
+	if _, err := st.ClearMail(ctx, "ac_01jnothere0000000000000000"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("no such account: %v", err)
+	}
+}

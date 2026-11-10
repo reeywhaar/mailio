@@ -175,6 +175,9 @@ export type Account = {
   trash_days: number | null;
   junk_days: number | null;
   credentials: Credential[];
+  /** How many messages its mailboxes hold, and their bytes as received. */
+  messages: number;
+  bytes: number;
   created_at: number;
 };
 
@@ -262,6 +265,10 @@ export const createAlias = (address: string, aliasOf: string) =>
 
 export const updateAccount = (id: string, change: AccountChange) =>
   request<Account>(`/api/accounts/${id}`, { method: "PATCH", body: change });
+
+/** Deletes every message in the account's mailboxes; the mailboxes stay. */
+export const clearMail = (id: string) =>
+  request<Account>(`/api/accounts/${id}/mail`, { method: "DELETE" });
 
 export const deleteAccount = (id: string) =>
   request<void>(`/api/accounts/${id}`, { method: "DELETE" });

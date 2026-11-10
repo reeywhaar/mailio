@@ -98,6 +98,7 @@ func New(cfg *config.Config, log *slog.Logger, st *store.Store, mail Mail, dns D
 	s.mux.Handle("POST /api/accounts/{id}/credentials/{cid}/reset", s.requireAdmin(s.resetCredential))
 	s.mux.Handle("DELETE /api/accounts/{id}/credentials/{cid}", s.requireAdmin(s.deleteCredential))
 	s.mux.Handle("DELETE /api/accounts/{id}", s.requireAdmin(s.deleteAccount))
+	s.mux.Handle("DELETE /api/accounts/{id}/mail", s.requireAdmin(s.clearMail))
 
 	s.mux.Handle("GET /api/mail", s.requireAdmin(s.mailStatus))
 	s.mux.Handle("GET /api/settings", s.requireAdmin(s.getSettings))

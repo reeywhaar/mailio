@@ -43,6 +43,13 @@ moved, which the message records and its arrival time does not; messages there b
 recorded it count from the upgrade. A client with the mailbox open hears of each one going, as it
 would of an expunge by another client.
 
+## An account's mail can be cleared at once
+
+The account's dialog shows how many messages it holds and how many bytes they take, as received;
+each domain's row and the Mail server section add them up. Clear all mail, in its danger zone,
+deletes every message in every one of its mailboxes for good after a confirm, and keeps the
+mailboxes; open clients hear of each message going.
+
 ## A UID is given inside the insert's transaction
 
 `uid_next` is bumped and read in one statement, in the transaction that inserts the message, so

@@ -1,11 +1,21 @@
 import type { ReactNode } from "react";
 
-import type { MailStatus } from "@app/api/admin";
-import { Facts, Section } from "@app/pages/admin/shared";
+import type { Account, MailStatus } from "@app/api/admin";
+import { Facts, Section, sizeText, stored } from "@app/pages/admin/shared";
 
-/** The server itself: its name, its certificate, and whether DNS looks after itself. */
-export function MailServer({ mail }: { mail: MailStatus }) {
+/**
+ * The server itself: its name, its certificate, whether DNS looks after itself, and the mail it
+ * holds for every account.
+ */
+export function MailServer({
+  mail,
+  accounts,
+}: {
+  mail: MailStatus;
+  accounts: Account[];
+}) {
   const cert = mail.certificate;
+  const all = stored(accounts);
   return (
     <Section title="Mail server">
       <Facts
@@ -22,6 +32,8 @@ export function MailServer({ mail }: { mail: MailStatus }) {
                 : "Self-signed",
           ],
           ["DNS records", mail.dns_api ? "DNS API" : "By hand"],
+          ["Messages", all.messages.toLocaleString()],
+          ["Size", sizeText(all.bytes)],
           ...(mail.staging
             ? ([
                 [

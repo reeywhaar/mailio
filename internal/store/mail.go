@@ -509,17 +509,34 @@ func (s *Store) EmptyTrashAndJunk(ctx context.Context) (trash, junk int, err err
 func (s *Store) empty(ctx context.Context, k Kept) (int, error) {
 	// k.column is one of two constants, never input.
 	days := `coalesce(u.` + k.column + `, d.` + k.column + `, (SELECT ` + k.column + ` FROM settings WHERE id = 1))`
-	rows, err := s.reader.QueryContext(ctx,
+	return s.expungeFound(ctx, "empty "+k.Name,
 		`SELECT m.mailbox_id, m.uid FROM messages m
 		   JOIN mailboxes b ON b.id = m.mailbox_id
 		   JOIN accounts u ON u.id = b.account_id
 		   JOIN domains d ON d.id = u.domain_id
 		  WHERE b.special_use = ? AND `+days+` > 0 AND m.added_at <= ? - `+days+` * 86400
 		  ORDER BY m.mailbox_id, m.uid`, k.SpecialUse, unix(s.Now()))
-	if err != nil {
-		return 0, fmt.Errorf("empty %s: %w", k.Name, err)
+}
+
+// ClearMail deletes every message in an account's mailboxes for good, keeping the mailboxes, and
+// tells the listener. It answers how many went.
+func (s *Store) ClearMail(ctx context.Context, accountID string) (int, error) {
+	if _, err := s.AccountByID(ctx, accountID); err != nil {
+		return 0, err
 	}
-	stale := map[int64][]uint32{}
+	return s.expungeFound(ctx, "clear mail",
+		`SELECT m.mailbox_id, m.uid FROM messages m JOIN mailboxes b ON b.id = m.mailbox_id
+		  WHERE b.account_id = ? ORDER BY m.mailbox_id, m.uid`, accountID)
+}
+
+// expungeFound deletes the messages a query finds, as mailbox and UID, and tells the listener,
+// mailbox by mailbox. It answers how many went.
+func (s *Store) expungeFound(ctx context.Context, what, query string, args ...any) (int, error) {
+	rows, err := s.reader.QueryContext(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", what, err)
+	}
+	found := map[int64][]uint32{}
 	var boxes []int64
 	for rows.Next() {
 		var (
@@ -528,28 +545,58 @@ func (s *Store) empty(ctx context.Context, k Kept) (int, error) {
 		)
 		if err := rows.Scan(&box, &uid); err != nil {
 			rows.Close()
-			return 0, fmt.Errorf("empty %s: %w", k.Name, err)
+			return 0, fmt.Errorf("%s: %w", what, err)
 		}
-		if stale[box] == nil {
+		if found[box] == nil {
 			boxes = append(boxes, box)
 		}
-		stale[box] = append(stale[box], uid)
+		found[box] = append(found[box], uid)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("empty %s: %w", k.Name, err)
+		return 0, fmt.Errorf("%s: %w", what, err)
 	}
 	n := 0
 	for _, box := range boxes {
-		if err := s.Expunge(ctx, box, stale[box]); err != nil {
+		if err := s.Expunge(ctx, box, found[box]); err != nil {
 			return n, err
 		}
-		n += len(stale[box])
+		n += len(found[box])
 		if s.listener != nil {
-			s.listener.Expunged(box, stale[box])
+			s.listener.Expunged(box, found[box])
 		}
 	}
 	return n, nil
+}
+
+// Stored is how much mail an account holds across its mailboxes: how many messages, and their
+// bytes as they were received.
+type Stored struct {
+	Messages int
+	Bytes    int64
+}
+
+// StoredMail is what each account holds, by account id; an account with nothing is not there.
+func (s *Store) StoredMail(ctx context.Context) (map[string]Stored, error) {
+	rows, err := s.reader.QueryContext(ctx,
+		`SELECT b.account_id, count(*), sum(m.size) FROM messages m JOIN mailboxes b ON b.id = m.mailbox_id
+		  GROUP BY b.account_id`)
+	if err != nil {
+		return nil, fmt.Errorf("stored mail: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]Stored{}
+	for rows.Next() {
+		var (
+			id string
+			st Stored
+		)
+		if err := rows.Scan(&id, &st.Messages, &st.Bytes); err != nil {
+			return nil, fmt.Errorf("stored mail: %w", err)
+		}
+		out[id] = st
+	}
+	return out, rows.Err()
 }
 
 func uidsJSON(uids []uint32) string {

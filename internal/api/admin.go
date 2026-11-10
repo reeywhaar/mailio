@@ -8,7 +8,8 @@ import (
 	"mailio/internal/store"
 )
 
-func accountJSON(u *store.Account, passwords []store.Credential) map[string]any {
+// accountJSON is an account as the API shows it, with how much mail its mailboxes hold.
+func accountJSON(u *store.Account, passwords []store.Credential, stored store.Stored) map[string]any {
 	var forwardTo any
 	if u.ForwardAccountID != "" {
 		forwardTo = u.ForwardAccountID
@@ -33,6 +34,8 @@ func accountJSON(u *store.Account, passwords []store.Credential) map[string]any 
 		"trash_days":         u.TrashDays,
 		"junk_days":          u.JunkDays,
 		"credentials":        list,
+		"messages":           stored.Messages,
+		"bytes":              stored.Bytes,
 		"created_at":         u.CreatedAt.Unix(),
 	}
 }
@@ -336,9 +339,14 @@ func (s *Server) listAccounts(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	stored, err := s.st.StoredMail(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	out := make([]map[string]any, len(list))
 	for i := range list {
-		out[i] = accountJSON(&list[i], passwords[list[i].ID])
+		out[i] = accountJSON(&list[i], passwords[list[i].ID], stored[list[i].ID])
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -355,7 +363,12 @@ func (s *Server) writeAccount(w http.ResponseWriter, r *http.Request, status int
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, status, accountJSON(u, passwords[id]))
+	stored, err := s.st.StoredMail(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, status, accountJSON(u, passwords[id], stored[id]))
 }
 
 // createAccount makes an account from an address alone. Its default password is generated, and this
@@ -376,7 +389,7 @@ func (s *Server) createAccount(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.log.Info("alias created", "account", a.ID, "of", req.AliasOf, "by", adminOf(r).ID)
-		writeJSON(w, http.StatusCreated, accountJSON(a, nil))
+		writeJSON(w, http.StatusCreated, accountJSON(a, nil, store.Stored{}))
 		return
 	}
 	password := store.GeneratePassword()
@@ -391,7 +404,7 @@ func (s *Server) createAccount(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	out := accountJSON(a, creds[a.ID])
+	out := accountJSON(a, creds[a.ID], store.Stored{})
 	out["password"] = password
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusCreated, out)
@@ -545,6 +558,22 @@ func (s *Server) deleteCredential(w http.ResponseWriter, r *http.Request) {
 	}
 	s.log.Info("credential deleted", "account", id, "credential", pid, "by", adminOf(r).ID)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// clearMail deletes every message in an account's mailboxes, keeping the mailboxes, and answers
+// with the account.
+func (s *Server) clearMail(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, ids.Account)
+	if !ok {
+		return
+	}
+	n, err := s.st.ClearMail(r.Context(), id)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.log.Info("account's mail cleared", "account", id, "messages", n, "by", adminOf(r).ID)
+	s.writeAccount(w, r, http.StatusOK, id)
 }
 
 func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request) {

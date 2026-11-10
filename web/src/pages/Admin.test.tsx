@@ -42,6 +42,8 @@ const inbox: Account = {
       last_used_at: null,
     },
   ],
+  messages: 3,
+  bytes: 4096,
   created_at: 1,
 };
 
@@ -340,6 +342,35 @@ test("an alias is added of an account that keeps its mail, shows no password, an
   expect(
     await screen.findByRole("button", { name: /^shop@example\.org.*Alias of/ }),
   ).toBeTruthy();
+});
+
+test("an account's mail is cleared from its danger zone, after a confirm saying how much", async () => {
+  const { sent } = routes({
+    "DELETE /api/accounts/ac_1/mail": () => ({
+      body: { ...inbox, messages: 0 },
+    }),
+  });
+  mount();
+  expect(
+    await screen.findByRole("button", {
+      name: /^inbox@example\.org.*Messages: 3.*Size: 4 KB/,
+    }),
+  ).toBeTruthy();
+  await open(/^inbox@example\.org/);
+  fireEvent.click(
+    within(dialog("inbox@example.org")).getByRole("button", {
+      name: "Clear all mail…",
+    }),
+  );
+  const d = within(dialog("Clear all mail"));
+  expect(d.getByText("3")).toBeTruthy();
+  await settle();
+  fireEvent.click(d.getByRole("button", { name: "Clear" }));
+  await waitFor(() =>
+    expect(writes(sent)).toEqual([
+      { method: "DELETE", path: "/api/accounts/ac_1/mail", body: undefined },
+    ]),
+  );
 });
 
 test("a credential is added by its label, and its login and password are shown once", async () => {

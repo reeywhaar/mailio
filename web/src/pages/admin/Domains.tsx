@@ -44,7 +44,9 @@ import {
   mbText,
   megabytes,
   relayName,
+  sizeText,
   spfHint,
+  stored,
   spfLabels,
   toBytes,
   unknownLabels,
@@ -120,6 +122,7 @@ function DomainSummary({
   relays,
   staging,
 }: Context & { domain: Domain }) {
+  const mail = stored(accounts.filter((a) => a.domain_id === domain.id));
   return (
     <Summary
       parts={[
@@ -166,6 +169,8 @@ function DomainSummary({
           inherited: domain.spf === null,
           value: domain.spf ?? settings.spf,
         },
+        { label: "Messages", value: mail.messages.toLocaleString() },
+        { label: "Size", value: sizeText(mail.bytes) },
         {
           label: "DNS",
           value: staging ? (
