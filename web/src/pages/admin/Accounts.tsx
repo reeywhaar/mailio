@@ -35,7 +35,7 @@ import {
   toDays,
   trashKept,
   Toward,
-  accountOption,
+  AccountOptions,
   addressOf,
   incomingLabels,
   keepsMail,
@@ -445,11 +445,7 @@ function AccountDialog({
                 setDraft({ ...draft, forwardTo: e.target.value })
               }
             >
-              {others.map((a) => (
-                <option key={a.id} value={a.id} disabled={!keepsMail(a)}>
-                  {accountOption(a)}
-                </option>
-              ))}
+              <AccountOptions accounts={others} />
             </Select>
           </Field>
         ) : null}
@@ -560,11 +556,7 @@ function AliasOf({
       hint="Its mail goes to that account, which can send as it too."
     >
       <Select value={value} onChange={(e) => onChange(e.target.value)}>
-        {accounts.map((a) => (
-          <option key={a.id} value={a.id} disabled={!keepsMail(a)}>
-            {accountOption(a)}
-          </option>
-        ))}
+        <AccountOptions accounts={accounts} />
       </Select>
     </Field>
   );

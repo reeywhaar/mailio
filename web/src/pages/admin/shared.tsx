@@ -584,11 +584,33 @@ export function DNSSummary({ domain }: { domain: Domain }) {
 export const keepsMail = (a: Account) => a.incoming === "keep";
 
 /** An account as a picker offers it, marked where it would not keep what is sent on. */
-export function accountOption(a: Account) {
+function accountOption(a: Account) {
   if (a.kind === "alias") return `${a.address} · alias`;
   if (a.incoming === "reject") return `${a.address} · no-reply`;
   if (a.incoming === "forward") return `${a.address} · forwards`;
   return a.address;
+}
+
+/**
+ * Accounts as a select's options, grouped by domain in the order the server lists them, by domain
+ * and then name. Those that do not keep their mail are shown disabled: mail is sent on only to
+ * one that keeps it. Each keeps its whole address, which is all a closed select shows.
+ */
+export function AccountOptions({ accounts }: { accounts: Account[] }) {
+  const byDomain = new Map<string, Account[]>();
+  for (const a of accounts) {
+    const domain = a.address.slice(a.address.indexOf("@") + 1);
+    byDomain.set(domain, [...(byDomain.get(domain) ?? []), a]);
+  }
+  return [...byDomain].map(([domain, list]) => (
+    <optgroup key={domain} label={domain}>
+      {list.map((a) => (
+        <option key={a.id} value={a.id} disabled={!keepsMail(a)}>
+          {accountOption(a)}
+        </option>
+      ))}
+    </optgroup>
+  ));
 }
 
 /** A small word beside a value: quiet for "default", red for what loses mail. */

@@ -444,6 +444,12 @@ test("forwarding an account's mail is held until Save", async () => {
   expect(
     (d.getByLabelText("Who gets the mail") as HTMLSelectElement).value,
   ).toBe("ac_2");
+  // Grouped by domain.
+  expect(
+    within(d.getByRole("group", { name: "example.org" }))
+      .getAllByRole("option")
+      .map((o) => o.textContent),
+  ).toEqual(["misha@example.org"]);
   expect(writes(sent)).toEqual([]);
 
   fireEvent.click(d.getByRole("button", { name: "Save" }));

@@ -36,7 +36,7 @@ import {
   Rows,
   Section,
   Summary,
-  accountOption,
+  AccountOptions,
   dmarcLabels,
   keepsMail,
   limitTyped,
@@ -351,11 +351,7 @@ function DomainDialog({
               value={draft.to}
               onChange={(e) => set({ to: e.target.value })}
             >
-              {accounts.map((a) => (
-                <option key={a.id} value={a.id} disabled={!keepsMail(a)}>
-                  {accountOption(a)}
-                </option>
-              ))}
+              <AccountOptions accounts={accounts} />
             </Select>
           </Field>
         ) : null}
