@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import {
   BUILT_IN,
+  toAccount,
   type Account,
   type DMARC,
   type DNSRecord,
@@ -396,6 +397,7 @@ export function Summary({
 export const unknownLabels: Record<Unknown, string> = {
   reject: "Reject",
   drop: "Drop",
+  forward: "Forward",
   junk: "Junk",
 };
 
@@ -546,15 +548,18 @@ export function Toward({
   );
 }
 
-/** Who sends mail on to an account: those forwarding to it, and domains whose junk it gets. */
+/** Who sends mail on to an account: those forwarding to it, and domains whose catch-all it gets. */
 export function sendersTo(id: string, accounts: Account[], domains: Domain[]) {
   return [
     ...accounts
       .filter((a) => a.incoming === "forward" && a.forward_account_id === id)
       .map((a) => ({ name: a.address, sends: "forward" })),
     ...domains
-      .filter((d) => d.unknown === "junk" && d.unknown_account_id === id)
-      .map((d) => ({ name: d.name, sends: "junk" })),
+      .filter((d) => d.unknown_account_id === id)
+      .map((d) => ({
+        name: d.name,
+        sends: d.unknown === "junk" ? "catch-all, junk" : "catch-all",
+      })),
   ];
 }
 
@@ -604,14 +609,14 @@ export function relayName(id: string | null, relays: Relay[]) {
   return relays.find((r) => r.id === id)?.label ?? "Deleted relay";
 }
 
-/** What happens to unknown mail, with who gets it when it is junk. */
+/** A catch-all, with who gets the mail when it goes to an account. */
 export function unknownSummary(
   unknown: Unknown,
-  junkTo: string | null,
+  to: string | null,
   accounts: Account[],
 ) {
-  return unknown === "junk" ? (
-    <Toward label="Junk" to={junkTo} accounts={accounts} />
+  return toAccount(unknown) ? (
+    <Toward label={unknownLabels[unknown]} to={to} accounts={accounts} />
   ) : (
     unknownLabels[unknown]
   );

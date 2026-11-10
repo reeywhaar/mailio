@@ -54,7 +54,7 @@ func TestAJunkDefaultBecomesEachFollowingDomainsOwn(t *testing.T) {
 		`INSERT INTO settings (id, unknown, unknown_account_id) VALUES (1, 'junk', '` + inbox.ID + `')`,
 		`ALTER TABLE domains DROP COLUMN max_message_bytes`,
 		`ALTER TABLE accounts DROP COLUMN max_message_bytes`,
-		fmt.Sprintf(`PRAGMA user_version = %d`, version-2),
+		fmt.Sprintf(`PRAGMA user_version = %d`, version-3),
 	} {
 		if _, err := raw.Exec(q); err != nil {
 			t.Fatalf("%v\n%s", err, q)

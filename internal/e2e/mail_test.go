@@ -233,7 +233,8 @@ func TestMailForNobodyOrSomebodyElseIsRefused(t *testing.T) {
 	}
 }
 
-func TestUnknownMailIsJunkWhenTheDomainSaysSo(t *testing.T) {
+// The catch-all junks, forwards to the INBOX, or drops, as the domain says.
+func TestTheCatchAllJunksForwardsOrDrops(t *testing.T) {
 	r := newRig(t)
 	ctx := context.Background()
 	if err := r.st.SetUnknown(ctx, r.domain.ID, store.UnknownJunk, r.account.ID); err != nil {
@@ -251,6 +252,17 @@ func TestUnknownMailIsJunkWhenTheDomainSaysSo(t *testing.T) {
 		t.Errorf("Junk has %d", *st.NumMessages)
 	}
 
+	if err := r.st.SetUnknown(ctx, r.domain.ID, store.UnknownForward, r.account.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.send("anna@example.com", "whoever@reey.ru", letter); err != nil {
+		t.Fatal(err)
+	}
+	inbox, _ := c.Status("INBOX", &imap.StatusOptions{NumMessages: true}).Wait()
+	if *inbox.NumMessages != 1 {
+		t.Errorf("forwarded, INBOX has %d", *inbox.NumMessages)
+	}
+
 	if err := r.st.SetUnknown(ctx, r.domain.ID, store.UnknownDrop, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -258,8 +270,8 @@ func TestUnknownMailIsJunkWhenTheDomainSaysSo(t *testing.T) {
 		t.Errorf("a dropped message is accepted: %v", err)
 	}
 	st, _ = c.Status("Junk", &imap.StatusOptions{NumMessages: true}).Wait()
-	inbox, _ := c.Status("INBOX", &imap.StatusOptions{NumMessages: true}).Wait()
-	if *st.NumMessages != 1 || *inbox.NumMessages != 0 {
+	inbox, _ = c.Status("INBOX", &imap.StatusOptions{NumMessages: true}).Wait()
+	if *st.NumMessages != 1 || *inbox.NumMessages != 1 {
 		t.Errorf("a dropped message was kept: junk %d inbox %d", *st.NumMessages, *inbox.NumMessages)
 	}
 }

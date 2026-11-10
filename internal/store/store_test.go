@@ -390,6 +390,13 @@ func TestADomainDecidesWhatHappensToUnknownMail(t *testing.T) {
 	if r := resolve(t, st, "inbox@reey.ru"); r.Junk {
 		t.Error("mail to a real address was marked junk")
 	}
+
+	if err := st.SetUnknown(ctx, d.ID, UnknownForward, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if r := resolve(t, st, "nobody@reey.ru"); r.Account == nil || r.Account.ID != u.ID || r.Junk || r.Drop {
+		t.Errorf("forward: got %+v", r)
+	}
 }
 
 func TestJunkNeedsSomebodyToGoTo(t *testing.T) {
@@ -399,6 +406,9 @@ func TestJunkNeedsSomebodyToGoTo(t *testing.T) {
 	d, _ := st.DomainByName(ctx, "reey.ru")
 	if err := st.SetUnknown(ctx, d.ID, UnknownJunk, ""); !errors.Is(err, ErrInvalid) {
 		t.Errorf("junk to nobody: %v", err)
+	}
+	if err := st.SetUnknown(ctx, d.ID, UnknownForward, ""); !errors.Is(err, ErrInvalid) {
+		t.Errorf("forward to nobody: %v", err)
 	}
 	if err := st.SetUnknown(ctx, d.ID, UnknownDrop, u.ID); !errors.Is(err, ErrInvalid) {
 		t.Errorf("drop to somebody: %v", err)
@@ -739,7 +749,7 @@ func TestMailIsSentOnOnlyToAnAccountThatKeepsIt(t *testing.T) {
 	if err := st.SetUnknown(ctx, d.ID, UnknownJunk, other.ID); err != nil {
 		t.Fatal(err)
 	}
-	refused("junk to it, then no-reply", st.SetIncoming(ctx, other.ID, IncomingReject, ""), "gets the junk for reey.ru")
+	refused("junk to it, then no-reply", st.SetIncoming(ctx, other.ID, IncomingReject, ""), "gets the catch-all mail for reey.ru")
 	// Keeping is always allowed, and so is anything once nothing is sent on.
 	if err := st.SetIncoming(ctx, inbox.ID, IncomingKeep, ""); err != nil {
 		t.Errorf("keeping: %v", err)

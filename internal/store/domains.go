@@ -12,7 +12,7 @@ import (
 	"mailio/internal/ids"
 )
 
-// Unknown is what a domain does with mail for an address nobody has.
+// Unknown is a domain's catch-all: what it does with mail for an address nobody has.
 type Unknown string
 
 const (
@@ -20,21 +20,27 @@ const (
 	UnknownReject Unknown = "reject"
 	// UnknownDrop accepts it and keeps nothing.
 	UnknownDrop Unknown = "drop"
-	// UnknownJunk delivers it to one chosen account, as junk.
+	// UnknownForward delivers it to one chosen account's INBOX.
+	UnknownForward Unknown = "forward"
+	// UnknownJunk delivers it to one chosen account's Junk.
 	UnknownJunk Unknown = "junk"
 )
 
 func (u Unknown) valid() bool {
-	return u == UnknownReject || u == UnknownDrop || u == UnknownJunk
+	return u == UnknownReject || u == UnknownDrop || u == UnknownForward || u == UnknownJunk
 }
+
+// toAccount is whether it goes to an account, which only a domain can choose.
+func (u Unknown) toAccount() bool { return u == UnknownForward || u == UnknownJunk }
 
 // Domain is one domain mailio receives mail for.
 type Domain struct {
 	ID      string
 	Name    string
 	Unknown Unknown
-	// UnknownAccountID is who gets the junk, set exactly when Unknown is UnknownJunk. Both are the
-	// domain's own when UnknownOwn is set, and ignored for the default's otherwise.
+	// UnknownAccountID is who gets the mail, set exactly when Unknown is UnknownForward or
+	// UnknownJunk. Both are the domain's own when UnknownOwn is set, and ignored for the default's
+	// otherwise.
 	UnknownAccountID string
 	UnknownOwn       bool
 	CreatedAt        time.Time
@@ -175,18 +181,18 @@ func domainWhere(ctx context.Context, db queryer, where string, args ...any) (*D
 	return d, nil
 }
 
-// checkUnknown validates what is done with unknown mail: accountID names who gets it for
-// UnknownJunk, and is empty otherwise. The account may be at any domain: junk for one domain can be
-// read by somebody at another.
+// checkUnknown validates a catch-all: accountID names who gets the mail for UnknownForward and
+// UnknownJunk, and is empty otherwise. The account may be at any domain: one domain's catch-all
+// can be read by somebody at another.
 func checkUnknown(ctx context.Context, q queryer, u Unknown, accountID string) (any, error) {
 	if !u.valid() {
-		return nil, Invalid("Unknown mail is rejected, dropped, or delivered as junk.")
+		return nil, Invalid("A catch-all rejects, drops, forwards, or delivers as junk.")
 	}
-	if (u == UnknownJunk) != (accountID != "") {
-		if u == UnknownJunk {
-			return nil, Invalid("Choose who gets the junk.")
+	if u.toAccount() != (accountID != "") {
+		if u.toAccount() {
+			return nil, Invalid("Choose who gets the mail.")
 		}
-		return nil, Invalid("Only junk goes to an account.")
+		return nil, Invalid("Only forwarded mail and junk go to an account.")
 	}
 	if accountID == "" {
 		return nil, nil
@@ -195,14 +201,15 @@ func checkUnknown(ctx context.Context, q queryer, u Unknown, accountID string) (
 	if err != nil {
 		return nil, err
 	}
-	if err := keeps(a, "junk"); err != nil {
+	if err := keeps(a, "catch-all mail"); err != nil {
 		return nil, err
 	}
 	return accountID, nil
 }
 
-// SetUnknown decides what the domain does with mail for addresses nobody has; "" follows the
-// default. accountID names who gets it for UnknownJunk, and is empty otherwise.
+// SetUnknown sets the domain's catch-all, what it does with mail for addresses nobody has; ""
+// follows the default. accountID names who gets the mail for UnknownForward and UnknownJunk, and
+// is empty otherwise.
 func (s *Store) SetUnknown(ctx context.Context, domainID string, u Unknown, accountID string) error {
 	own := u != ""
 	if !own {

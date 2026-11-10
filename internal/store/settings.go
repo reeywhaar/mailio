@@ -34,8 +34,8 @@ func (p SPF) valid() bool { return p == SPFFail || p == SPFSoftFail || p == SPFN
 
 // Settings are the server-wide defaults a domain follows unless it has its own.
 type Settings struct {
-	// Unknown is what a domain does with mail for addresses nobody has: reject or drop. Junk
-	// goes to one account, so only a domain chooses it.
+	// Unknown is the catch-all, what a domain does with mail for addresses nobody has: reject or
+	// drop. Forward and junk go to one account, so only a domain chooses them.
 	Unknown Unknown
 	DMARC   DMARC
 	SPF     SPF
@@ -74,7 +74,7 @@ func (s *Store) SetSettings(ctx context.Context, set Settings) error {
 		return Invalid("An SPF ends in -all, ~all or ?all.")
 	}
 	if set.Unknown != UnknownReject && set.Unknown != UnknownDrop {
-		return Invalid("By default, mail for unknown addresses is rejected or dropped. Junk is chosen per domain.")
+		return Invalid("The default catch-all rejects or drops. Forward and junk go to an account, chosen per domain.")
 	}
 	if err := checkLimit(set.MaxMessageBytes); err != nil {
 		return err

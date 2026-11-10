@@ -15,7 +15,8 @@ type Recipient struct {
 	// Account gets the mail. Nil for an address at our domain that nobody has, unless the domain
 	// sends that mail to somebody as junk.
 	Account *Account
-	// Junk is mail for an address nobody has, delivered to the domain's chosen account.
+	// Junk is mail for an address nobody has, for the Junk folder of the account the domain's
+	// catch-all chose. Forwarded, it goes to that account's INBOX like any other.
 	Junk bool
 	// Drop is mail accepted and kept nowhere.
 	Drop bool
@@ -54,16 +55,16 @@ func (s *Store) Resolve(ctx context.Context, a address.Address) (*Recipient, err
 		return nil, err
 	}
 	r.Limit = d.MessageLimit(set)
-	unknown, junkTo := d.UnknownFor(set)
+	unknown, to := d.UnknownFor(set)
 	switch unknown {
 	case UnknownDrop:
 		r.Drop = true
-	case UnknownJunk:
-		u, err := s.AccountByID(ctx, junkTo)
+	case UnknownForward, UnknownJunk:
+		u, err := s.AccountByID(ctx, to)
 		if err != nil {
 			return nil, err
 		}
-		r.Junk = true
+		r.Junk = unknown == UnknownJunk
 		return r, s.follow(ctx, r, u)
 	}
 	return r, nil

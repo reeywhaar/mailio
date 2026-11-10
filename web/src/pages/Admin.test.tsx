@@ -159,7 +159,12 @@ test("a domain's dialog holds its changes and sends them in one request on Save"
   mount();
   await open(/^reey\.ru/);
   const d = within(dialog("reey.ru"));
-  fireEvent.change(d.getByLabelText("Unknown addresses"), {
+  // Forward and junk both go to an account, forward to its INBOX.
+  fireEvent.change(d.getByLabelText("Catch-all"), {
+    target: { value: "forward" },
+  });
+  expect(d.getByLabelText("Who gets the mail")).toBeTruthy();
+  fireEvent.change(d.getByLabelText("Catch-all"), {
     target: { value: "junk" },
   });
   // Junk goes to somebody at the same domain until somebody else is chosen.
@@ -510,9 +515,9 @@ test("the defaults are changed in their dialog, keeping the relay", async () => 
   mount();
   fireEvent.click(await screen.findByRole("button", { name: "Change…" }));
   const d = within(dialog("Defaults"));
-  // Junk goes to one account, which only a domain chooses.
+  // Forward and junk go to one account, which only a domain chooses.
   expect(
-    within(d.getByLabelText("Unknown addresses"))
+    within(d.getByLabelText("Catch-all"))
       .getAllByRole("option")
       .map((o) => o.textContent),
   ).toEqual(["Reject", "Drop"]);

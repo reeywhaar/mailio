@@ -334,14 +334,14 @@ func (s *Store) SetAccountMessageLimit(ctx context.Context, id string, n int64) 
 	return err
 }
 
-// sentOn refuses while mail is sent on to the account, forwarded or as a domain's junk: it has to
-// keep that mail, so it stays, keeping it.
+// sentOn refuses while mail is sent on to the account, forwarded or by a domain's catch-all: it
+// has to keep that mail, so it stays, keeping it.
 func sentOn(ctx context.Context, tx *sql.Tx, u *Account) error {
 	var junkFor string
 	err := tx.QueryRowContext(ctx,
 		`SELECT name FROM domains WHERE unknown_own AND unknown_account_id = ? ORDER BY name LIMIT 1`, u.ID).Scan(&junkFor)
 	if err == nil {
-		return Conflict("%s gets the junk for %s. Change that first.", u.Address(), junkFor)
+		return Conflict("%s gets the catch-all mail for %s. Change that first.", u.Address(), junkFor)
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("mail sent on: %w", err)

@@ -3,6 +3,7 @@ import { useState, type FormEvent } from "react";
 import {
   BUILT_IN,
   checkDomain,
+  toAccount,
   createDomain,
   deleteDomain,
   updateDomain,
@@ -115,7 +116,7 @@ function DomainSummary({
     <Summary
       parts={[
         {
-          label: "Unknown addresses",
+          label: "Catch-all",
           inherited: domain.unknown === null,
           value: domain.unknown
             ? unknownSummary(
@@ -215,7 +216,8 @@ function AddDomainDialog({
 /** A domain's own settings as a dialog holds them until Save: "" is the default. */
 type Draft = {
   unknown: Unknown | "";
-  junkTo: string;
+  /** Who gets the catch-all's mail, for forward and junk. */
+  to: string;
   dmarc: DMARC | "";
   spf: SPF | "";
   relay: string;
@@ -241,8 +243,8 @@ function DomainDialog({
   const check = useSave();
   const [draft, setDraft] = useDraft<Draft>(open, () => ({
     unknown: domain.unknown ?? "",
-    // Junk goes to somebody at the same domain when there is somebody, the likely reader.
-    junkTo:
+    // Somebody at the same domain when there is somebody, the likely reader.
+    to:
       domain.unknown_account_id ??
       accounts.find((a) => a.domain_id === domain.id && keepsMail(a))?.id ??
       accounts.find(keepsMail)?.id ??
@@ -259,7 +261,7 @@ function DomainDialog({
     const ok = await save(() =>
       updateDomain(domain.id, {
         unknown: draft.unknown,
-        unknown_account_id: draft.unknown === "junk" ? draft.junkTo : null,
+        unknown_account_id: toAccount(draft.unknown) ? draft.to : null,
         dmarc: draft.dmarc,
         spf: draft.spf,
         relay: draft.relay,
@@ -295,7 +297,7 @@ function DomainDialog({
             variant="solid"
             disabled={
               busy ||
-              (draft.unknown === "junk" && !draft.junkTo) ||
+              (toAccount(draft.unknown) && !draft.to) ||
               !limitTyped(draft.limit)
             }
           >
@@ -305,7 +307,7 @@ function DomainDialog({
       }
     >
       <form id="domain" className="flex flex-col gap-3" onSubmit={submit}>
-        <Field label="Unknown addresses">
+        <Field label="Catch-all" hint="Mail for addresses nobody has.">
           <Select
             value={draft.unknown}
             onChange={(e) => set({ unknown: e.target.value as Unknown | "" })}
@@ -315,18 +317,24 @@ function DomainDialog({
               <option
                 key={u}
                 value={u}
-                disabled={u === "junk" && !accounts.some(keepsMail)}
+                disabled={toAccount(u) && !accounts.some(keepsMail)}
               >
                 {unknownLabels[u]}
               </option>
             ))}
           </Select>
         </Field>
-        {draft.unknown === "junk" ? (
-          <Field label="Who gets the junk">
+        {toAccount(draft.unknown) ? (
+          <Field
+            label={
+              draft.unknown === "junk"
+                ? "Who gets the junk"
+                : "Who gets the mail"
+            }
+          >
             <Select
-              value={draft.junkTo}
-              onChange={(e) => set({ junkTo: e.target.value })}
+              value={draft.to}
+              onChange={(e) => set({ to: e.target.value })}
             >
               {accounts.map((a) => (
                 <option key={a.id} value={a.id} disabled={!keepsMail(a)}>

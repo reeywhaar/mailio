@@ -37,7 +37,7 @@ export function Defaults({ settings }: { settings: Settings }) {
     >
       <Facts
         items={[
-          ["Unknown addresses", unknownLabels[settings.unknown]],
+          ["Catch-all", unknownLabels[settings.unknown]],
           ["DMARC", dmarcLabels[settings.dmarc]],
           ["SPF", spfLabels[settings.spf]],
           ["Largest message", megabytes(settings.max_message_bytes)],
@@ -95,8 +95,8 @@ function DefaultsDialog({
     >
       <form id="defaults" className="flex flex-col gap-3" onSubmit={submit}>
         <Field
-          label="Unknown addresses"
-          hint="Junk to an account is chosen per domain."
+          label="Catch-all"
+          hint="Mail for addresses nobody has. Forward and junk go to an account, chosen per domain."
         >
           <Select
             value={draft.unknown}

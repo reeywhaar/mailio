@@ -6,6 +6,8 @@ package migrations
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
+	"errors"
 	"fmt"
 	"sort"
 )
@@ -14,7 +16,12 @@ import (
 // `date -u +%Y%m%d%H%M%S`, which is what orders it — see docs/conventions.md.
 type Migration struct {
 	Name string
-	Up   func(context.Context, *sql.Tx) error
+	// Rebuild is a migration that recreates a table other tables reference. SQLite cannot change a
+	// CHECK in place, and dropping the old table breaks every reference to it for a moment, so it
+	// runs as SQLite's own procedure says: foreign keys off, and every reference checked before it
+	// commits.
+	Rebuild bool
+	Up      func(context.Context, *sql.Tx) error
 }
 
 // all is the declared order, which is documentation; the sort below is what decides.
@@ -31,6 +38,7 @@ var all = []Migration{
 	accounts,
 	junkPerDomain,
 	messageLimits,
+	catchAll,
 }
 
 func exec(sqlText string) func(context.Context, *sql.Tx) error {
@@ -59,22 +67,73 @@ func Run(ctx context.Context, db *sql.DB) error {
 	}
 
 	for i := version; i < len(list); i++ {
-		m := list[i]
-		tx, err := db.BeginTx(ctx, nil)
-		if err != nil {
-			return fmt.Errorf("migrate %s: %w", m.Name, err)
-		}
-		if err := m.Up(ctx, tx); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("migrate %s: %w", m.Name, err)
-		}
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", i+1)); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("migrate %s: %w", m.Name, err)
-		}
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("migrate %s: %w", m.Name, err)
+		if err := apply(ctx, db, list[i], i+1); err != nil {
+			return fmt.Errorf("migrate %s: %w", list[i].Name, err)
 		}
 	}
 	return nil
+}
+
+// apply runs one migration and stamps the version it brings the database to, on one connection
+// throughout: a pragma is the connection's.
+func apply(ctx context.Context, db *sql.DB, m Migration, version int) error {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if !m.Rebuild {
+		return inTx(ctx, conn, m, version)
+	}
+	// Outside the transaction, where SQLite would ignore it, and on again whatever happened.
+	if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
+		return err
+	}
+	err = inTx(ctx, conn, m, version)
+	if _, on := conn.ExecContext(context.Background(), "PRAGMA foreign_keys = ON"); on != nil {
+		// The connection goes back to the pool unchecked otherwise.
+		conn.Raw(func(any) error { return driver.ErrBadConn })
+		return errors.Join(err, on)
+	}
+	return err
+}
+
+func inTx(ctx context.Context, conn *sql.Conn, m Migration, version int) error {
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := m.Up(ctx, tx); err != nil {
+		return err
+	}
+	if m.Rebuild {
+		if err := referencesHold(ctx, tx); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", version)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// referencesHold refuses a rebuild that left a row pointing at nothing.
+func referencesHold(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, "PRAGMA foreign_key_check")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	if rows.Next() {
+		var (
+			table, parent string
+			rowid, fkid   sql.NullInt64
+		)
+		if err := rows.Scan(&table, &rowid, &parent, &fkid); err != nil {
+			return err
+		}
+		return fmt.Errorf("a row of %s refers to a %s that is not there", table, parent)
+	}
+	return rows.Err()
 }

@@ -35,10 +35,10 @@ stops until it is given the new one.
 | `reject` | is refused at `RCPT TO`, `550 5.2.1`: an address that only sends, such as `noreply@` |
 | `forward` | is delivered to another account's INBOX instead |
 
-**Mail is sent on once, to an account that keeps it.** A forward, or a domain's junk, goes only
+**Mail is sent on once, to an account that keeps it.** A forward, or a domain's catch-all, goes only
 to an account whose incoming is `keep`: one that is no-reply would refuse it, and one that
 forwards would make a chain. And an account mail is sent on to keeps its mail: while somebody
-forwards to it or it gets a domain's junk, it stays `keep` and is not deleted. Both sides are
+forwards to it or it gets a domain's catch-all, it stays `keep` and is not deleted. Both sides are
 checked in the transaction that saves, so there are no chains and no circles to follow.
 
 Delivery still follows at most 5 forwards before refusing the mail, for anything saved before
@@ -58,7 +58,7 @@ It is the largest the account receives, sends and stores:
 | mail it sends | at `MAIL FROM` when the client gives the size, and after `DATA` otherwise, so the mail app says so at once |
 | `APPEND` over IMAP | `TOOBIG`; once signed in, `APPENDLIMIT` is the account's |
 
-**Mail sent on has to fit every account it reaches.** Mail forwarded, or a domain's junk, takes
+**Mail sent on has to fit every account it reaches.** Mail forwarded, or a domain's catch-all, takes
 the smaller of the address it was sent to and the account that keeps it, and mail sent from one
 account here to another fits both.
 
@@ -86,20 +86,23 @@ The whole address is lowercased on the way in, the local part as well as the dom
 allows a server to tell `Inbox@` from `inbox@`; no sender expects one to, and mail that arrives
 spelled one way and bounces spelled another is worse than two addresses that cannot coexist.
 
-## Mail for an address nobody has follows a default, which a domain can override
+## The catch-all follows a default, which a domain can override
 
-The default is set under Defaults in the admin interface, and a domain's own setting, in its
-settings dialog, wins over it:
+The catch-all is what happens to mail for an address at the domain that nobody has. The default
+is set under Defaults in the admin interface, and a domain's own, in its settings dialog, wins
+over it:
 
 | setting | what happens | |
 | --- | --- | --- |
 | `reject` | refused while the sender is still connected | the default until changed |
 | `drop` | accepted and thrown away | default or a domain's |
-| `junk` | delivered to one chosen account, as junk | a domain's only |
+| `forward` | delivered to one chosen account's INBOX | a domain's only |
+| `junk` | delivered to one chosen account's Junk folder | a domain's only |
 
-**Junk is never the default.** It goes to one account, which is somebody at one domain, and the
-junk of every domain landing in one person's mailbox is a choice to make per domain. The account
-may be at any domain, and cannot be deleted while a domain sends it junk.
+**Forward and junk are never the default.** Each goes to one account, which is somebody at one
+domain, and every domain's stray mail landing in one person's mailbox is a choice to make per
+domain. The account may be at any domain, and cannot be deleted while a domain's catch-all sends
+it mail.
 
 ## An unknown address is refused while the sender is still connected
 

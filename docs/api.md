@@ -17,13 +17,13 @@ CSRF defense; the `SameSite=Lax` cookie is the other.
 | `GET /api/me` | the signed-in admin |
 | `GET /api/domains` | every domain, each record with `managed` (false for MX), `status` (`ok`, `missing`, `different`, `several`, `failed`, or null before the first check), `found`, and `error` for a failed one, and the domain's `dns_checked_at` |
 | `POST /api/domains` | `{name}` |
-| `PATCH /api/domains/{id}` | `{unknown, unknown_account_id, dmarc, spf, relay, max_message_bytes}`, each optional; `""` or `0` returns one to the default, and `relay` is `"builtin"` or a relay's id. See [addresses.md](addresses.md) |
+| `PATCH /api/domains/{id}` | `{unknown, unknown_account_id, dmarc, spf, relay, max_message_bytes}`, each optional; `unknown` is the catch-all, `reject`, `drop`, `forward` or `junk`, the last two with `unknown_account_id`; `""` or `0` returns one to the default, and `relay` is `"builtin"` or a relay's id. See [addresses.md](addresses.md) |
 | `POST /api/domains/{id}/check` | looks up its records now → the domain |
 | `DELETE /api/domains/{id}` | `409` while it has accounts |
 | `GET /api/accounts` | every account, with its credentials and never a password |
 | `POST /api/accounts` | `{address}` → the account and `password`, its `default` credential's, generated and in this answer only |
 | `PATCH /api/accounts/{id}` | `{incoming, forward_account_id, max_message_bytes}`, each optional: `keep`, `reject`, or `forward` to an account, and its own largest message, `0` returning it to its domain's |
-| `DELETE /api/accounts/{id}` | `409` for an account getting junk, or forwarded to |
+| `DELETE /api/accounts/{id}` | `409` for an account getting a domain's catch-all, or forwarded to |
 | `POST /api/accounts/{id}/credentials` | `{label, password}` → `{id, label, login, password, …}`, the login newly tagged. An empty password is generated; either way it is in this answer only |
 | `POST /api/accounts/{id}/credentials/{cid}/reset` | `{password}`, empty for a generated one → the same credential and login with the new `password`, in this answer only |
 | `DELETE /api/accounts/{id}/credentials/{cid}` | the last may go too |

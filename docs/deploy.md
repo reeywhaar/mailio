@@ -256,14 +256,14 @@ deliver over it all the same, and mail clients warn.
 
 ## Defaults, and each domain's own
 
-Unknown addresses, DMARC, SPF, the relay and the largest message have a server-wide default,
+The catch-all, DMARC, SPF, the relay and the largest message have a server-wide default,
 under Defaults and Sending in the admin interface, and each domain can override any of them in
 its settings, opened by a click on its row. A domain that does not follows the default, whatever
 it becomes later. The largest message can be overridden once more, by an account.
 
 | | default | a domain's own |
 | --- | --- | --- |
-| unknown addresses | `reject` or `drop` | `reject`, `drop`, or `junk` to an account; see [addresses.md](addresses.md) |
+| catch-all | `reject` or `drop` | `reject`, `drop`, or `forward` or `junk` to an account; see [addresses.md](addresses.md) |
 | DMARC | `reject` | `reject`, `quarantine` or `none` |
 | SPF ending | `~all` | `-all`, `~all` or `?all` |
 | relay | built-in, or one of the relays | built-in, or one of the relays |

@@ -15,7 +15,8 @@ One name per thing, in identifiers, the API, the docs and the interface.
 | login | what signs in with one credential: the address, tagged unless it is the default | `Login` |
 | mailbox | an IMAP folder inside an account: INBOX, Sent, Junk | `mailboxes` |
 | relay | a server mail is sent through instead of straight to the recipient's, with a unique label | `Relay`, `relays` |
-| defaults | what every domain follows unless it has its own: unknown addresses, DMARC, SPF, relay | `Settings`, `settings` |
+| defaults | what every domain follows unless it has its own: catch-all, DMARC, SPF, relay, largest message | `Settings`, `settings` |
+| catch-all | what a domain does with mail for an address nobody has: reject, drop, forward, junk | `Unknown`, `domains.unknown` |
 | admin | a name and a password that sign in to the admin interface; never an account | `Admin`, `admins` |
 | admin link | the one-time link that makes an admin | `AdminLink`, `admin_links` |
 | address | `local@domain`, lowercased | `address.Address` |

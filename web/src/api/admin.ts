@@ -1,10 +1,16 @@
 import { request } from "@app/api/transport";
 
-/** What happens to mail for an address nobody has. */
-export type Unknown = "reject" | "drop" | "junk";
+/**
+ * The catch-all: what happens to mail for an address nobody has. Forward delivers it to one
+ * account's INBOX, junk to its Junk folder.
+ */
+export type Unknown = "reject" | "drop" | "forward" | "junk";
 
-/** What the default can be: junk goes to one account, which only a domain chooses. */
-export type DefaultUnknown = Exclude<Unknown, "junk">;
+/** What the default can be: forward and junk go to one account, which only a domain chooses. */
+export type DefaultUnknown = Exclude<Unknown, "forward" | "junk">;
+
+/** Whether a catch-all goes to an account. */
+export const toAccount = (u: Unknown | "") => u === "forward" || u === "junk";
 
 /** What receivers do with mail forging a domain, which mailio publishes as its DMARC. */
 export type DMARC = "reject" | "quarantine" | "none";
@@ -51,7 +57,7 @@ export type Domain = {
   id: string;
   name: string;
   unknown: Unknown | null;
-  /** Who gets the junk, set exactly when unknown is "junk". */
+  /** Who gets the catch-all's mail, set exactly when unknown is "forward" or "junk". */
   unknown_account_id: string | null;
   dmarc: DMARC | null;
   spf: SPF | null;
