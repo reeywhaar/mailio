@@ -505,7 +505,7 @@ export function Summary({
       {parts.map((p) => (
         <span key={p.label}>
           {p.label}:{" "}
-          <span className={p.inherited ? "text-faint" : "text-fg"}>
+          <span className={p.inherited ? "text-faint/60" : "text-fg"}>
             {p.value}
           </span>
           {p.inherited ? <span className="sr-only"> (default)</span> : null}
