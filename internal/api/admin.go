@@ -17,8 +17,13 @@ func accountJSON(u *store.Account, passwords []store.Credential) map[string]any 
 	for i := range passwords {
 		list[i] = credentialJSON(u, &passwords[i])
 	}
+	kind := "account"
+	if u.Alias {
+		kind = "alias"
+	}
 	return map[string]any{
 		"id":                 u.ID,
+		"kind":               kind,
 		"address":            u.Address(),
 		"domain_id":          u.DomainID,
 		"incoming":           u.Incoming,
@@ -334,12 +339,24 @@ func (s *Server) writeAccount(w http.ResponseWriter, r *http.Request, status int
 }
 
 // createAccount makes an account from an address alone. Its default password is generated, and this
-// answer is the one time it is shown: only its hash is kept.
+// answer is the one time it is shown: only its hash is kept. With alias_of it makes an alias of
+// that account instead, which has no password.
 func (s *Server) createAccount(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Address string `json:"address"`
+		AliasOf string `json:"alias_of"`
 	}
 	if !decode(w, r, &req) {
+		return
+	}
+	if req.AliasOf != "" {
+		a, err := s.st.CreateAlias(r.Context(), req.Address, req.AliasOf)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		s.log.Info("alias created", "account", a.ID, "of", req.AliasOf, "by", adminOf(r).ID)
+		writeJSON(w, http.StatusCreated, accountJSON(a, nil))
 		return
 	}
 	password := store.GeneratePassword()

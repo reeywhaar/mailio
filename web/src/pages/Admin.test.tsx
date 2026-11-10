@@ -24,6 +24,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 const inbox: Account = {
   id: "ac_1",
+  kind: "account",
   address: "inbox@reey.ru",
   domain_id: "dm_1",
   incoming: "keep",
@@ -280,6 +281,52 @@ test("a new account is added under its domain by its name alone, and shows its g
   await waitFor(() =>
     expect(screen.queryByText("Generated24CharacterPass")).toBeNull(),
   );
+});
+
+test("an alias is added of an account that keeps its mail, shows no password, and is a row of its own", async () => {
+  const shop: Account = {
+    ...inbox,
+    id: "ac_3",
+    kind: "alias",
+    address: "shop@reey.ru",
+    incoming: "forward",
+    forward_account_id: "ac_1",
+    credentials: [],
+  };
+  let accounts = [inbox];
+  const { sent } = routes({
+    "GET /api/accounts": () => ({ body: accounts }),
+    "POST /api/accounts": () => {
+      accounts = [inbox, shop];
+      return { body: shop };
+    },
+  });
+  mount();
+  fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
+  const d = within(dialog("Add an account"));
+  fireEvent.click(d.getByRole("radio", { name: "Alias" }));
+  const a = within(dialog("Add an alias"));
+  fireEvent.change(a.getByLabelText("Name at reey.ru"), {
+    target: { value: "shop" },
+  });
+  expect((a.getByLabelText("Alias of") as HTMLSelectElement).value).toBe(
+    "ac_1",
+  );
+  fireEvent.click(a.getByRole("button", { name: "Add" }));
+
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog", { name: "Add an alias" })).toBeNull(),
+  );
+  expect(writes(sent)).toEqual([
+    {
+      method: "POST",
+      path: "/api/accounts",
+      body: { address: "shop@reey.ru", alias_of: "ac_1" },
+    },
+  ]);
+  expect(
+    await screen.findByRole("button", { name: /^shop@reey\.ru.*Alias of/ }),
+  ).toBeTruthy();
 });
 
 test("a credential is added by its label, and its login and password are shown once", async () => {

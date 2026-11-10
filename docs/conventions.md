@@ -12,6 +12,7 @@ One name per thing, in identifiers, the API, the docs and the interface.
 | domain | a domain mailio receives mail for | `Domain`, `domains`, `domain_id` |
 | account | an address mail is delivered to, and the credentials that sign in as it | `Account`, `accounts`, `account_id` |
 | credential | one of an account's sign-ins: a label, a login and a generated password | `Credential`, `credentials` |
+| alias | another address of an account, which holds its mail, signs in for it and sends as it | `Account.Alias`, `accounts.alias` |
 | login | what signs in with one credential: the address, tagged unless it is the default | `Login` |
 | mailbox | an IMAP folder inside an account: INBOX, Sent, Junk | `mailboxes` |
 | relay | a server mail is sent through instead of straight to the recipient's, with a unique label | `Relay`, `relays` |

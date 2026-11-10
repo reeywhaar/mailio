@@ -47,6 +47,9 @@ type Account struct {
 	// ViaRelay goes through RelayID.
 	Via     string
 	RelayID string
+	// Alias is only an address: its mail always goes to ForwardAccountID, which signs in for it,
+	// holds its mail and sends as it.
+	Alias bool
 }
 
 // Incoming is what an account does with mail sent to it.
@@ -71,7 +74,7 @@ func (u *Account) Address() string { return u.Local + "@" + u.Domain }
 const accountColumns = `u.id, u.local_part, d.name, u.domain_id, u.created_at, u.incoming, coalesce(u.forward_account_id, ''),
 	coalesce(u.max_message_bytes, 0),
 	coalesce(u.max_message_bytes, d.max_message_bytes, (SELECT max_message_bytes FROM settings WHERE id = 1)),
-	coalesce(u.send_via, ''), coalesce(u.relay_id, '')`
+	coalesce(u.send_via, ''), coalesce(u.relay_id, ''), u.alias`
 const accountFrom = ` FROM accounts u JOIN domains d ON d.id = u.domain_id`
 
 func scanAccount(row interface{ Scan(...any) error }) (*Account, error) {
@@ -79,7 +82,7 @@ func scanAccount(row interface{ Scan(...any) error }) (*Account, error) {
 		u       Account
 		created int64
 	)
-	if err := row.Scan(&u.ID, &u.Local, &u.Domain, &u.DomainID, &created, &u.Incoming, &u.ForwardAccountID, &u.MaxMessageBytes, &u.MessageLimit, &u.Via, &u.RelayID); err != nil {
+	if err := row.Scan(&u.ID, &u.Local, &u.Domain, &u.DomainID, &created, &u.Incoming, &u.ForwardAccountID, &u.MaxMessageBytes, &u.MessageLimit, &u.Via, &u.RelayID, &u.Alias); err != nil {
 		return nil, err
 	}
 	u.CreatedAt = fromUnix(created)
@@ -153,10 +156,65 @@ func (s *Store) CreateAccount(ctx context.Context, addr, password string) (*Acco
 	return u, nil
 }
 
+// CreateAlias makes an address at a domain mailio receives for whose mail goes to an account
+// that keeps its mail, and which that account can send as. That account signs in for it and holds
+// its mail.
+func (s *Store) CreateAlias(ctx context.Context, addr, accountID string) (*Account, error) {
+	a, err := address.ParseAccount(addr)
+	if err != nil {
+		return nil, Invalid("%s", err)
+	}
+	d, err := s.DomainByName(ctx, a.Domain)
+	if errors.Is(err, ErrNotFound) {
+		return nil, Invalid("mailio does not receive for %s. Add the domain first.", a.Domain)
+	}
+	if err != nil {
+		return nil, err
+	}
+	tx, err := s.writer.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create alias: %w", err)
+	}
+	defer tx.Rollback()
+	// Read in the transaction that writes, as SetIncoming reads it.
+	target, err := accountWhere(ctx, tx, "u.id = ?", accountID)
+	if err != nil {
+		return nil, err
+	}
+	if err := keeps(target, "alias's mail"); err != nil {
+		return nil, err
+	}
+	now := s.Now()
+	u := &Account{ID: ids.New(ids.Account, now.UnixMilli()), Local: a.Local, Domain: d.Name, DomainID: d.ID, CreatedAt: now,
+		Incoming: IncomingForward, ForwardAccountID: target.ID, Alias: true}
+	if err := insertAccount(ctx, tx, u); err != nil {
+		return nil, err
+	}
+	if u, err = accountWhere(ctx, tx, "u.id = ?", u.ID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("create alias: %w", err)
+	}
+	s.changed()
+	return u, nil
+}
+
+// AliasOf is the alias at addr of the account accountID, which it can send as.
+func (s *Store) AliasOf(ctx context.Context, accountID string, addr address.Address) (*Account, error) {
+	return accountWhere(ctx, s.reader, "u.alias AND u.forward_account_id = ? AND d.name = ? AND u.local_part = ?",
+		accountID, addr.Domain, addr.Name())
+}
+
 func insertAccount(ctx context.Context, db execer, u *Account) error {
+	var forward any
+	if u.ForwardAccountID != "" {
+		forward = u.ForwardAccountID
+	}
 	_, err := db.ExecContext(ctx,
-		`INSERT INTO accounts (id, domain_id, local_part, created_at) VALUES (?, ?, ?, ?)`,
-		u.ID, u.DomainID, u.Local, unix(u.CreatedAt))
+		`INSERT INTO accounts (id, domain_id, local_part, created_at, incoming, forward_account_id, alias)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		u.ID, u.DomainID, u.Local, unix(u.CreatedAt), u.Incoming, forward, u.Alias)
 	if isUnique(err) {
 		return Conflict("%s is taken.", u.Address())
 	}
@@ -286,6 +344,9 @@ func (s *Store) SetIncoming(ctx context.Context, id string, in Incoming, forward
 	if err != nil {
 		return err
 	}
+	if u.Alias && in != IncomingForward {
+		return Invalid("An alias's mail always goes to an account. Delete the alias to stop it.")
+	}
 	if in != IncomingKeep {
 		if err := sentOn(ctx, tx, u); err != nil {
 			return err
@@ -352,6 +413,9 @@ func sentOn(ctx context.Context, tx *sql.Tx, u *Account) error {
 		return fmt.Errorf("mail sent on: %w", err)
 	}
 	from, err := accountWhere(ctx, tx, "u.forward_account_id = ? ORDER BY d.name, u.local_part LIMIT 1", u.ID)
+	if err == nil && from.Alias {
+		return Conflict("%s is an alias of %s. Change that first.", from.Address(), u.Address())
+	}
 	if err == nil {
 		return Conflict("%s forwards to %s. Change that first.", from.Address(), u.Address())
 	}
@@ -363,6 +427,9 @@ func sentOn(ctx context.Context, tx *sql.Tx, u *Account) error {
 
 // keeps refuses sending mail on to an account that does not keep its own.
 func keeps(a *Account, what string) error {
+	if a.Alias {
+		return Conflict("%s is an alias. Send the %s straight to the account it belongs to.", a.Address(), what)
+	}
 	switch a.Incoming {
 	case IncomingReject:
 		return Conflict("%s is no-reply, and would refuse the %s.", a.Address(), what)

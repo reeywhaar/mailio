@@ -40,6 +40,7 @@ var all = []Migration{
 	messageLimits,
 	catchAll,
 	accountRelay,
+	aliases,
 }
 
 func exec(sqlText string) func(context.Context, *sql.Tx) error {

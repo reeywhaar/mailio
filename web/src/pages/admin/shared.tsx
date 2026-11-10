@@ -501,6 +501,7 @@ export const keepsMail = (a: Account) => a.incoming === "keep";
 
 /** An account as a picker offers it, marked where it would not keep what is sent on. */
 export function accountOption(a: Account) {
+  if (a.kind === "alias") return `${a.address} · alias`;
   if (a.incoming === "reject") return `${a.address} · no-reply`;
   if (a.incoming === "forward") return `${a.address} · forwards`;
   return a.address;
@@ -548,12 +549,18 @@ export function Toward({
   );
 }
 
-/** Who sends mail on to an account: those forwarding to it, and domains whose catch-all it gets. */
+/**
+ * Who sends mail on to an account: its aliases, those forwarding to it, and domains whose
+ * catch-all it gets.
+ */
 export function sendersTo(id: string, accounts: Account[], domains: Domain[]) {
   return [
     ...accounts
       .filter((a) => a.incoming === "forward" && a.forward_account_id === id)
-      .map((a) => ({ name: a.address, sends: "forward" })),
+      .map((a) => ({
+        name: a.address,
+        sends: a.kind === "alias" ? "alias" : "forward",
+      })),
     ...domains
       .filter((d) => d.unknown_account_id === id)
       .map((d) => ({

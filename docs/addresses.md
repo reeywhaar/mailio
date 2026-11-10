@@ -44,6 +44,21 @@ checked in the transaction that saves, so there are no chains and no circles to 
 Delivery still follows at most 5 forwards before refusing the mail, for anything saved before
 the rule.
 
+## An alias is another address of an account
+
+An alias is added like an account, by switching the Add dialog to Alias, and names the account
+it belongs to, at any domain. Mail to it, tagged or not, goes to that account's INBOX, and that
+account can send as it: `MAIL FROM` the alias, signed with the alias's domain's DKIM key, through
+the account's own relay and within its own largest message.
+
+The account it belongs to signs in for it and holds its mail, so an alias is only an address. It
+counts as mail sent on, by the rule above: the account it belongs to keeps its mail and is not deleted while it has aliases,
+and nothing forwards to an alias or gets its domain's catch-all sent to it. Deleting an alias
+refuses its mail from then on; what it brought stays with the account.
+
+A forwarding account is the other way to send mail on: it keeps credentials and mailboxes of its
+own, and signs in and sends as itself.
+
 ## The largest message is a default, a domain's own, or an account's own
 
 The default is 50 MB, set under Defaults. A domain's own wins over it, and an account's own over

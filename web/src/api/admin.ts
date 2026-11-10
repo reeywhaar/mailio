@@ -143,9 +143,14 @@ export type Credential = {
 /** A credential with its password, as the one answer that makes or replaces it carries it. */
 export type MadeCredential = Credential & { password: string };
 
-/** An address mail is delivered to, and the credentials that sign in as it. Never signs in here. */
+/**
+ * An address mail is delivered to, and the credentials that sign in as it. Never signs in here.
+ * An alias has no credentials or mailboxes: its mail goes to forward_account_id, which can send
+ * as it.
+ */
 export type Account = {
   id: string;
+  kind: "account" | "alias";
   address: string;
   domain_id: string;
   incoming: Incoming;
@@ -227,6 +232,13 @@ export const createAccount = (address: string) =>
   request<Account & { password: string }>("/api/accounts", {
     method: "POST",
     body: { address },
+  });
+
+/** Makes an alias of an account, which has no password. */
+export const createAlias = (address: string, aliasOf: string) =>
+  request<Account>("/api/accounts", {
+    method: "POST",
+    body: { address, alias_of: aliasOf },
   });
 
 export const updateAccount = (id: string, change: AccountChange) =>

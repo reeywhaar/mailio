@@ -113,6 +113,9 @@ func (s *Store) AddCredential(ctx context.Context, accountID, label, password st
 	if err != nil {
 		return nil, err
 	}
+	if u.Alias {
+		return nil, Invalid("An alias has no credentials: the account it belongs to signs in and sends as it.")
+	}
 	var taken int
 	if err := s.reader.QueryRowContext(ctx,
 		`SELECT count(*) FROM credentials WHERE account_id = ? AND label = ?`, accountID, label).Scan(&taken); err != nil {

@@ -121,9 +121,11 @@ func (s *subSession) Mail(from string, opts *smtp.MailOptions) error {
 		return smtp.ErrAuthRequired
 	}
 	a, err := address.Parse(from)
-	// An account sends as itself, tagged or not: from inbox+shop@ as readily as inbox@.
-	if err != nil || a.Domain != s.account.Domain || a.Name() != s.account.Local {
-		return &smtp.SMTPError{Code: 553, EnhancedCode: smtp.EnhancedCode{5, 7, 1}, Message: "You can only send as " + s.account.Address()}
+	// An account sends as itself and as its aliases, tagged or not: from inbox+shop@ as readily
+	// as inbox@.
+	if err != nil || !s.sendsAs(a) {
+		return &smtp.SMTPError{Code: 553, EnhancedCode: smtp.EnhancedCode{5, 7, 1},
+			Message: "You can only send as " + s.account.Address() + " or an alias of it"}
 	}
 	s.Reset()
 	s.from = a.String()
@@ -135,6 +137,15 @@ func (s *subSession) Mail(from string, opts *smtp.MailOptions) error {
 		return s.tooBig()
 	}
 	return nil
+}
+
+// sendsAs is whether the account may send from a: its own address or one of its aliases.
+func (s *subSession) sendsAs(a address.Address) bool {
+	if a.Domain == s.account.Domain && a.Name() == s.account.Local {
+		return true
+	}
+	_, err := s.sub.st.AliasOf(context.Background(), s.account.ID, a)
+	return err == nil
 }
 
 // tooBig refuses a message larger than the account sends, or than a local recipient takes.
@@ -185,7 +196,7 @@ func (s *subSession) Data(r io.Reader) error {
 		return s.tooBig()
 	}
 	ctx := context.Background()
-	raw, err := s.sub.prepare(ctx, s.account, NormalizeCRLF(body))
+	raw, err := s.sub.prepare(ctx, s.from, NormalizeCRLF(body))
 	if err != nil {
 		s.sub.log.Error("preparing a message failed", "account", s.account.ID, "error", err)
 		return errTemporary
@@ -237,8 +248,13 @@ func (s *subSession) Data(r io.Reader) error {
 	return nil
 }
 
-// prepare adds what a client may leave out, stamps Received, and signs with the domain's DKIM key.
-func (sub *Submission) prepare(ctx context.Context, u *store.Account, body []byte) ([]byte, error) {
+// prepare adds what a client may leave out, stamps Received, and signs with the DKIM key of the
+// domain it is sent from, an alias's when it is sent as one.
+func (sub *Submission) prepare(ctx context.Context, from string, body []byte) ([]byte, error) {
+	sender, err := address.Parse(from)
+	if err != nil {
+		return nil, err
+	}
 	var head bytes.Buffer
 	fmt.Fprintf(&head, "Received: by %s (mailio) with ESMTPSA;\r\n\t%s\r\n", sub.host, time.Now().Format(time.RFC1123Z))
 	if m, err := mail.ReadMessage(bytes.NewReader(body)); err == nil {
@@ -248,12 +264,12 @@ func (sub *Submission) prepare(ctx context.Context, u *store.Account, body []byt
 		if m.Header.Get("Message-ID") == "" {
 			id := make([]byte, 12)
 			rand.Read(id)
-			fmt.Fprintf(&head, "Message-ID: <%s@%s>\r\n", hex.EncodeToString(id), u.Domain)
+			fmt.Fprintf(&head, "Message-ID: <%s@%s>\r\n", hex.EncodeToString(id), sender.Domain)
 		}
 	}
 	raw := append(head.Bytes(), body...)
 
-	d, err := sub.st.DomainByID(ctx, u.DomainID)
+	d, err := sub.st.DomainByName(ctx, sender.Domain)
 	if err != nil {
 		return nil, err
 	}

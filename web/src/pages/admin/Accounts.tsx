@@ -4,6 +4,7 @@ import {
   BUILT_IN,
   addCredential,
   createAccount,
+  createAlias,
   deleteAccount,
   deleteCredential,
   resetCredential,
@@ -18,6 +19,7 @@ import {
 import { Button } from "@app/components/Button";
 import { Dialog } from "@app/components/Dialog";
 import { Field, Select } from "@app/components/Field";
+import { Segmented } from "@app/components/Segmented";
 import { TextField } from "@app/components/TextField";
 import {
   DeleteButton,
@@ -29,6 +31,7 @@ import {
   Summary,
   Toward,
   accountOption,
+  addressOf,
   incomingLabels,
   keepsMail,
   limitTyped,
@@ -45,8 +48,8 @@ import {
 } from "@app/pages/admin/shared";
 
 /**
- * A domain's accounts, as rows under the domain's own, each saying what its mail does; a click
- * opens its settings. The last row adds one at the domain.
+ * A domain's accounts and aliases, as rows under the domain's own, each saying what its mail does;
+ * a click opens its settings. The last row adds one at the domain.
  */
 export function DomainAccounts({
   domain,
@@ -92,9 +95,17 @@ export function DomainAccounts({
         <AddAccountDialog
           open={adding}
           domain={domain}
+          accounts={accounts}
           onClose={() => setAdding(false)}
         />
-        {account ? (
+        {account?.kind === "alias" ? (
+          <AliasDialog
+            open
+            alias={account}
+            accounts={accounts}
+            onClose={() => setOpen(null)}
+          />
+        ) : account ? (
           <AccountDialog
             open
             account={account}
@@ -121,6 +132,18 @@ function AccountSummary({
   accounts: Account[];
   relays: Relay[];
 }) {
+  if (account.kind === "alias") {
+    return (
+      <Summary
+        parts={[
+          {
+            label: "Alias of",
+            value: addressOf(account.forward_account_id, accounts),
+          },
+        ]}
+      />
+    );
+  }
   const incoming =
     account.incoming === "forward" ? (
       <Toward
@@ -152,30 +175,50 @@ function AccountSummary({
   );
 }
 
+type Kind = Account["kind"];
+
 /**
- * A name at the domain, and nothing else asked: its default credential's password is generated.
+ * A name at the domain, and an account or an alias of one. An account's default credential's
+ * password is generated and shown here once; an alias has none, and the dialog closes.
  */
 function AddAccountDialog({
   open,
   domain,
+  accounts,
   onClose,
 }: {
   open: boolean;
   domain: Domain;
+  accounts: Account[];
   onClose: () => void;
 }) {
   const { save, busy, error } = useSave();
-  const [name, setName] = useDraft(open, () => "");
+  const keepers = accounts.filter(keepsMail);
+  const [draft, setDraft] = useDraft(open, () => ({
+    kind: "account" as Kind,
+    name: "",
+    // Somebody at the same domain when there is somebody, the likely owner.
+    aliasOf:
+      keepers.find((a) => a.domain_id === domain.id)?.id ??
+      keepers[0]?.id ??
+      "",
+  }));
   const [made, setMade] = useDraft<{ login: string; password: string } | null>(
     open,
     () => null,
   );
   const settling = useSettling(made);
+  const alias = draft.kind === "alias";
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    const address = `${draft.name.trim()}@${domain.name}`;
+    if (alias) {
+      if (await save(() => createAlias(address, draft.aliasOf))) onClose();
+      return;
+    }
     await save(async () => {
-      const a = await createAccount(`${name.trim()}@${domain.name}`);
+      const a = await createAccount(address);
       setMade({ login: a.address, password: a.password });
     });
   };
@@ -184,7 +227,7 @@ function AddAccountDialog({
     <Dialog
       open={open}
       onClose={onClose}
-      title={made ? "Account added" : "Add an account"}
+      title={made ? "Account added" : alias ? "Add an alias" : "Add an account"}
       footer={
         made ? (
           <Button variant="solid" onClick={() => !settling() && onClose()}>
@@ -197,7 +240,7 @@ function AddAccountDialog({
               type="submit"
               form="add-account"
               variant="solid"
-              disabled={busy || !name.trim()}
+              disabled={busy || !draft.name.trim() || (alias && !draft.aliasOf)}
             >
               Add
             </Button>
@@ -213,6 +256,15 @@ function AddAccountDialog({
           className="flex flex-col gap-3"
           onSubmit={submit}
         >
+          <Segmented
+            label="Kind"
+            value={draft.kind}
+            onChange={(kind) => setDraft({ ...draft, kind })}
+            options={[
+              { value: "account", label: "Account" },
+              { value: "alias", label: "Alias", disabled: !keepers.length },
+            ]}
+          />
           <Field label="Address">
             <span className="flex items-center gap-2">
               <TextField
@@ -224,15 +276,23 @@ function AddAccountDialog({
                 spellCheck={false}
                 data-autofocus
                 className="min-w-0 flex-1"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
+                value={draft.name}
+                onChange={(e) => setDraft({ ...draft, name: e.target.value })}
               />
               <span className="shrink-0 text-muted">@{domain.name}</span>
             </span>
           </Field>
-          <p className="text-sm text-muted">
-            Its password is generated, and shown once.
-          </p>
+          {alias ? (
+            <AliasOf
+              value={draft.aliasOf}
+              onChange={(aliasOf) => setDraft({ ...draft, aliasOf })}
+              accounts={accounts}
+            />
+          ) : (
+            <p className="text-sm text-muted">
+              Its password is generated, and shown once.
+            </p>
+          )}
           {error ? <p className="text-sm text-accent">{error}</p> : null}
         </form>
       )}
@@ -460,6 +520,98 @@ function AccountDialog({
         credential={credential ?? null}
         onClose={() => setCredential(undefined)}
       />
+    </Dialog>
+  );
+}
+
+/** Which account an alias belongs to: one that keeps its mail. */
+function AliasOf({
+  value,
+  onChange,
+  accounts,
+}: {
+  value: string;
+  onChange: (id: string) => void;
+  accounts: Account[];
+}) {
+  return (
+    <Field
+      label="Alias of"
+      hint="Its mail goes to that account, which can send as it too."
+    >
+      <Select value={value} onChange={(e) => onChange(e.target.value)}>
+        {accounts.map((a) => (
+          <option key={a.id} value={a.id} disabled={!keepsMail(a)}>
+            {accountOption(a)}
+          </option>
+        ))}
+      </Select>
+    </Field>
+  );
+}
+
+/** An alias: the account it belongs to, held until Save. */
+function AliasDialog({
+  open,
+  alias,
+  accounts,
+  onClose,
+}: {
+  open: boolean;
+  alias: Account;
+  accounts: Account[];
+  onClose: () => void;
+}) {
+  const { save, busy, error } = useSave();
+  const [to, setTo] = useDraft(open, () => alias.forward_account_id ?? "");
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    const ok = await save(() =>
+      updateAccount(alias.id, { incoming: "forward", forward_account_id: to }),
+    );
+    if (ok) onClose();
+  };
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title={alias.address}
+      footer={
+        <>
+          <span className="mr-auto">
+            <DeleteButton
+              disabled={busy}
+              label="Delete alias…"
+              what="alias"
+              facts={[
+                ["Address", alias.address],
+                ["Alias of", addressOf(alias.forward_account_id, accounts)],
+              ]}
+              note="Mail to it is refused from then on. The mail it brought stays with the account."
+              onDelete={() => deleteAccount(alias.id)}
+              onDeleted={onClose}
+            />
+          </span>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button
+            type="submit"
+            form="alias"
+            variant="solid"
+            disabled={busy || !to}
+          >
+            Save
+          </Button>
+        </>
+      }
+    >
+      <form id="alias" className="flex flex-col gap-3" onSubmit={submit}>
+        <AliasOf
+          value={to}
+          onChange={setTo}
+          accounts={accounts.filter((a) => a.id !== alias.id)}
+        />
+        {error ? <p className="text-sm text-accent">{error}</p> : null}
+      </form>
     </Dialog>
   );
 }

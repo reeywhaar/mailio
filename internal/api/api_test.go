@@ -563,6 +563,25 @@ func TestAnAccountSendsThroughItsOwnRelay(t *testing.T) {
 	}
 }
 
+func TestAnAliasIsMadeOfAnAccountAndHasNoPassword(t *testing.T) {
+	h := signedIn(t)
+	h.do("POST", "/api/domains", map[string]any{"name": "reey.ru"})
+	_, inbox := h.do("POST", "/api/accounts", map[string]any{"address": "inbox@reey.ru"})
+	if inbox["kind"] != "account" {
+		t.Errorf("an account: %v", inbox["kind"])
+	}
+	code, a := h.do("POST", "/api/accounts", map[string]any{"address": "shop@reey.ru", "alias_of": inbox["id"]})
+	if code != http.StatusCreated || a["kind"] != "alias" || a["forward_account_id"] != inbox["id"] || a["password"] != nil {
+		t.Fatalf("an alias: %d %v", code, a)
+	}
+	if code, _ := h.do("POST", "/api/accounts/"+a["id"].(string)+"/credentials", map[string]any{"label": "phone"}); code != http.StatusBadRequest {
+		t.Errorf("a credential for it: %d", code)
+	}
+	if code, _ := h.do("DELETE", "/api/accounts/"+inbox["id"].(string), nil); code != http.StatusConflict {
+		t.Errorf("deleting its account: %d", code)
+	}
+}
+
 // lookup is DNS as a map, for the checker.
 type lookup map[string][]string
 

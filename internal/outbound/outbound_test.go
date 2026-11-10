@@ -399,3 +399,51 @@ func TestAnAccountsOwnRelayCarriesItsMail(t *testing.T) {
 		t.Errorf("the relay got %d messages", len(r.relay.got))
 	}
 }
+
+// An account sends as its alias, signed for the alias's domain, and as nobody else's.
+func TestAnAccountSendsAsItsAliasSignedForTheAliasesDomain(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	inbox, _ := r.st.Authenticate(ctx, "inbox@reey.ru", "correct horse")
+	other, _ := r.st.Authenticate(ctx, "other@reey.ru", "correct horse")
+	vy, err := r.st.CreateDomain(ctx, "vyrtsev.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.st.CreateAlias(ctx, "shop@vyrtsev.com", inbox.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.st.CreateAlias(ctx, "billing@vyrtsev.com", other.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	body := "From: Shop <shop@vyrtsev.com>\r\nTo: someone@example.com\r\nSubject: Hi\r\n\r\nHello.\r\n"
+	if err := r.submit("inbox@reey.ru", "correct horse", "shop+news@vyrtsev.com", []string{"someone@example.com"}, body); err != nil {
+		t.Fatal(err)
+	}
+	err = r.submit("inbox@reey.ru", "correct horse", "billing@vyrtsev.com", []string{"someone@example.com"}, body)
+	if err == nil || !strings.Contains(err.Error(), "553") {
+		t.Errorf("as somebody else's alias: %v", err)
+	}
+	r.sender.runOnce(ctx)
+
+	if len(r.relay.got) != 1 {
+		t.Fatalf("the relay got %d messages", len(r.relay.got))
+	}
+	got := r.relay.got[0]
+	if got.from != "shop+news@vyrtsev.com" {
+		t.Errorf("sent from %s", got.from)
+	}
+	record, _ := dkimkey.Record(vy.DKIMKey)
+	vs, err := dkim.VerifyWithOptions(bytes.NewReader(got.data), &dkim.VerifyOptions{
+		LookupTXT: func(name string) ([]string, error) {
+			if name != dkimkey.RecordName("vyrtsev.com", dkimkey.Selector) {
+				t.Errorf("looked up %s", name)
+			}
+			return []string{record}, nil
+		},
+	})
+	if err != nil || len(vs) != 1 || vs[0].Err != nil || vs[0].Domain != "vyrtsev.com" {
+		t.Errorf("dkim: %v %+v", err, vs)
+	}
+}
