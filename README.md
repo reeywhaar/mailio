@@ -18,8 +18,8 @@ live in the database and are managed in its admin interface; mail is read with
 - **Per account:** keep the mail, refuse it (a no-reply address that only sends), or forward it
   to another account. **Defaults, which a domain can override:** reject or drop mail for
   addresses nobody has, the DMARC and SPF it publishes, the relay it sends through, and the
-  largest message, 50 MB until changed, which an account can override as well. A domain can also
-  forward mail for addresses nobody has to an account, into its INBOX or its Junk.
+  largest message, 50 MB until changed; an account can override the last two as well. A domain
+  can also forward mail for addresses nobody has to an account, into its INBOX or its Junk.
 - **Looks after itself** with a DNS API ([doapi](https://github.com/reeywhaar/doapi)): it
   publishes each domain's DKIM, SPF and DMARC, and gets and renews its certificate from Let's
   Encrypt. With or without one, it checks every record, MX included, against what DNS serves,

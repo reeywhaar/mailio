@@ -29,6 +29,7 @@ const inbox: Account = {
   incoming: "keep",
   forward_account_id: null,
   max_message_bytes: null,
+  relay: null,
   credentials: [
     {
       id: "cr_1",
@@ -400,6 +401,7 @@ test("forwarding an account's mail is held until Save", async () => {
           incoming: "forward",
           forward_account_id: "ac_2",
           max_message_bytes: 0,
+          relay: "",
         },
       },
     ]),
@@ -435,6 +437,7 @@ test("an account's largest message is typed in MB, and empty is its domain's", a
           incoming: "keep",
           forward_account_id: null,
           max_message_bytes: 10 * 1024 * 1024,
+          relay: "",
         },
       },
     ]),

@@ -39,6 +39,7 @@ var all = []Migration{
 	junkPerDomain,
 	messageLimits,
 	catchAll,
+	accountRelay,
 }
 
 func exec(sqlText string) func(context.Context, *sql.Tx) error {
@@ -53,8 +54,26 @@ func exec(sqlText string) func(context.Context, *sql.Tx) error {
 // Each migration runs in its own transaction that also stamps the version, so a failure leaves
 // the database at the last version that fully applied.
 func Run(ctx context.Context, db *sql.DB) error {
+	return run(ctx, db, "")
+}
+
+// RunBefore applies everything before the named migration and not it: the database as it was the
+// moment before, for that migration's test.
+func RunBefore(ctx context.Context, db *sql.DB, name string) error {
+	for _, m := range all {
+		if m.Name == name {
+			return run(ctx, db, name)
+		}
+	}
+	return fmt.Errorf("there is no migration %s", name)
+}
+
+func run(ctx context.Context, db *sql.DB, before string) error {
 	list := append([]Migration(nil), all...)
 	sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
+	if before != "" {
+		list = list[:sort.Search(len(list), func(i int) bool { return list[i].Name >= before })]
+	}
 
 	var version int
 	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {

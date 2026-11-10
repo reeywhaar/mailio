@@ -22,7 +22,7 @@ CSRF defense; the `SameSite=Lax` cookie is the other.
 | `DELETE /api/domains/{id}` | `409` while it has accounts |
 | `GET /api/accounts` | every account, with its credentials and never a password |
 | `POST /api/accounts` | `{address}` → the account and `password`, its `default` credential's, generated and in this answer only |
-| `PATCH /api/accounts/{id}` | `{incoming, forward_account_id, max_message_bytes}`, each optional: `keep`, `reject`, or `forward` to an account, and its own largest message, `0` returning it to its domain's |
+| `PATCH /api/accounts/{id}` | `{incoming, forward_account_id, max_message_bytes, relay}`, each optional: `keep`, `reject`, or `forward` to an account; its own largest message, `0` returning it to its domain's; its own relay, `"builtin"` or a relay's id, `""` returning it to its domain's |
 | `DELETE /api/accounts/{id}` | `409` for an account getting a domain's catch-all, or forwarded to |
 | `POST /api/accounts/{id}/credentials` | `{label, password}` → `{id, label, login, password, …}`, the login newly tagged. An empty password is generated; either way it is in this answer only |
 | `POST /api/accounts/{id}/credentials/{cid}/reset` | `{password}`, empty for a generated one → the same credential and login with the new `password`, in this answer only |
@@ -33,7 +33,7 @@ CSRF defense; the `SameSite=Lax` cookie is the other.
 | `GET /api/relays` | every relay, by label, without its password: `{…, has_password}` |
 | `POST /api/relays` | `{label, host, port, security, username, password}`. `409` for a label taken |
 | `PUT /api/relays/{id}` | the same; an empty password keeps the stored one |
-| `DELETE /api/relays/{id}` | `409` while it is the default or a domain's |
+| `DELETE /api/relays/{id}` | `409` while it is the default, a domain's or an account's |
 | `POST /api/relays/{id}/test` | sign in to the relay and send nothing. `502 relay_failed` with its answer |
 | `GET /api/queue` | what is waiting to be sent |
 | `POST /api/queue/retry` | send the queue now |

@@ -626,7 +626,7 @@ func TestADomainSendsThroughTheDefaultBuiltInOrItsOwnRelay(t *testing.T) {
 	d, _ := st.CreateDomain(ctx, "reey.ru")
 	via := func(domain string) string {
 		t.Helper()
-		r, err := st.RelayFor(ctx, domain)
+		r, err := st.RelayFor(ctx, "", domain)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -686,6 +686,73 @@ func TestADomainSendsThroughTheDefaultBuiltInOrItsOwnRelay(t *testing.T) {
 	}
 	if got := via("reey.ru"); got != "Gmail gmail secret" {
 		t.Errorf("after a port change: %s", got)
+	}
+}
+
+// An account sends through its own choice, else its domain's, else the default.
+func TestAnAccountSendsThroughItsOwnRelayItsDomainsOrTheDefault(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	sealer, _ := seal.New(make([]byte, seal.KeySize))
+	st.SetSealer(sealer)
+	inbox := account(t, st, "inbox@reey.ru")
+	d, _ := st.DomainByName(ctx, "reey.ru")
+	gmail, _ := st.CreateRelay(ctx, Relay{Label: "Gmail", Host: "smtp.gmail.com", Port: 587, Security: SecurityStartTLS})
+	yandex, _ := st.CreateRelay(ctx, Relay{Label: "Yandex", Host: "smtp.yandex.ru", Port: 465, Security: SecurityImplicit})
+	set, _ := st.Settings(ctx)
+	set.RelayID = gmail.ID
+	if err := st.SetSettings(ctx, *set); err != nil {
+		t.Fatal(err)
+	}
+	via := func(accountID string) string {
+		t.Helper()
+		r, err := st.RelayFor(ctx, accountID, "reey.ru")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r == nil {
+			return "built-in"
+		}
+		return r.Label
+	}
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if got := via(inbox.ID); got != "Gmail" {
+		t.Errorf("the default: %s", got)
+	}
+	must(st.SetDomainVia(ctx, d.ID, ViaBuiltIn))
+	if got := via(inbox.ID); got != "built-in" {
+		t.Errorf("its domain's: %s", got)
+	}
+	must(st.SetAccountVia(ctx, inbox.ID, yandex.ID))
+	if got := via(inbox.ID); got != "Yandex" {
+		t.Errorf("its own relay: %s", got)
+	}
+	must(st.SetDomainVia(ctx, d.ID, ""))
+	must(st.SetAccountVia(ctx, inbox.ID, ViaBuiltIn))
+	if got := via(inbox.ID); got != "built-in" {
+		t.Errorf("its own built-in, over the default: %s", got)
+	}
+	// Mail queued by an account deleted since goes the sending domain's way.
+	if got := via("ac_01jnothere0000000000000000"); got != "Gmail" {
+		t.Errorf("no such account: %s", got)
+	}
+
+	must(st.SetAccountVia(ctx, inbox.ID, yandex.ID))
+	if err := st.DeleteRelay(ctx, yandex.ID); !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "inbox@reey.ru sends through Yandex") {
+		t.Errorf("deleting an account's relay: %v", err)
+	}
+	if err := st.SetAccountVia(ctx, inbox.ID, "rl_nope"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a relay that does not exist: %v", err)
+	}
+	must(st.SetAccountVia(ctx, inbox.ID, ""))
+	if got := via(inbox.ID); got != "Gmail" {
+		t.Errorf("back to its domain's, the default: %s", got)
 	}
 }
 

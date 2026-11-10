@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 
 import {
+  BUILT_IN,
   addCredential,
   createAccount,
   deleteAccount,
@@ -11,6 +12,7 @@ import {
   type Credential,
   type Domain,
   type Incoming,
+  type Relay,
   type Settings,
 } from "@app/api/admin";
 import { Button } from "@app/components/Button";
@@ -32,6 +34,7 @@ import {
   limitTyped,
   mbText,
   megabytes,
+  relayName,
   toBytes,
   sendersTo,
   Senders,
@@ -50,12 +53,14 @@ export function DomainAccounts({
   accounts,
   domains,
   settings,
+  relays,
 }: {
   domain: Domain;
   /** Every account: a forward can go to one at another domain. */
   accounts: Account[];
   domains: Domain[];
   settings: Settings;
+  relays: Relay[];
 }) {
   const [adding, setAdding] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
@@ -70,7 +75,9 @@ export function DomainAccounts({
             key={a.id}
             nested
             title={a.address}
-            summary={<AccountSummary account={a} accounts={accounts} />}
+            summary={
+              <AccountSummary account={a} accounts={accounts} relays={relays} />
+            }
             onOpen={() => setOpen(a.id)}
           />
         ))}
@@ -95,6 +102,7 @@ export function DomainAccounts({
             domain={domain}
             domains={domains}
             settings={settings}
+            relays={relays}
             onClose={() => setOpen(null)}
           />
         ) : null}
@@ -103,12 +111,15 @@ export function DomainAccounts({
   );
 }
 
+/** What its mail does, and its own settings where it has them. */
 function AccountSummary({
   account,
   accounts,
+  relays,
 }: {
   account: Account;
   accounts: Account[];
+  relays: Relay[];
 }) {
   const incoming =
     account.incoming === "forward" ? (
@@ -124,6 +135,9 @@ function AccountSummary({
     <Summary
       parts={[
         { label: "Incoming", value: incoming },
+        ...(account.relay
+          ? [{ label: "Sending", value: relayName(account.relay, relays) }]
+          : []),
         ...(account.max_message_bytes
           ? [
               {
@@ -226,8 +240,16 @@ function AddAccountDialog({
   );
 }
 
-/** An account's settings as its dialog holds them until Save; limit is in MB, as typed. */
-type Draft = { incoming: Incoming; forwardTo: string; limit: string };
+/**
+ * An account's settings as its dialog holds them until Save: relay "" is its domain's, and limit
+ * is in MB, as typed.
+ */
+type Draft = {
+  incoming: Incoming;
+  forwardTo: string;
+  relay: string;
+  limit: string;
+};
 
 /** An account: what its mail does and its largest message, held until Save, and its credentials. */
 function AccountDialog({
@@ -237,6 +259,7 @@ function AccountDialog({
   domain,
   domains,
   settings,
+  relays,
   onClose,
 }: {
   open: boolean;
@@ -245,6 +268,7 @@ function AccountDialog({
   domain: Domain;
   domains: Domain[];
   settings: Settings;
+  relays: Relay[];
   onClose: () => void;
 }) {
   const { save, busy, error } = useSave();
@@ -254,6 +278,7 @@ function AccountDialog({
   const [draft, setDraft] = useDraft<Draft>(open, () => ({
     incoming: account.incoming,
     forwardTo: account.forward_account_id ?? others.find(keepsMail)?.id ?? "",
+    relay: account.relay ?? "",
     limit: mbText(account.max_message_bytes),
   }));
   const blocked = senders.length > 0 && draft.incoming !== "keep";
@@ -270,6 +295,7 @@ function AccountDialog({
         forward_account_id:
           draft.incoming === "forward" ? draft.forwardTo : null,
         max_message_bytes: toBytes(draft.limit),
+        relay: draft.relay,
       }),
     );
     if (ok) onClose();
@@ -355,6 +381,22 @@ function AccountDialog({
             </Select>
           </Field>
         ) : null}
+        <Field label="Sending">
+          <Select
+            value={draft.relay}
+            onChange={(e) => setDraft({ ...draft, relay: e.target.value })}
+          >
+            <option value="">
+              Domain's: {relayName(domain.relay ?? settings.relay_id, relays)}
+            </option>
+            <option value={BUILT_IN}>Built-in</option>
+            {relays.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.label}
+              </option>
+            ))}
+          </Select>
+        </Field>
         <LimitField
           value={draft.limit}
           onChange={(limit) => setDraft({ ...draft, limit })}

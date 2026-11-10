@@ -537,6 +537,32 @@ func TestTheLargestMessageIsTheDefaultOrADomainsOrAnAccountsOwn(t *testing.T) {
 	}
 }
 
+func TestAnAccountSendsThroughItsOwnRelay(t *testing.T) {
+	h := signedIn(t)
+	h.do("POST", "/api/domains", map[string]any{"name": "reey.ru"})
+	_, a := h.do("POST", "/api/accounts", map[string]any{"address": "inbox@reey.ru"})
+	id := a["id"].(string)
+	if a["relay"] != nil {
+		t.Errorf("a new account: %v", a["relay"])
+	}
+	_, gmail := h.do("POST", "/api/relays", map[string]any{"label": "Gmail", "host": "smtp.gmail.com", "port": 587, "security": "starttls"})
+	code, a := h.do("PATCH", "/api/accounts/"+id, map[string]any{"relay": gmail["id"]})
+	if code != http.StatusOK || a["relay"] != gmail["id"] || a["incoming"] != "keep" {
+		t.Errorf("its own relay: %d %v", code, a)
+	}
+	if code, _ := h.do("DELETE", "/api/relays/"+gmail["id"].(string), nil); code != http.StatusConflict {
+		t.Errorf("deleting the relay it uses: %d", code)
+	}
+	code, a = h.do("PATCH", "/api/accounts/"+id, map[string]any{"relay": "builtin"})
+	if code != http.StatusOK || a["relay"] != "builtin" {
+		t.Errorf("built-in: %d %v", code, a["relay"])
+	}
+	code, a = h.do("PATCH", "/api/accounts/"+id, map[string]any{"relay": ""})
+	if code != http.StatusOK || a["relay"] != nil {
+		t.Errorf("back to its domain's: %d %v", code, a["relay"])
+	}
+}
+
 // lookup is DNS as a map, for the checker.
 type lookup map[string][]string
 

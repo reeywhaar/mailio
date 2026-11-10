@@ -153,16 +153,19 @@ export type Account = {
   forward_account_id: string | null;
   /** Its own largest message in bytes, or null for its domain's. */
   max_message_bytes: number | null;
+  /** BUILT_IN, a relay's id, or null for its domain's. */
+  relay: string | null;
   credentials: Credential[];
   created_at: number;
 };
 
-/** An account's settings as its dialog saves them: 0 returns its largest message to its domain's. */
+/** An account's settings as its dialog saves them: "" or 0 returns one to its domain's. */
 export type AccountChange = {
   incoming?: Incoming;
   /** Who gets the mail when it forwards, and null otherwise. */
   forward_account_id?: string | null;
   max_message_bytes?: number;
+  relay?: string;
 };
 
 /** Somebody who signs in here: a name, not an address, and never an account. */

@@ -222,10 +222,15 @@ func (s *Store) DeleteRelay(ctx context.Context, id string) error {
 	if isDefault > 0 {
 		return Conflict("%s is the default. Choose another default first.", r.Label)
 	}
-	var domain string
-	err = tx.QueryRowContext(ctx, `SELECT name FROM domains WHERE relay_id = ? ORDER BY name LIMIT 1`, id).Scan(&domain)
+	var user string
+	err = tx.QueryRowContext(ctx,
+		`SELECT name FROM (SELECT name, 0 AS kind FROM domains WHERE relay_id = ?1
+		                   UNION ALL
+		                   SELECT u.local_part || '@' || d.name, 1 FROM accounts u JOIN domains d ON d.id = u.domain_id
+		                    WHERE u.relay_id = ?1)
+		  ORDER BY kind, name LIMIT 1`, id).Scan(&user)
 	if err == nil {
-		return Conflict("%s sends through %s. Change that first.", domain, r.Label)
+		return Conflict("%s sends through %s. Change that first.", user, r.Label)
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("delete relay: %w", err)
@@ -240,7 +245,7 @@ func (s *Store) DeleteRelay(ctx context.Context, id string) error {
 	return nil
 }
 
-// How a domain's mail goes out when it does not follow the default.
+// How a domain's or an account's mail goes out when it does not follow the one above.
 const (
 	// ViaBuiltIn delivers to each recipient's MX directly.
 	ViaBuiltIn = "builtin"
@@ -251,16 +256,9 @@ const (
 // SetDomainVia chooses how a domain's mail goes out: "" follows the default, ViaBuiltIn delivers
 // directly, and a relay's id sends through it.
 func (s *Store) SetDomainVia(ctx context.Context, domainID, choice string) error {
-	var via, relay any
-	switch choice {
-	case "":
-	case ViaBuiltIn:
-		via = ViaBuiltIn
-	default:
-		if _, err := s.RelayByID(ctx, choice); err != nil {
-			return err
-		}
-		via, relay = ViaRelay, choice
+	via, relay, err := s.via(ctx, choice)
+	if err != nil {
+		return err
 	}
 	res, err := s.writer.ExecContext(ctx,
 		`UPDATE domains SET send_via = ?, relay_id = ? WHERE id = ? AND (send_via IS NOT ? OR relay_id IS NOT ?)`,
@@ -276,25 +274,74 @@ func (s *Store) SetDomainVia(ctx context.Context, domainID, choice string) error
 	return err
 }
 
-// RelayFor is the relay mail from a domain goes through, or nil to deliver directly: the
-// domain's own choice, else the default. A domain mailio does not receive for follows the
-// default.
-func (s *Store) RelayFor(ctx context.Context, domain string) (*Relay, error) {
-	relayID := ""
-	d, err := s.DomainByName(ctx, domain)
-	switch {
-	case err == nil && d.Via == ViaBuiltIn:
+// SetAccountVia chooses how an account's mail goes out: "" follows its domain's, ViaBuiltIn
+// delivers directly, and a relay's id goes through that relay.
+func (s *Store) SetAccountVia(ctx context.Context, accountID, choice string) error {
+	via, relay, err := s.via(ctx, choice)
+	if err != nil {
+		return err
+	}
+	res, err := s.writer.ExecContext(ctx,
+		`UPDATE accounts SET send_via = ?, relay_id = ? WHERE id = ? AND (send_via IS NOT ? OR relay_id IS NOT ?)`,
+		via, relay, accountID, via, relay)
+	if err != nil {
+		return fmt.Errorf("set account relay: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		s.changed()
+		return nil
+	}
+	_, err = s.AccountByID(ctx, accountID)
+	return err
+}
+
+// via is a choice of how mail goes out as the columns hold it: both null for "", which follows
+// the one above.
+func (s *Store) via(ctx context.Context, choice string) (via, relay any, err error) {
+	switch choice {
+	case "":
+		return nil, nil, nil
+	case ViaBuiltIn:
+		return ViaBuiltIn, nil, nil
+	}
+	if _, err := s.RelayByID(ctx, choice); err != nil {
+		return nil, nil, err
+	}
+	return ViaRelay, choice, nil
+}
+
+// RelayFor is the relay an account's mail goes through, or nil to deliver directly: the
+// account's own choice, else its domain's, else the default. Mail with no account follows the
+// sending domain's, and a domain mailio does not receive for follows the default.
+func (s *Store) RelayFor(ctx context.Context, accountID, domain string) (*Relay, error) {
+	via, relayID := "", ""
+	if accountID != "" {
+		a, err := s.AccountByID(ctx, accountID)
+		switch {
+		case err == nil:
+			via, relayID, domain = a.Via, a.RelayID, a.Domain
+		case !errors.Is(err, ErrNotFound):
+			return nil, err
+		}
+	}
+	if via == "" {
+		d, err := s.DomainByName(ctx, domain)
+		switch {
+		case err == nil:
+			via, relayID = d.Via, d.RelayID
+		case !errors.Is(err, ErrNotFound):
+			return nil, err
+		}
+	}
+	switch via {
+	case ViaBuiltIn:
 		return nil, nil
-	case err == nil && d.Via == ViaRelay:
-		relayID = d.RelayID
-	case err == nil || errors.Is(err, ErrNotFound):
+	case "":
 		set, err := s.Settings(ctx)
 		if err != nil {
 			return nil, err
 		}
 		relayID = set.RelayID
-	default:
-		return nil, err
 	}
 	if relayID == "" {
 		return nil, nil

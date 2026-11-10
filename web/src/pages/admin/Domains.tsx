@@ -84,6 +84,7 @@ export function Domains({ domains, ...ctx }: Context & { domains: Domain[] }) {
                 accounts={ctx.accounts}
                 domains={domains}
                 settings={ctx.settings}
+                relays={ctx.relays}
               />
             </Rows>
           ))}

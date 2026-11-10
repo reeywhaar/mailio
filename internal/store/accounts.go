@@ -43,6 +43,10 @@ type Account struct {
 	// MessageLimit is the one that applies: its own, its domain's, or the default.
 	MaxMessageBytes int64
 	MessageLimit    int64
+	// Via is how its mail goes out: empty follows its domain's, ViaBuiltIn delivers directly, and
+	// ViaRelay goes through RelayID.
+	Via     string
+	RelayID string
 }
 
 // Incoming is what an account does with mail sent to it.
@@ -66,7 +70,8 @@ func (u *Account) Address() string { return u.Local + "@" + u.Domain }
 
 const accountColumns = `u.id, u.local_part, d.name, u.domain_id, u.created_at, u.incoming, coalesce(u.forward_account_id, ''),
 	coalesce(u.max_message_bytes, 0),
-	coalesce(u.max_message_bytes, d.max_message_bytes, (SELECT max_message_bytes FROM settings WHERE id = 1))`
+	coalesce(u.max_message_bytes, d.max_message_bytes, (SELECT max_message_bytes FROM settings WHERE id = 1)),
+	coalesce(u.send_via, ''), coalesce(u.relay_id, '')`
 const accountFrom = ` FROM accounts u JOIN domains d ON d.id = u.domain_id`
 
 func scanAccount(row interface{ Scan(...any) error }) (*Account, error) {
@@ -74,7 +79,7 @@ func scanAccount(row interface{ Scan(...any) error }) (*Account, error) {
 		u       Account
 		created int64
 	)
-	if err := row.Scan(&u.ID, &u.Local, &u.Domain, &u.DomainID, &created, &u.Incoming, &u.ForwardAccountID, &u.MaxMessageBytes, &u.MessageLimit); err != nil {
+	if err := row.Scan(&u.ID, &u.Local, &u.Domain, &u.DomainID, &created, &u.Incoming, &u.ForwardAccountID, &u.MaxMessageBytes, &u.MessageLimit, &u.Via, &u.RelayID); err != nil {
 		return nil, err
 	}
 	u.CreatedAt = fromUnix(created)

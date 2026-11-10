@@ -259,14 +259,14 @@ deliver over it all the same, and mail clients warn.
 The catch-all, DMARC, SPF, the relay and the largest message have a server-wide default,
 under Defaults and Sending in the admin interface, and each domain can override any of them in
 its settings, opened by a click on its row. A domain that does not follows the default, whatever
-it becomes later. The largest message can be overridden once more, by an account.
+it becomes later. The relay and the largest message can be overridden once more, by an account.
 
 | | default | a domain's own |
 | --- | --- | --- |
 | catch-all | `reject` or `drop` | `reject`, `drop`, or `forward` or `junk` to an account; see [addresses.md](addresses.md) |
 | DMARC | `reject` | `reject`, `quarantine` or `none` |
 | SPF ending | `~all` | `-all`, `~all` or `?all` |
-| relay | built-in, or one of the relays | built-in, or one of the relays |
+| relay | built-in, or one of the relays | built-in, or one of the relays, an account's own too |
 | largest message | 50 MB | up to 100 MB, an account's own too; see [addresses.md](addresses.md) |
 
 ## DNS records
@@ -306,9 +306,9 @@ one when nothing signed with it is still in flight.
 Many hosting providers block outbound port 25. Relays are a list under Sending → Configure
 sending…, each with a label of its own, added and changed in a dialog, with Test to check it signs
 in. The default is one of them, or **built-in**: mailio delivering to each recipient's MX itself.
-A domain can use another relay, or built-in, in its settings; the relay a message goes through is
-chosen by its sender's domain. A relay that is the default or a domain's cannot be deleted until
-it is not.
+A domain can use another relay, or built-in, in its settings, and so can an account in its own;
+the relay a message goes through is the sending account's, else its domain's, else the default.
+A relay that is the default, a domain's or an account's cannot be deleted until it is not.
 
 A message waits in the queue until delivered. A temporary failure is retried with growing waits
 for five days; a refusal, or the five days running out, puts a report in the sender's INBOX. A

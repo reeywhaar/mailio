@@ -24,9 +24,22 @@ func accountJSON(u *store.Account, passwords []store.Credential) map[string]any 
 		"incoming":           u.Incoming,
 		"forward_account_id": forwardTo,
 		"max_message_bytes":  ownLimit(u.MaxMessageBytes),
+		"relay":              relayChoice(u.Via, u.RelayID),
 		"credentials":        list,
 		"created_at":         u.CreatedAt.Unix(),
 	}
+}
+
+// relayChoice is how a domain's or an account's mail goes out, as the API writes it: "builtin", a
+// relay's id, or null where it follows the one above.
+func relayChoice(via, relayID string) any {
+	switch via {
+	case store.ViaBuiltIn:
+		return store.ViaBuiltIn
+	case store.ViaRelay:
+		return relayID
+	}
+	return nil
 }
 
 // ownLimit is a largest message of a domain's or an account's own, or null where it follows the
@@ -73,13 +86,6 @@ func (s *Server) domainJSON(d *store.Domain, set *store.Settings) map[string]any
 		return v
 	}
 	records, checkedAt := s.recordsJSON(d, set)
-	relay := ""
-	switch d.Via {
-	case store.ViaBuiltIn:
-		relay = store.ViaBuiltIn
-	case store.ViaRelay:
-		relay = d.RelayID
-	}
 	return map[string]any{
 		"id":                 d.ID,
 		"name":               d.Name,
@@ -87,7 +93,7 @@ func (s *Server) domainJSON(d *store.Domain, set *store.Settings) map[string]any
 		"unknown_account_id": ownOr(d.UnknownOwn, d.UnknownAccountID),
 		"dmarc":              orNull(string(d.DMARC)),
 		"spf":                orNull(string(d.SPF)),
-		"relay":              orNull(relay),
+		"relay":              relayChoice(d.Via, d.RelayID),
 		"max_message_bytes":  ownLimit(d.MaxMessageBytes),
 		"records":            records,
 		"dns_checked_at":     checkedAt,
@@ -355,8 +361,8 @@ func (s *Server) createAccount(w http.ResponseWriter, r *http.Request) {
 }
 
 // updateAccount sets what mail to the account does, kept, refused, or forwarded to another
-// account, and its own largest message, 0 returning it to its domain's. A field left out is left
-// alone.
+// account, its own largest message, 0 returning it to its domain's, and its own relay, ""
+// returning it to its domain's. A field left out is left alone.
 func (s *Server) updateAccount(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, ids.Account)
 	if !ok {
@@ -366,6 +372,7 @@ func (s *Server) updateAccount(w http.ResponseWriter, r *http.Request) {
 		Incoming         *store.Incoming `json:"incoming"`
 		ForwardAccountID *string         `json:"forward_account_id"`
 		MaxMessageBytes  *int64          `json:"max_message_bytes"`
+		Relay            *string         `json:"relay"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -376,6 +383,13 @@ func (s *Server) updateAccount(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.log.Info("account changed", "account", id, "max_message_bytes", *req.MaxMessageBytes, "by", adminOf(r).ID)
+	}
+	if req.Relay != nil {
+		if err := s.st.SetAccountVia(r.Context(), id, *req.Relay); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		s.log.Info("account changed", "account", id, "relay", *req.Relay, "by", adminOf(r).ID)
 	}
 	if req.Incoming != nil {
 		var to string

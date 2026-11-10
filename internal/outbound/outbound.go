@@ -81,19 +81,19 @@ func (s *Sender) runOnce(ctx context.Context) {
 		}
 		return
 	}
-	// The relay is the sender's domain's own, or the default; a message has one sender, so one
-	// relay, and nil sends it straight to each recipient's MX.
+	// The relay is the sending account's own, its domain's, or the default; a message has one
+	// sender, so one relay, and nil sends it straight to each recipient's MX.
 	relays := map[string]*store.Relay{}
-	relayFor := func(sender string) (*store.Relay, error) {
-		d := domainOf(sender)
-		if r, ok := relays[d]; ok {
-			return r, nil
+	relayFor := func(r store.OutboundRecipient) (*store.Relay, error) {
+		key := r.AccountID + " " + domainOf(r.Sender)
+		if relay, ok := relays[key]; ok {
+			return relay, nil
 		}
-		r, err := s.st.RelayFor(ctx, d)
+		relay, err := s.st.RelayFor(ctx, r.AccountID, domainOf(r.Sender))
 		if err == nil {
-			relays[d] = r
+			relays[key] = relay
 		}
-		return r, err
+		return relay, err
 	}
 	// One SMTP transaction per message per destination: the relay takes every recipient at once,
 	// and an MX takes those at its own domain.
@@ -106,7 +106,7 @@ func (s *Sender) runOnce(ctx context.Context) {
 	var batches []*batch
 	index := map[string]*batch{}
 	for _, r := range due {
-		relay, err := relayFor(r.Sender)
+		relay, err := relayFor(r)
 		if err != nil {
 			s.log.Error("reading the relay failed", "error", err)
 			return

@@ -378,3 +378,24 @@ func TestASubmissionLargerThanAllowedIsRefused(t *testing.T) {
 		t.Errorf("the sender's own: %v", err)
 	}
 }
+
+// An account's own relay carries its mail, over its domain's built-in.
+func TestAnAccountsOwnRelayCarriesItsMail(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	inbox, _ := r.st.Authenticate(ctx, "inbox@reey.ru", "correct horse")
+	set, _ := r.st.Settings(ctx)
+	if err := r.st.SetDomainVia(ctx, r.domain.ID, store.ViaBuiltIn); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.st.SetAccountVia(ctx, inbox.ID, set.RelayID); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.submit("inbox@reey.ru", "correct horse", "inbox@reey.ru", []string{"someone@example.com"}, letter); err != nil {
+		t.Fatal(err)
+	}
+	r.sender.runOnce(ctx)
+	if len(r.relay.got) != 1 {
+		t.Errorf("the relay got %d messages", len(r.relay.got))
+	}
+}
