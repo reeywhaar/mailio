@@ -489,9 +489,9 @@ export const unknownLabels: Record<Unknown, string> = {
 
 /** DMARC and SPF in plain words, under their fields. */
 export const dmarcHint =
-  "What other mail servers do with mail that claims to be from the domain but did not come from this server, such as a forgery.";
+  "Tells other mail servers what to do with mail that pretends to be from this domain.";
 export const spfHint =
-  "Which server sends the domain's mail, this one, and how other mail servers treat mail from any other.";
+  "Tells other mail servers which server sends this domain's mail, and what to think of mail sent from anywhere else.";
 
 export const dmarcLabels: Record<DMARC, string> = {
   reject: "Refuse forgeries (reject)",
