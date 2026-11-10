@@ -225,7 +225,7 @@ func insertAccount(ctx context.Context, db execer, u *Account) error {
 }
 
 // Authenticate signs in with a login and its password. The login is the account's address, plain
-// for the "default" password and tagged for each other: inbox+k3x9@reey.ru names exactly one
+// for the "default" password and tagged for each other: inbox+k3x9@example.org names exactly one
 // password, so a sign-in checks one hash however many the account has.
 //
 // The same refusal for a wrong password, a missing account and a missing login, and a real hash is

@@ -66,7 +66,7 @@ func TestADatabaseFromTheFirstBuildIsRepaired(t *testing.T) {
 	for _, q := range []string{
 		firstBuildSchema,
 		`PRAGMA user_version = 1`,
-		`INSERT INTO domains (id, name, created_at) VALUES ('dm_01m6z3hmy1v8qbhpactxqd87qk', 'reey.ru', 1)`,
+		`INSERT INTO domains (id, name, created_at) VALUES ('dm_01m6z3hmy1v8qbhpactxqd87qk', 'example.org', 1)`,
 		`INSERT INTO users (id, domain_id, local_part, password_hash, admin, created_at)
 		   VALUES ('u_01m6z3hney6z230fhvepsbfacv', 'dm_01m6z3hmy1v8qbhpactxqd87qk', 'inbox', '` + string(hash) + `', 1, 1)`,
 		`INSERT INTO sessions (id_hash, user_id, created_at, last_seen_at, expires_at)
@@ -93,7 +93,7 @@ func TestADatabaseFromTheFirstBuildIsRepaired(t *testing.T) {
 	if _, err := st.CreateSession(ctx, "cookie", a.ID, ""); err != nil {
 		t.Errorf("a session: %v", err)
 	}
-	u, err := st.Authenticate(ctx, "inbox@reey.ru", pw)
+	u, err := st.Authenticate(ctx, "inbox@example.org", pw)
 	if err != nil {
 		t.Fatalf("the mail account: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestADatabaseFromTheFirstBuildIsRepaired(t *testing.T) {
 	if _, err := st.MailboxNamed(ctx, u.ID, Inbox); err != nil {
 		t.Errorf("the mail user has no INBOX: %v", err)
 	}
-	if _, err := st.CreateAccount(ctx, "other@reey.ru", pw); err != nil {
+	if _, err := st.CreateAccount(ctx, "other@example.org", pw); err != nil {
 		t.Errorf("a new user: %v", err)
 	}
 	if err := st.DeleteAccount(ctx, u.ID); err != nil && !errors.Is(err, ErrConflict) {

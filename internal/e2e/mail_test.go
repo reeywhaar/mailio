@@ -70,11 +70,11 @@ func newRig(t *testing.T) *rig {
 	var logged bytes.Buffer
 	log := slog.New(slog.NewJSONHandler(&syncWriter{w: &logged}, nil))
 
-	d, err := st.CreateDomain(ctx, "reey.ru")
+	d, err := st.CreateDomain(ctx, "example.org")
 	if err != nil {
 		t.Fatal(err)
 	}
-	u, err := st.CreateAccount(ctx, "inbox@reey.ru", "correct horse")
+	u, err := st.CreateAccount(ctx, "inbox@example.org", "correct horse")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,13 +153,13 @@ func (r *rig) client(h *imapclient.UnilateralDataHandler) *imapclient.Client {
 		r.t.Fatal(err)
 	}
 	r.t.Cleanup(func() { c.Close() })
-	if err := c.Login("inbox@reey.ru", "correct horse").Wait(); err != nil {
+	if err := c.Login("inbox@example.org", "correct horse").Wait(); err != nil {
 		r.t.Fatal(err)
 	}
 	return c
 }
 
-const letter = "From: anna@example.com\r\nTo: inbox+shop@reey.ru\r\nSubject: Hello there\r\n\r\nA body line.\r\n"
+const letter = "From: anna@example.com\r\nTo: inbox+shop@example.org\r\nSubject: Hello there\r\n\r\nA body line.\r\n"
 
 func TestMailSentToATaggedAddressArrivesInTheInboxAndAnIdleClientHearsOfIt(t *testing.T) {
 	r := newRig(t)
@@ -182,7 +182,7 @@ func TestMailSentToATaggedAddressArrivesInTheInboxAndAnIdleClientHearsOfIt(t *te
 	}
 
 	// A bare LF in the body is made CRLF on arrival.
-	if err := r.send("anna@example.com", "inbox+shop@reey.ru", letter+"bare\nline\r\n"); err != nil {
+	if err := r.send("anna@example.com", "inbox+shop@example.org", letter+"bare\nline\r\n"); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -225,7 +225,7 @@ func TestMailSentToATaggedAddressArrivesInTheInboxAndAnIdleClientHearsOfIt(t *te
 
 func TestMailForNobodyOrSomebodyElseIsRefused(t *testing.T) {
 	r := newRig(t)
-	if err := r.send("anna@example.com", "nobody@reey.ru", letter); err == nil || !strings.Contains(err.Error(), "550") {
+	if err := r.send("anna@example.com", "nobody@example.org", letter); err == nil || !strings.Contains(err.Error(), "550") {
 		t.Errorf("an unknown address: %v", err)
 	}
 	if err := r.send("anna@example.com", "someone@gmail.com", letter); err == nil || !strings.Contains(err.Error(), "550") {
@@ -240,7 +240,7 @@ func TestTheCatchAllJunksForwardsOrDrops(t *testing.T) {
 	if err := r.st.SetUnknown(ctx, r.domain.ID, store.UnknownJunk, r.account.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.send("anna@example.com", "whoever@reey.ru", letter); err != nil {
+	if err := r.send("anna@example.com", "whoever@example.org", letter); err != nil {
 		t.Fatal(err)
 	}
 	c := r.client(nil)
@@ -255,7 +255,7 @@ func TestTheCatchAllJunksForwardsOrDrops(t *testing.T) {
 	if err := r.st.SetUnknown(ctx, r.domain.ID, store.UnknownForward, r.account.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.send("anna@example.com", "whoever@reey.ru", letter); err != nil {
+	if err := r.send("anna@example.com", "whoever@example.org", letter); err != nil {
 		t.Fatal(err)
 	}
 	inbox, _ := c.Status("INBOX", &imap.StatusOptions{NumMessages: true}).Wait()
@@ -266,7 +266,7 @@ func TestTheCatchAllJunksForwardsOrDrops(t *testing.T) {
 	if err := r.st.SetUnknown(ctx, r.domain.ID, store.UnknownDrop, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.send("anna@example.com", "whoever@reey.ru", letter); err != nil {
+	if err := r.send("anna@example.com", "whoever@example.org", letter); err != nil {
 		t.Errorf("a dropped message is accepted: %v", err)
 	}
 	st, _ = c.Status("Junk", &imap.StatusOptions{NumMessages: true}).Wait()
@@ -279,11 +279,11 @@ func TestTheCatchAllJunksForwardsOrDrops(t *testing.T) {
 func TestADMARCRejectIsRefusedAndQuarantineIsJunk(t *testing.T) {
 	r := newRig(t)
 	r.checks.set(smtpd.Verdict{DMARC: "fail", Reject: "Rejected by the DMARC policy of example.com"})
-	if err := r.send("anna@example.com", "inbox@reey.ru", letter); err == nil || !strings.Contains(err.Error(), "550") {
+	if err := r.send("anna@example.com", "inbox@example.org", letter); err == nil || !strings.Contains(err.Error(), "550") {
 		t.Errorf("a DMARC reject: %v", err)
 	}
 	r.checks.set(smtpd.Verdict{DMARC: "fail", Junk: true})
-	if err := r.send("anna@example.com", "inbox@reey.ru", letter); err != nil {
+	if err := r.send("anna@example.com", "inbox@example.org", letter); err != nil {
 		t.Fatal(err)
 	}
 	c := r.client(nil)
@@ -296,7 +296,7 @@ func TestADMARCRejectIsRefusedAndQuarantineIsJunk(t *testing.T) {
 func TestAClientFlagsMovesAndExpunges(t *testing.T) {
 	r := newRig(t)
 	for i := 0; i < 3; i++ {
-		if err := r.send("anna@example.com", "inbox@reey.ru", letter); err != nil {
+		if err := r.send("anna@example.com", "inbox@example.org", letter); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -359,7 +359,7 @@ func TestAWrongIMAPPasswordIsALineFail2banBansOn(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	if err := c.Login("inbox@reey.ru", "wrong guess").Wait(); err == nil {
+	if err := c.Login("inbox@example.org", "wrong guess").Wait(); err == nil {
 		t.Fatal("a wrong password signed in")
 	}
 	if !strings.Contains(r.log.String(), `"msg":"password refused","ip":"127.0.0.1","via":"imap"`) {
@@ -385,10 +385,10 @@ func TestASecondPasswordSignsInWithItsOwnLogin(t *testing.T) {
 	if err := dial(login, "laptop password"); err != nil {
 		t.Errorf("the laptop's login: %v", err)
 	}
-	if err := dial("inbox@reey.ru", "laptop password"); err == nil {
+	if err := dial("inbox@example.org", "laptop password"); err == nil {
 		t.Error("the laptop's password signed in under the plain address")
 	}
-	if err := dial("inbox@reey.ru", "correct horse"); err != nil {
+	if err := dial("inbox@example.org", "correct horse"); err != nil {
 		t.Errorf("the default: %v", err)
 	}
 }
@@ -396,16 +396,16 @@ func TestASecondPasswordSignsInWithItsOwnLogin(t *testing.T) {
 func TestANoReplyAddressRefusesMailAndAForwardDeliversElsewhere(t *testing.T) {
 	r := newRig(t)
 	ctx := context.Background()
-	noreply, _ := r.st.CreateAccount(ctx, "noreply@reey.ru", "correct horse")
-	billing, _ := r.st.CreateAccount(ctx, "billing@reey.ru", "correct horse")
+	noreply, _ := r.st.CreateAccount(ctx, "noreply@example.org", "correct horse")
+	billing, _ := r.st.CreateAccount(ctx, "billing@example.org", "correct horse")
 	r.st.SetIncoming(ctx, noreply.ID, store.IncomingReject, "")
 	r.st.SetIncoming(ctx, billing.ID, store.IncomingForward, r.account.ID)
 
-	err := r.send("anna@example.com", "noreply@reey.ru", letter)
+	err := r.send("anna@example.com", "noreply@example.org", letter)
 	if err == nil || !strings.Contains(err.Error(), "550") || !strings.Contains(err.Error(), "does not receive mail") {
 		t.Errorf("no-reply: %v", err)
 	}
-	if err := r.send("anna@example.com", "billing+invoice@reey.ru", letter); err != nil {
+	if err := r.send("anna@example.com", "billing+invoice@example.org", letter); err != nil {
 		t.Fatal(err)
 	}
 	c := r.client(nil)
@@ -427,7 +427,7 @@ func TestAMessageLargerThanTheAddressTakesIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := r.send("anna@example.com", "inbox@reey.ru", big)
+	err := r.send("anna@example.com", "inbox@example.org", big)
 	if err == nil || !strings.Contains(err.Error(), "552") || !strings.Contains(err.Error(), "up to 1 MB") {
 		t.Errorf("after DATA: %v", err)
 	}
@@ -444,11 +444,11 @@ func TestAMessageLargerThanTheAddressTakesIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	var refused *gosmtp.SMTPError
-	if err := c.Rcpt("inbox@reey.ru", nil); !errors.As(err, &refused) || refused.Code != 552 {
+	if err := c.Rcpt("inbox@example.org", nil); !errors.As(err, &refused) || refused.Code != 552 {
 		t.Errorf("at RCPT: %v", err)
 	}
 
-	if err := r.send("anna@example.com", "inbox@reey.ru", letter); err != nil {
+	if err := r.send("anna@example.com", "inbox@example.org", letter); err != nil {
 		t.Errorf("a small one: %v", err)
 	}
 	caps, err := r.client(nil).Capability().Wait()

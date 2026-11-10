@@ -50,7 +50,7 @@ reason, though it changes nothing.
 ## A refusal is a code and a sentence
 
 ```json
-{ "code": "conflict", "message": "reey.ru still has accounts. Delete them first." }
+{ "code": "conflict", "message": "example.org still has accounts. Delete them first." }
 ```
 
 The code is the contract: `invalid`, `unauthenticated`, `not_found`, `conflict`,

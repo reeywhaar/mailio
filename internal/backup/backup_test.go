@@ -105,9 +105,9 @@ func TestOnlyContentCountsAsAChange(t *testing.T) {
 	moved("an admin deleted", func() error { return st.DeleteAdmin(ctx, other.ID) })
 
 	var d *store.Domain
-	moved("a domain", func() (err error) { d, err = st.CreateDomain(ctx, "vyrtsev.com"); return })
+	moved("a domain", func() (err error) { d, err = st.CreateDomain(ctx, "example.net"); return })
 	var u *store.Account
-	moved("an account", func() (err error) { u, err = st.CreateAccount(ctx, "inbox@vyrtsev.com", "correct horse"); return })
+	moved("an account", func() (err error) { u, err = st.CreateAccount(ctx, "inbox@example.net", "correct horse"); return })
 	moved("a password", func() error { _, err := st.AddCredential(ctx, u.ID, "phone", "battery staple"); return err })
 	moved("no-reply", func() error { return st.SetIncoming(ctx, u.ID, store.IncomingReject, "") })
 	still("no-reply again", func() error { return st.SetIncoming(ctx, u.ID, store.IncomingReject, "") })
@@ -123,10 +123,10 @@ func TestOnlyContentCountsAsAChange(t *testing.T) {
 func TestTheArchiveIsADatabaseThatOpens(t *testing.T) {
 	ctx := context.Background()
 	st := openStore(t, t.TempDir())
-	if _, err := st.CreateDomain(ctx, "reey.ru"); err != nil {
+	if _, err := st.CreateDomain(ctx, "example.org"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.CreateAccount(ctx, "inbox@reey.ru", "correct horse"); err != nil {
+	if _, err := st.CreateAccount(ctx, "inbox@example.org", "correct horse"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -135,7 +135,7 @@ func TestTheArchiveIsADatabaseThatOpens(t *testing.T) {
 		t.Fatal(err)
 	}
 	reopened := openStore(t, restored)
-	if _, err := reopened.Authenticate(ctx, "inbox@reey.ru", "correct horse"); err != nil {
+	if _, err := reopened.Authenticate(ctx, "inbox@example.org", "correct horse"); err != nil {
 		t.Errorf("the restored database does not know the account: %v", err)
 	}
 }

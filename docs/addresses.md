@@ -11,7 +11,7 @@ address that should receive mail is an account. Adding one asks for the address 
 ## Each credential has its own login
 
 An account has credentials, each a label, a login and a password, one per phone or laptop. The
-login is the address with a tag, `inbox+k3x9@reey.ru`, and it signs in with that credential's
+login is the address with a tag, `inbox+k3x9@example.org`, and it signs in with that credential's
 password and no other. The credential an account is created with is labelled `default`, and its
 login is the plain address. Any of them can be deleted, `default` too; with none left, the
 account still receives mail and nobody signs in as it.
@@ -91,8 +91,8 @@ somebody both means giving them two: an account to read mail, an admin to manage
 
 ## Mail to name+anything goes to name
 
-Everything after the first `+` in the local part is a tag: `inbox+shop@reey.ru` is delivered to
-`inbox@reey.ru`, and the tag is kept with the message for rules to use later. So an account's
+Everything after the first `+` in the local part is a tag: `inbox+shop@example.org` is delivered to
+`inbox@example.org`, and the tag is kept with the message for rules to use later. So an account's
 own address can never contain a `+`.
 
 ## Addresses are lowercase

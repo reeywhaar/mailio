@@ -154,15 +154,15 @@ func TestAnAdminLinkIsCheckedThenSpentAndSignsIn(t *testing.T) {
 
 func TestAnAccountCannotSignInHereOnlyAnAdmin(t *testing.T) {
 	h := signedIn(t)
-	if code, body := h.do("POST", "/api/domains", map[string]any{"name": "reey.ru"}); code != http.StatusCreated {
+	if code, body := h.do("POST", "/api/domains", map[string]any{"name": "example.org"}); code != http.StatusCreated {
 		t.Fatalf("domain: %d %v", code, body)
 	}
-	if code, body := h.do("POST", "/api/accounts", map[string]any{"address": "inbox@reey.ru"}); code != http.StatusCreated {
+	if code, body := h.do("POST", "/api/accounts", map[string]any{"address": "inbox@example.org"}); code != http.StatusCreated {
 		t.Fatalf("account: %d %v", code, body)
 	}
 
 	b := h.fresh()
-	if code, _ := b.do("POST", "/api/session", map[string]any{"name": "inbox@reey.ru", "password": "correct horse"}); code != http.StatusUnauthorized {
+	if code, _ := b.do("POST", "/api/session", map[string]any{"name": "inbox@example.org", "password": "correct horse"}); code != http.StatusUnauthorized {
 		t.Errorf("an account: %d", code)
 	}
 	if code, _ := b.do("POST", "/api/session", map[string]any{"name": "misha", "password": "wrong password"}); code != http.StatusUnauthorized {
@@ -207,12 +207,12 @@ func TestEveryAdminRouteNeedsASession(t *testing.T) {
 func TestAnAdminManagesDomainsAndAccounts(t *testing.T) {
 	h := signedIn(t)
 
-	code, d := h.do("POST", "/api/domains", map[string]any{"name": "Vyrtsev.com"})
-	if code != http.StatusCreated || d["name"] != "vyrtsev.com" || d["unknown"] != nil {
+	code, d := h.do("POST", "/api/domains", map[string]any{"name": "Example.NET"})
+	if code != http.StatusCreated || d["name"] != "example.net" || d["unknown"] != nil {
 		t.Fatalf("create domain: %d %v", code, d)
 	}
-	code, u := h.do("POST", "/api/accounts", map[string]any{"address": "inbox@vyrtsev.com"})
-	if code != http.StatusCreated || u["address"] != "inbox@vyrtsev.com" {
+	code, u := h.do("POST", "/api/accounts", map[string]any{"address": "inbox@example.net"})
+	if code != http.StatusCreated || u["address"] != "inbox@example.net" {
 		t.Fatalf("create account: %d %v", code, u)
 	}
 
@@ -377,22 +377,22 @@ func TestRelaysAreListedWithoutTheirPasswords(t *testing.T) {
 
 func TestAnAccountHasCredentialsEachWithItsLogin(t *testing.T) {
 	h := signedIn(t)
-	h.do("POST", "/api/domains", map[string]any{"name": "reey.ru"})
-	_, u := h.do("POST", "/api/accounts", map[string]any{"address": "inbox@reey.ru"})
+	h.do("POST", "/api/domains", map[string]any{"name": "example.org"})
+	_, u := h.do("POST", "/api/accounts", map[string]any{"address": "inbox@example.org"})
 	id := u["id"].(string)
 	// The default is generated, and this answer is the one time it is shown.
 	generated, _ := u["password"].(string)
 	if len(generated) != store.GeneratedLength {
 		t.Fatalf("generated %q", generated)
 	}
-	if _, err := h.st.Authenticate(context.Background(), "inbox@reey.ru", generated); err != nil {
+	if _, err := h.st.Authenticate(context.Background(), "inbox@example.org", generated); err != nil {
 		t.Errorf("the generated default does not sign in: %v", err)
 	}
 	if len(h.list("/api/accounts")[0]) == 0 || h.list("/api/accounts")[0]["password"] != nil {
 		t.Error("the list carries a password")
 	}
 	list := u["credentials"].([]any)
-	if len(list) != 1 || list[0].(map[string]any)["label"] != "default" || list[0].(map[string]any)["login"] != "inbox@reey.ru" {
+	if len(list) != 1 || list[0].(map[string]any)["label"] != "default" || list[0].(map[string]any)["login"] != "inbox@example.org" {
 		t.Fatalf("a new account's credentials: %v", list)
 	}
 
@@ -402,7 +402,7 @@ func TestAnAccountHasCredentialsEachWithItsLogin(t *testing.T) {
 	}
 	phone := p["password"].(string)
 	login := p["login"].(string)
-	if !strings.HasPrefix(login, "inbox+") || !strings.HasSuffix(login, "@reey.ru") {
+	if !strings.HasPrefix(login, "inbox+") || !strings.HasSuffix(login, "@example.org") {
 		t.Errorf("login %q", login)
 	}
 	if _, err := h.st.Authenticate(context.Background(), login, phone); err != nil {
@@ -448,9 +448,9 @@ func TestAnAccountHasCredentialsEachWithItsLogin(t *testing.T) {
 
 func TestAnAccountRefusesOrForwardsItsMail(t *testing.T) {
 	h := signedIn(t)
-	h.do("POST", "/api/domains", map[string]any{"name": "reey.ru"})
-	_, inbox := h.do("POST", "/api/accounts", map[string]any{"address": "inbox@reey.ru"})
-	_, billing := h.do("POST", "/api/accounts", map[string]any{"address": "billing@reey.ru"})
+	h.do("POST", "/api/domains", map[string]any{"name": "example.org"})
+	_, inbox := h.do("POST", "/api/accounts", map[string]any{"address": "inbox@example.org"})
+	_, billing := h.do("POST", "/api/accounts", map[string]any{"address": "billing@example.org"})
 	if billing["incoming"] != "keep" || billing["forward_account_id"] != nil {
 		t.Errorf("a new account: %v", billing)
 	}
@@ -477,7 +477,7 @@ func TestTheDefaultsAndADomainsOwn(t *testing.T) {
 	if code != http.StatusOK || set["spf"] != "-all" || set["relay_id"] != gmail["id"] {
 		t.Fatalf("set defaults: %d %v", code, set)
 	}
-	_, d := h.do("POST", "/api/domains", map[string]any{"name": "reey.ru"})
+	_, d := h.do("POST", "/api/domains", map[string]any{"name": "example.org"})
 	id := d["id"].(string)
 	if d["dmarc"] != nil || d["spf"] != nil || d["relay"] != nil {
 		t.Errorf("a new domain: %v", d)
@@ -513,7 +513,7 @@ func TestTheLargestMessageIsTheDefaultOrADomainsOrAnAccountsOwn(t *testing.T) {
 		t.Errorf("set: %d %v", code, set)
 	}
 
-	_, d := h.do("POST", "/api/domains", map[string]any{"name": "reey.ru"})
+	_, d := h.do("POST", "/api/domains", map[string]any{"name": "example.org"})
 	id := d["id"].(string)
 	if d["max_message_bytes"] != nil {
 		t.Errorf("a new domain: %v", d["max_message_bytes"])
@@ -527,7 +527,7 @@ func TestTheLargestMessageIsTheDefaultOrADomainsOrAnAccountsOwn(t *testing.T) {
 		t.Errorf("back to the default: %d %v", code, d["max_message_bytes"])
 	}
 
-	_, a := h.do("POST", "/api/accounts", map[string]any{"address": "inbox@reey.ru"})
+	_, a := h.do("POST", "/api/accounts", map[string]any{"address": "inbox@example.org"})
 	code, a = h.do("PATCH", "/api/accounts/"+a["id"].(string), map[string]any{"max_message_bytes": 10 * mb})
 	if code != http.StatusOK || a["max_message_bytes"] != float64(10*mb) || a["incoming"] != "keep" {
 		t.Errorf("an account's own, its incoming untouched: %d %v", code, a)
@@ -539,8 +539,8 @@ func TestTheLargestMessageIsTheDefaultOrADomainsOrAnAccountsOwn(t *testing.T) {
 
 func TestAnAccountSendsThroughItsOwnRelay(t *testing.T) {
 	h := signedIn(t)
-	h.do("POST", "/api/domains", map[string]any{"name": "reey.ru"})
-	_, a := h.do("POST", "/api/accounts", map[string]any{"address": "inbox@reey.ru"})
+	h.do("POST", "/api/domains", map[string]any{"name": "example.org"})
+	_, a := h.do("POST", "/api/accounts", map[string]any{"address": "inbox@example.org"})
 	id := a["id"].(string)
 	if a["relay"] != nil {
 		t.Errorf("a new account: %v", a["relay"])
@@ -565,12 +565,12 @@ func TestAnAccountSendsThroughItsOwnRelay(t *testing.T) {
 
 func TestAnAliasIsMadeOfAnAccountAndHasNoPassword(t *testing.T) {
 	h := signedIn(t)
-	h.do("POST", "/api/domains", map[string]any{"name": "reey.ru"})
-	_, inbox := h.do("POST", "/api/accounts", map[string]any{"address": "inbox@reey.ru"})
+	h.do("POST", "/api/domains", map[string]any{"name": "example.org"})
+	_, inbox := h.do("POST", "/api/accounts", map[string]any{"address": "inbox@example.org"})
 	if inbox["kind"] != "account" {
 		t.Errorf("an account: %v", inbox["kind"])
 	}
-	code, a := h.do("POST", "/api/accounts", map[string]any{"address": "shop@reey.ru", "alias_of": inbox["id"]})
+	code, a := h.do("POST", "/api/accounts", map[string]any{"address": "shop@example.org", "alias_of": inbox["id"]})
 	if code != http.StatusCreated || a["kind"] != "alias" || a["forward_account_id"] != inbox["id"] || a["password"] != nil {
 		t.Fatalf("an alias: %d %v", code, a)
 	}
@@ -598,11 +598,11 @@ func (c checker) Changed() { *c.changed++ }
 
 func TestADomainShowsWhatDNSServesForEachRecord(t *testing.T) {
 	changed := 0
-	dns := lookup{"MX reey.ru": {"mail.example.com."}, "TXT _dmarc.reey.ru": {"v=DMARC1; p=none"}}
+	dns := lookup{"MX example.org": {"mail.example.com."}, "TXT _dmarc.example.org": {"v=DMARC1; p=none"}}
 	h := signIn(t, newHarnessWith(t, func(st *store.Store) DNS {
 		return checker{dnscheck.NewChecker(st, dns, "mail.example.com"), &changed}
 	}))
-	_, d := h.do("POST", "/api/domains", map[string]any{"name": "reey.ru"})
+	_, d := h.do("POST", "/api/domains", map[string]any{"name": "example.org"})
 	if changed != 1 {
 		t.Errorf("a new domain nudged the checker %d times", changed)
 	}
@@ -615,14 +615,14 @@ func TestADomainShowsWhatDNSServesForEachRecord(t *testing.T) {
 		return out
 	}
 	// MX is checked like the rest, and never published.
-	want := []any{"MX reey.ru false <nil>", "TXT reey.ru true <nil>", "TXT _dmarc.reey.ru true <nil>", "TXT mailio._domainkey.reey.ru true <nil>"}
+	want := []any{"MX example.org false <nil>", "TXT example.org true <nil>", "TXT _dmarc.example.org true <nil>", "TXT mailio._domainkey.example.org true <nil>"}
 	if got := statuses(d); !reflect.DeepEqual(got, want) || d["dns_checked_at"] != nil {
 		t.Errorf("before a check: %v %v", got, d["dns_checked_at"])
 	}
 
 	id := d["id"].(string)
 	code, d := h.do("POST", "/api/domains/"+id+"/check", nil)
-	want = []any{"MX reey.ru false ok", "TXT reey.ru true missing", "TXT _dmarc.reey.ru true different", "TXT mailio._domainkey.reey.ru true missing"}
+	want = []any{"MX example.org false ok", "TXT example.org true missing", "TXT _dmarc.example.org true different", "TXT mailio._domainkey.example.org true missing"}
 	if got := statuses(d); code != http.StatusOK || !reflect.DeepEqual(got, want) || d["dns_checked_at"] == nil {
 		t.Errorf("checked: %d %v %v", code, got, d["dns_checked_at"])
 	}
@@ -634,7 +634,7 @@ func TestADomainShowsWhatDNSServesForEachRecord(t *testing.T) {
 	if changed != 2 {
 		t.Errorf("a changed domain nudged the checker %d times in all", changed)
 	}
-	if got := statuses(d)[2]; got != "TXT _dmarc.reey.ru true <nil>" {
+	if got := statuses(d)[2]; got != "TXT _dmarc.example.org true <nil>" {
 		t.Errorf("a changed record keeps the old check: %v", got)
 	}
 }

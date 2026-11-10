@@ -25,7 +25,7 @@ afterEach(() => vi.unstubAllGlobals());
 const inbox: Account = {
   id: "ac_1",
   kind: "account",
-  address: "inbox@reey.ru",
+  address: "inbox@example.org",
   domain_id: "dm_1",
   incoming: "keep",
   forward_account_id: null,
@@ -35,7 +35,7 @@ const inbox: Account = {
     {
       id: "cr_1",
       label: "default",
-      login: "inbox@reey.ru",
+      login: "inbox@example.org",
       created_at: 1,
       last_used_at: null,
     },
@@ -46,15 +46,15 @@ const inbox: Account = {
 const misha: Account = {
   ...inbox,
   id: "ac_2",
-  address: "misha@reey.ru",
+  address: "misha@example.org",
   credentials: [],
 };
 
 const me: AdminT = { id: "ad_1", name: "misha", created_at: 1 };
 
-const reey: Domain = {
+const exampleOrg: Domain = {
   id: "dm_1",
-  name: "reey.ru",
+  name: "example.org",
   unknown: null,
   unknown_account_id: null,
   dmarc: null,
@@ -64,8 +64,8 @@ const reey: Domain = {
   records: [
     {
       type: "MX",
-      name: "reey.ru",
-      data: "mail.reey.ru",
+      name: "example.org",
+      data: "mail.example.org",
       managed: false,
       status: "ok",
       found: [],
@@ -73,7 +73,7 @@ const reey: Domain = {
     },
     {
       type: "TXT",
-      name: "_dmarc.reey.ru",
+      name: "_dmarc.example.org",
       data: "v=DMARC1; p=reject",
       managed: true,
       status: "ok",
@@ -98,11 +98,11 @@ function routes(over: Parameters<typeof fakeServer>[0] = {}) {
   return fakeServer({
     "GET /api/me": () => ({ body: me }),
     "GET /api/admins": () => ({ body: [me] }),
-    "GET /api/domains": () => ({ body: [reey] }),
+    "GET /api/domains": () => ({ body: [exampleOrg] }),
     "GET /api/accounts": () => ({ body: [inbox] }),
     "GET /api/mail": () => ({
       body: {
-        host: "mail.reey.ru",
+        host: "mail.example.org",
         dns_api: true,
         staging: false,
         certificate: null,
@@ -141,8 +141,12 @@ const settle = () => new Promise((r) => setTimeout(r, 550));
 test("domains, accounts and admins are rows that summarize them", async () => {
   routes();
   mount();
-  expect(await screen.findByRole("button", { name: /^reey\.ru/ })).toBeTruthy();
-  expect(screen.getByRole("button", { name: /^inbox@reey\.ru/ })).toBeTruthy();
+  expect(
+    await screen.findByRole("button", { name: /^example\.org/ }),
+  ).toBeTruthy();
+  expect(
+    screen.getByRole("button", { name: /^inbox@example\.org/ }),
+  ).toBeTruthy();
   // The signed-in admin is marked, and is not an account.
   expect(screen.getByRole("button", { name: /^misha/ })).toBeTruthy();
   expect(screen.getByText("you")).toBeTruthy();
@@ -150,7 +154,7 @@ test("domains, accounts and admins are rows that summarize them", async () => {
 });
 
 test("a domain's dialog holds its changes and sends them in one request on Save", async () => {
-  let domain = reey;
+  let domain = exampleOrg;
   const { sent } = routes({
     "GET /api/domains": () => ({ body: [domain] }),
     "PATCH /api/domains/dm_1": (body) => {
@@ -159,8 +163,8 @@ test("a domain's dialog holds its changes and sends them in one request on Save"
     },
   });
   mount();
-  await open(/^reey\.ru/);
-  const d = within(dialog("reey.ru"));
+  await open(/^example\.org/);
+  const d = within(dialog("example.org"));
   // Forward and junk both go to an account, forward to its INBOX.
   fireEvent.change(d.getByLabelText("Catch-all"), {
     target: { value: "forward" },
@@ -180,7 +184,7 @@ test("a domain's dialog holds its changes and sends them in one request on Save"
 
   fireEvent.click(d.getByRole("button", { name: "Save" }));
   await waitFor(() =>
-    expect(screen.queryByRole("dialog", { name: "reey.ru" })).toBeNull(),
+    expect(screen.queryByRole("dialog", { name: "example.org" })).toBeNull(),
   );
   expect(writes(sent)).toEqual([
     {
@@ -206,8 +210,8 @@ test("a refused save keeps the dialog open with the server's sentence and the ch
     }),
   });
   mount();
-  await open(/^reey\.ru/);
-  const d = within(dialog("reey.ru"));
+  await open(/^example\.org/);
+  const d = within(dialog("example.org"));
   fireEvent.change(d.getByLabelText("DMARC"), { target: { value: "none" } });
   fireEvent.click(d.getByRole("button", { name: "Save" }));
 
@@ -218,20 +222,20 @@ test("a refused save keeps the dialog open with the server's sentence and the ch
 test("closing a dialog forgets what was changed in it", async () => {
   const { sent } = routes();
   mount();
-  await open(/^reey\.ru/);
-  fireEvent.change(within(dialog("reey.ru")).getByLabelText("DMARC"), {
+  await open(/^example\.org/);
+  fireEvent.change(within(dialog("example.org")).getByLabelText("DMARC"), {
     target: { value: "none" },
   });
   fireEvent.click(
-    within(dialog("reey.ru")).getByRole("button", { name: "Close" }),
+    within(dialog("example.org")).getByRole("button", { name: "Close" }),
   );
   await waitFor(() =>
-    expect(screen.queryByRole("dialog", { name: "reey.ru" })).toBeNull(),
+    expect(screen.queryByRole("dialog", { name: "example.org" })).toBeNull(),
   );
 
-  await open(/^reey\.ru/);
+  await open(/^example\.org/);
   expect(
-    (within(dialog("reey.ru")).getByLabelText("DMARC") as HTMLSelectElement)
+    (within(dialog("example.org")).getByLabelText("DMARC") as HTMLSelectElement)
       .value,
   ).toBe("");
   expect(writes(sent)).toEqual([]);
@@ -251,7 +255,7 @@ test("a new account is added under its domain by its name alone, and shows its g
   mount();
   fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
   const d = within(dialog("Add an account"));
-  fireEvent.change(d.getByLabelText("Name at reey.ru"), {
+  fireEvent.change(d.getByLabelText("Name at example.org"), {
     target: { value: "misha" },
   });
   fireEvent.click(d.getByRole("button", { name: "Add" }));
@@ -259,7 +263,7 @@ test("a new account is added under its domain by its name alone, and shows its g
   const shown = within(
     await screen.findByRole("dialog", { name: "Account added" }),
   );
-  expect(shown.getByText("misha@reey.ru")).toBeTruthy();
+  expect(shown.getByText("misha@example.org")).toBeTruthy();
   expect(shown.getByText("Generated24CharacterPass")).toBeTruthy();
   fireEvent.click(shown.getByRole("button", { name: "Copy password" }));
   await waitFor(() =>
@@ -269,7 +273,7 @@ test("a new account is added under its domain by its name alone, and shows its g
     {
       method: "POST",
       path: "/api/accounts",
-      body: { address: "misha@reey.ru" },
+      body: { address: "misha@example.org" },
     },
   ]);
 
@@ -288,7 +292,7 @@ test("an alias is added of an account that keeps its mail, shows no password, an
     ...inbox,
     id: "ac_3",
     kind: "alias",
-    address: "shop@reey.ru",
+    address: "shop@example.org",
     incoming: "forward",
     forward_account_id: "ac_1",
     credentials: [],
@@ -306,7 +310,7 @@ test("an alias is added of an account that keeps its mail, shows no password, an
   const d = within(dialog("Add an account"));
   fireEvent.click(d.getByRole("radio", { name: "Alias" }));
   const a = within(dialog("Add an alias"));
-  fireEvent.change(a.getByLabelText("Name at reey.ru"), {
+  fireEvent.change(a.getByLabelText("Name at example.org"), {
     target: { value: "shop" },
   });
   expect((a.getByLabelText("Alias of") as HTMLSelectElement).value).toBe(
@@ -321,11 +325,11 @@ test("an alias is added of an account that keeps its mail, shows no password, an
     {
       method: "POST",
       path: "/api/accounts",
-      body: { address: "shop@reey.ru", alias_of: "ac_1" },
+      body: { address: "shop@example.org", alias_of: "ac_1" },
     },
   ]);
   expect(
-    await screen.findByRole("button", { name: /^shop@reey\.ru.*Alias of/ }),
+    await screen.findByRole("button", { name: /^shop@example\.org.*Alias of/ }),
   ).toBeTruthy();
 });
 
@@ -335,7 +339,7 @@ test("a credential is added by its label, and its login and password are shown o
       body: {
         id: "cr_2",
         label: "iPhone",
-        login: "inbox+k3x9@reey.ru",
+        login: "inbox+k3x9@example.org",
         created_at: 2,
         last_used_at: null,
         password: "AnotherGeneratedPassword",
@@ -343,9 +347,9 @@ test("a credential is added by its label, and its login and password are shown o
     }),
   });
   mount();
-  await open(/^inbox@reey\.ru/);
+  await open(/^inbox@example\.org/);
   fireEvent.click(
-    within(dialog("inbox@reey.ru")).getByRole("button", {
+    within(dialog("inbox@example.org")).getByRole("button", {
       name: "Add credential",
     }),
   );
@@ -356,7 +360,7 @@ test("a credential is added by its label, and its login and password are shown o
   const shown = within(
     await screen.findByRole("dialog", { name: "Credential added" }),
   );
-  expect(shown.getByText("inbox+k3x9@reey.ru")).toBeTruthy();
+  expect(shown.getByText("inbox+k3x9@example.org")).toBeTruthy();
   expect(shown.getByText("AnotherGeneratedPassword")).toBeTruthy();
   expect(writes(sent)).toEqual([
     {
@@ -374,9 +378,9 @@ test("a credential's new password is generated by the server and shown once", as
     }),
   });
   mount();
-  await open(/^inbox@reey\.ru/);
+  await open(/^inbox@example\.org/);
   fireEvent.click(
-    within(dialog("inbox@reey.ru")).getByRole("button", {
+    within(dialog("inbox@example.org")).getByRole("button", {
       name: "New password…",
     }),
   );
@@ -400,9 +404,9 @@ test("a credential's new password can be one typed, for a client particular abou
     }),
   });
   mount();
-  await open(/^inbox@reey\.ru/);
+  await open(/^inbox@example\.org/);
   fireEvent.click(
-    within(dialog("inbox@reey.ru")).getByRole("button", {
+    within(dialog("inbox@example.org")).getByRole("button", {
       name: "New password…",
     }),
   );
@@ -428,8 +432,8 @@ test("forwarding an account's mail is held until Save", async () => {
     "PATCH /api/accounts/ac_1": () => ({ body: inbox }),
   });
   mount();
-  await open(/^inbox@reey\.ru/);
-  const d = within(dialog("inbox@reey.ru"));
+  await open(/^inbox@example\.org/);
+  const d = within(dialog("inbox@example.org"));
   fireEvent.change(d.getByLabelText("Incoming mail"), {
     target: { value: "forward" },
   });
@@ -458,13 +462,13 @@ test("forwarding an account's mail is held until Save", async () => {
 test("an account's largest message is typed in MB, and empty is its domain's", async () => {
   const { sent } = routes({
     "GET /api/domains": () => ({
-      body: [{ ...reey, max_message_bytes: 25 * 1024 * 1024 }],
+      body: [{ ...exampleOrg, max_message_bytes: 25 * 1024 * 1024 }],
     }),
     "PATCH /api/accounts/ac_1": () => ({ body: inbox }),
   });
   mount();
-  await open(/^inbox@reey\.ru/);
-  const d = within(dialog("inbox@reey.ru"));
+  await open(/^inbox@example\.org/);
+  const d = within(dialog("inbox@example.org"));
   expect(d.getByText("Empty: the domain's, 25 MB.")).toBeTruthy();
   const field = d.getByLabelText("Largest message");
   fireEvent.change(field, { target: { value: "many" } });
@@ -614,27 +618,33 @@ test("an admin is added in a dialog with a name and a password", async () => {
 
 test("a record DNS serves otherwise is marked on the row and in the dialog, with what was found", async () => {
   const wrong: Domain = {
-    ...reey,
+    ...exampleOrg,
     records: [
-      reey.records[0]!,
-      { ...reey.records[1]!, status: "different", found: ["v=DMARC1; p=none"] },
+      exampleOrg.records[0]!,
+      {
+        ...exampleOrg.records[1]!,
+        status: "different",
+        found: ["v=DMARC1; p=none"],
+      },
     ],
   };
   let domain = wrong;
   const { sent } = routes({
     "GET /api/domains": () => ({ body: [domain] }),
     "POST /api/domains/dm_1/check": () => {
-      domain = reey;
+      domain = exampleOrg;
       return { body: domain };
     },
   });
   mount();
   expect(
-    await screen.findByRole("button", { name: /^reey\.ru.*DNS: 1 problem/ }),
+    await screen.findByRole("button", {
+      name: /^example\.org.*DNS: 1 problem/,
+    }),
   ).toBeTruthy();
 
-  await open(/^reey\.ru/);
-  const d = within(dialog("reey.ru"));
+  await open(/^example\.org/);
+  const d = within(dialog("example.org"));
   expect(d.getByText("Set outside mailio")).toBeTruthy();
   expect(d.getByText("Different")).toBeTruthy();
   expect(d.getByText("v=DMARC1; p=none")).toBeTruthy();
@@ -659,13 +669,15 @@ test("a delete asks in a dialog of its own, ignores a stuttered click, and keeps
         : { status: 204 },
   });
   mount();
-  await open(/^inbox@reey\.ru/);
+  await open(/^inbox@example\.org/);
   fireEvent.click(
-    within(dialog("inbox@reey.ru")).getByRole("button", { name: "Delete…" }),
+    within(dialog("inbox@example.org")).getByRole("button", {
+      name: "Delete…",
+    }),
   );
   const d = within(dialog("Delete credential"));
   expect(d.getByText("default")).toBeTruthy();
-  expect(d.getByText("inbox@reey.ru")).toBeTruthy();
+  expect(d.getByText("inbox@example.org")).toBeTruthy();
 
   fireEvent.click(d.getByRole("button", { name: "Delete" }));
   expect(writes(sent)).toEqual([]);
@@ -689,11 +701,11 @@ test("a delete asks in a dialog of its own, ignores a stuttered click, and keeps
 
 test("a record that could not be checked opens why", async () => {
   const failed: Domain = {
-    ...reey,
+    ...exampleOrg,
     records: [
-      reey.records[0]!,
+      exampleOrg.records[0]!,
       {
-        ...reey.records[1]!,
+        ...exampleOrg.records[1]!,
         status: "failed",
         error: "None of its nameservers answered.",
       },
@@ -703,15 +715,17 @@ test("a record that could not be checked opens why", async () => {
   mount();
   expect(
     await screen.findByRole("button", {
-      name: /^reey\.ru.*DNS: Couldn't check/,
+      name: /^example\.org.*DNS: Couldn't check/,
     }),
   ).toBeTruthy();
-  await open(/^reey\.ru/);
+  await open(/^example\.org/);
   fireEvent.click(
-    within(dialog("reey.ru")).getByRole("button", { name: "Couldn't check" }),
+    within(dialog("example.org")).getByRole("button", {
+      name: "Couldn't check",
+    }),
   );
   const why = within(dialog("Couldn't check"));
-  expect(why.getByText("_dmarc.reey.ru")).toBeTruthy();
+  expect(why.getByText("_dmarc.example.org")).toBeTruthy();
   expect(why.getByText("None of its nameservers answered.")).toBeTruthy();
 });
 
@@ -720,7 +734,7 @@ test("mail is sent on only to an account that keeps it, and that account keeps i
   const billing: Account = {
     ...misha,
     id: "ac_3",
-    address: "billing@reey.ru",
+    address: "billing@example.org",
     incoming: "forward",
     forward_account_id: "ac_1",
   };
@@ -728,16 +742,18 @@ test("mail is sent on only to an account that keeps it, and that account keeps i
     "GET /api/accounts": () => ({ body: [inbox, noreply, billing] }),
   });
   mount();
-  const row = await screen.findByRole("button", { name: /^billing@reey\.ru/ });
-  expect(row.textContent).toContain("Forward→inbox@reey.ru");
+  const row = await screen.findByRole("button", {
+    name: /^billing@example\.org/,
+  });
+  expect(row.textContent).toContain("Forward→inbox@example.org");
 
   // billing forwards to inbox, so inbox keeps its mail, and says so.
-  await open(/^inbox@reey\.ru/);
-  const d = within(dialog("inbox@reey.ru"));
+  await open(/^inbox@example\.org/);
+  const d = within(dialog("inbox@example.org"));
   expect(
     d.getByText("Keeps its mail while mail is sent on here from:"),
   ).toBeTruthy();
-  expect(d.getByText("billing@reey.ru")).toBeTruthy();
+  expect(d.getByText("billing@example.org")).toBeTruthy();
   const incoming = (name: string) =>
     (d.getByRole("option", { name }) as HTMLOptionElement).disabled;
   expect(incoming("Keep")).toBe(false);
@@ -745,19 +761,21 @@ test("mail is sent on only to an account that keeps it, and that account keeps i
   expect(incoming("Forward")).toBe(true);
   fireEvent.click(d.getByRole("button", { name: "Close" }));
   await waitFor(() =>
-    expect(screen.queryByRole("dialog", { name: "inbox@reey.ru" })).toBeNull(),
+    expect(
+      screen.queryByRole("dialog", { name: "inbox@example.org" }),
+    ).toBeNull(),
   );
 
   // misha's forward is offered only accounts that keep their mail.
-  await open(/^misha@reey\.ru/);
-  const m = within(dialog("misha@reey.ru"));
+  await open(/^misha@example\.org/);
+  const m = within(dialog("misha@example.org"));
   fireEvent.change(m.getByLabelText("Incoming mail"), {
     target: { value: "forward" },
   });
   const target = (name: string) =>
     (m.getByRole("option", { name }) as HTMLOptionElement).disabled;
-  expect(target("inbox@reey.ru")).toBe(false);
-  expect(target("billing@reey.ru · forwards")).toBe(true);
+  expect(target("inbox@example.org")).toBe(false);
+  expect(target("billing@example.org · forwards")).toBe(true);
   expect(
     (m.getByLabelText("Who gets the mail") as HTMLSelectElement).value,
   ).toBe("ac_1");

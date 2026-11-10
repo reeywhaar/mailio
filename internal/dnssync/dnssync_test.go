@@ -61,12 +61,12 @@ func TestTheDomainsMailRecordsAreMailiosAndTheRestAreLeftAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	d, err := st.CreateDomain(ctx, "reey.ru")
+	d, err := st.CreateDomain(ctx, "example.org")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	fake := &doapi{next: 10, zone: dnsapi.Zone{Name: "reey.ru", Records: []dnsapi.Record{
+	fake := &doapi{next: 10, zone: dnsapi.Zone{Name: "example.org", Records: []dnsapi.Record{
 		// An SPF and a DMARC of somebody else's: replaced by mailio's.
 		{ID: 1, Type: "TXT", Name: "@", Data: "v=spf1 include:elsewhere.example ~all"},
 		{ID: 2, Type: "TXT", Name: "_dmarc", Data: "v=DMARC1; p=none"},
@@ -80,7 +80,7 @@ func TestTheDomainsMailRecordsAreMailiosAndTheRestAreLeftAlone(t *testing.T) {
 	srv := httptest.NewServer(fake)
 	defer srv.Close()
 
-	if _, err := Sync(ctx, st, dnsapi.New(srv.URL), "mail.vyrtsev.com", slog.New(slog.DiscardHandler)); err != nil {
+	if _, err := Sync(ctx, st, dnsapi.New(srv.URL), "mail.example.net", slog.New(slog.DiscardHandler)); err != nil {
 		t.Fatal(err)
 	}
 	sort.Ints(fake.deleted)
@@ -93,7 +93,7 @@ func TestTheDomainsMailRecordsAreMailiosAndTheRestAreLeftAlone(t *testing.T) {
 		got[r.Type+" "+r.Name+" "+strings.SplitN(r.Data, "=", 2)[0]] = r.Data
 	}
 	for k, want := range map[string]string{
-		"TXT @ v":                        "v=spf1 a:mail.vyrtsev.com ~all",
+		"TXT @ v":                        "v=spf1 a:mail.example.net ~all",
 		"TXT _dmarc v":                   "v=DMARC1; p=reject",
 		"TXT mailio._domainkey v":        key,
 		"TXT mail._domainkey v":          "v=DKIM1; k=rsa; p=OLD",
@@ -107,7 +107,7 @@ func TestTheDomainsMailRecordsAreMailiosAndTheRestAreLeftAlone(t *testing.T) {
 
 	// A second run changes nothing.
 	fake.created, fake.deleted = nil, nil
-	if _, err := Sync(ctx, st, dnsapi.New(srv.URL), "mail.vyrtsev.com", slog.New(slog.DiscardHandler)); err != nil {
+	if _, err := Sync(ctx, st, dnsapi.New(srv.URL), "mail.example.net", slog.New(slog.DiscardHandler)); err != nil {
 		t.Fatal(err)
 	}
 	if len(fake.created)+len(fake.deleted) != 0 {
@@ -120,10 +120,10 @@ func TestADomainTheAPIDoesNotManageIsLeftAlone(t *testing.T) {
 	st, _ := store.Open(t.TempDir())
 	defer st.Close()
 	st.CreateDomain(ctx, "elsewhere.org")
-	fake := &doapi{zone: dnsapi.Zone{Name: "reey.ru"}}
+	fake := &doapi{zone: dnsapi.Zone{Name: "example.org"}}
 	srv := httptest.NewServer(fake)
 	defer srv.Close()
-	if _, err := Sync(ctx, st, dnsapi.New(srv.URL), "mail.vyrtsev.com", slog.New(slog.DiscardHandler)); err != nil {
+	if _, err := Sync(ctx, st, dnsapi.New(srv.URL), "mail.example.net", slog.New(slog.DiscardHandler)); err != nil {
 		t.Fatal(err)
 	}
 	if len(fake.created) != 0 {
@@ -132,20 +132,20 @@ func TestADomainTheAPIDoesNotManageIsLeftAlone(t *testing.T) {
 }
 
 func TestAHostIsFoundInItsLongestZone(t *testing.T) {
-	zones := []dnsapi.Zone{{Name: "vyrtsev.com"}, {Name: "mail.vyrtsev.com"}, {Name: "reey.ru"}}
+	zones := []dnsapi.Zone{{Name: "example.net"}, {Name: "mail.example.net"}, {Name: "example.org"}}
 	for host, want := range map[string]string{
-		"mail.vyrtsev.com":          "mail.vyrtsev.com @",
-		"x.mail.vyrtsev.com":        "mail.vyrtsev.com x",
-		"vyrtsev.com":               "vyrtsev.com @",
-		"_dmarc.vyrtsev.com":        "vyrtsev.com _dmarc",
-		"mailio._domainkey.reey.ru": "reey.ru mailio._domainkey",
+		"mail.example.net":              "mail.example.net @",
+		"x.mail.example.net":            "mail.example.net x",
+		"example.net":                   "example.net @",
+		"_dmarc.example.net":            "example.net _dmarc",
+		"mailio._domainkey.example.org": "example.org mailio._domainkey",
 	} {
 		z, rel, ok := dnsapi.ZoneFor(zones, host)
 		if !ok || z.Name+" "+rel != want {
 			t.Errorf("%s: got %v %q", host, z, rel)
 		}
 	}
-	if _, _, ok := dnsapi.ZoneFor(zones, "example.org"); ok {
+	if _, _, ok := dnsapi.ZoneFor(zones, "example.com"); ok {
 		t.Error("found a zone for a foreign host")
 	}
 }
@@ -155,13 +155,13 @@ func TestDMARCFollowsTheDomainsSetting(t *testing.T) {
 	ctx := context.Background()
 	st, _ := store.Open(t.TempDir())
 	defer st.Close()
-	d, _ := st.CreateDomain(ctx, "reey.ru")
-	fake := &doapi{zone: dnsapi.Zone{Name: "reey.ru"}}
+	d, _ := st.CreateDomain(ctx, "example.org")
+	fake := &doapi{zone: dnsapi.Zone{Name: "example.org"}}
 	srv := httptest.NewServer(fake)
 	defer srv.Close()
 	sync := func() string {
 		t.Helper()
-		if _, err := Sync(ctx, st, dnsapi.New(srv.URL), "mail.vyrtsev.com", slog.New(slog.DiscardHandler)); err != nil {
+		if _, err := Sync(ctx, st, dnsapi.New(srv.URL), "mail.example.net", slog.New(slog.DiscardHandler)); err != nil {
 			t.Fatal(err)
 		}
 		for _, r := range fake.zone.Records {
@@ -190,19 +190,19 @@ func TestADomainPublishesTheDefaultsItFollows(t *testing.T) {
 	ctx := context.Background()
 	st, _ := store.Open(t.TempDir())
 	defer st.Close()
-	st.CreateDomain(ctx, "reey.ru")
-	fake := &doapi{zone: dnsapi.Zone{Name: "reey.ru"}}
+	st.CreateDomain(ctx, "example.org")
+	fake := &doapi{zone: dnsapi.Zone{Name: "example.org"}}
 	srv := httptest.NewServer(fake)
 	defer srv.Close()
 	st.SetSettings(ctx, store.Settings{Unknown: store.UnknownReject, DMARC: store.DMARCQuarantine, SPF: store.SPFFail, MaxMessageBytes: store.DefaultMessageBytes})
-	if _, err := Sync(ctx, st, dnsapi.New(srv.URL), "mail.vyrtsev.com", slog.New(slog.DiscardHandler)); err != nil {
+	if _, err := Sync(ctx, st, dnsapi.New(srv.URL), "mail.example.net", slog.New(slog.DiscardHandler)); err != nil {
 		t.Fatal(err)
 	}
 	got := map[string]string{}
 	for _, r := range fake.zone.Records {
 		got[r.Name] = r.Data
 	}
-	if got["@"] != "v=spf1 a:mail.vyrtsev.com -all" || got["_dmarc"] != "v=DMARC1; p=quarantine" {
+	if got["@"] != "v=spf1 a:mail.example.net -all" || got["_dmarc"] != "v=DMARC1; p=quarantine" {
 		t.Errorf("published %v", got)
 	}
 }

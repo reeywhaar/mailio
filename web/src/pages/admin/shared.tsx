@@ -525,7 +525,7 @@ export function Tag({
 }
 
 /**
- * A setting and the account its mail goes to: "Forward → b@reey.ru". Marked when that account
+ * A setting and the account its mail goes to: "Forward → b@example.org". Marked when that account
  * would not keep it, which only data saved before the rule can show.
  */
 export function Toward({

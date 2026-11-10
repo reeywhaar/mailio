@@ -19,7 +19,7 @@ type Credential struct {
 	ID        string
 	AccountID string
 	Label     string
-	// Login is the tag that signs in with this password: inbox+k3x9@reey.ru for "k3x9", the plain
+	// Login is the tag that signs in with this password: inbox+k3x9@example.org for "k3x9", the plain
 	// address for "".
 	Login     string
 	CreatedAt time.Time

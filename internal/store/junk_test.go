@@ -15,8 +15,8 @@ func TestAJunkDefaultBecomesEachFollowingDomainsOwn(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
 
-	// The database the migration before this one left, with a junk default: reey.ru and
-	// vyrtsev.com follow it, example.com drops its own.
+	// The database the migration before this one left, with a junk default: example.org and
+	// example.net follow it, example.com drops its own.
 	raw, err := sql.Open("sqlite", filepath.Join(dir, FileName))
 	if err != nil {
 		t.Fatal(err)
@@ -26,10 +26,10 @@ func TestAJunkDefaultBecomesEachFollowingDomainsOwn(t *testing.T) {
 	}
 	const inbox, following, own = "ac_01inbox", "dm_01following", "dm_01own"
 	for _, q := range []string{
-		`INSERT INTO domains (id, name, created_at) VALUES ('dm_01reey', 'reey.ru', 0)`,
-		`INSERT INTO domains (id, name, created_at) VALUES ('` + following + `', 'vyrtsev.com', 0)`,
+		`INSERT INTO domains (id, name, created_at) VALUES ('dm_01org', 'example.org', 0)`,
+		`INSERT INTO domains (id, name, created_at) VALUES ('` + following + `', 'example.net', 0)`,
 		`INSERT INTO domains (id, name, unknown, unknown_own, created_at) VALUES ('` + own + `', 'example.com', 'drop', 1, 0)`,
-		`INSERT INTO accounts (id, domain_id, local_part, created_at) VALUES ('` + inbox + `', 'dm_01reey', 'inbox', 0)`,
+		`INSERT INTO accounts (id, domain_id, local_part, created_at) VALUES ('` + inbox + `', 'dm_01org', 'inbox', 0)`,
 		`UPDATE settings SET unknown = 'junk', unknown_account_id = '` + inbox + `'`,
 	} {
 		if _, err := raw.Exec(q); err != nil {

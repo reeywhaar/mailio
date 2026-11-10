@@ -14,21 +14,21 @@ import (
 func TestAnAliasDeliversToItsAccountWhichSendsAsIt(t *testing.T) {
 	st := openStore(t)
 	ctx := context.Background()
-	inbox := account(t, st, "inbox@reey.ru")
-	other := account(t, st, "other@vyrtsev.com")
-	d, _ := st.DomainByName(ctx, "vyrtsev.com")
+	inbox := account(t, st, "inbox@example.org")
+	other := account(t, st, "other@example.net")
+	d, _ := st.DomainByName(ctx, "example.net")
 
-	alias, err := st.CreateAlias(ctx, "shop@vyrtsev.com", inbox.ID)
+	alias, err := st.CreateAlias(ctx, "shop@example.net", inbox.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !alias.Alias || alias.ForwardAccountID != inbox.ID || alias.Incoming != IncomingForward {
 		t.Errorf("made: %+v", alias)
 	}
-	if r := resolve(t, st, "shop+promo@vyrtsev.com"); r.Account == nil || r.Account.ID != inbox.ID || r.Tag != "promo" {
+	if r := resolve(t, st, "shop+promo@example.net"); r.Account == nil || r.Account.ID != inbox.ID || r.Tag != "promo" {
 		t.Errorf("delivered to %+v", r)
 	}
-	a, _ := address.Parse("shop@vyrtsev.com")
+	a, _ := address.Parse("shop@example.net")
 	if got, err := st.AliasOf(ctx, inbox.ID, a); err != nil || got.ID != alias.ID {
 		t.Errorf("inbox sends as it: %v %v", got, err)
 	}
@@ -48,16 +48,16 @@ func TestAnAliasDeliversToItsAccountWhichSendsAsIt(t *testing.T) {
 			t.Errorf("%s: %v", what, err)
 		}
 	}
-	_, err = st.CreateAlias(ctx, "deals@vyrtsev.com", alias.ID)
-	conflict("an alias of an alias", err, "shop@vyrtsev.com is an alias")
+	_, err = st.CreateAlias(ctx, "deals@example.net", alias.ID)
+	conflict("an alias of an alias", err, "shop@example.net is an alias")
 	conflict("forwarding to it", st.SetIncoming(ctx, other.ID, IncomingForward, alias.ID), "is an alias")
 	conflict("its catch-all", st.SetUnknown(ctx, d.ID, UnknownForward, alias.ID), "is an alias")
-	conflict("deleting its account", st.DeleteAccount(ctx, inbox.ID), "shop@vyrtsev.com is an alias of inbox@reey.ru")
+	conflict("deleting its account", st.DeleteAccount(ctx, inbox.ID), "shop@example.net is an alias of inbox@example.org")
 	conflict("its account stops keeping", st.SetIncoming(ctx, inbox.ID, IncomingReject, ""), "is an alias of")
 	if err := st.SetIncoming(ctx, alias.ID, IncomingKeep, ""); !errors.Is(err, ErrInvalid) {
 		t.Errorf("an alias keeping: %v", err)
 	}
-	if _, err := st.CreateAlias(ctx, "inbox@reey.ru", other.ID); !errors.Is(err, ErrConflict) {
+	if _, err := st.CreateAlias(ctx, "inbox@example.org", other.ID); !errors.Is(err, ErrConflict) {
 		t.Errorf("an address taken: %v", err)
 	}
 
@@ -65,7 +65,7 @@ func TestAnAliasDeliversToItsAccountWhichSendsAsIt(t *testing.T) {
 	if err := st.SetIncoming(ctx, alias.ID, IncomingForward, other.ID); err != nil {
 		t.Fatal(err)
 	}
-	if r := resolve(t, st, "shop@vyrtsev.com"); r.Account == nil || r.Account.ID != other.ID {
+	if r := resolve(t, st, "shop@example.net"); r.Account == nil || r.Account.ID != other.ID {
 		t.Errorf("moved: %+v", r)
 	}
 	if err := st.DeleteAccount(ctx, alias.ID); err != nil {

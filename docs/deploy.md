@@ -338,8 +338,8 @@ There is no content filter: what is junk beyond that is the reader's to move.
 4. Import the old mail, mounting the old Maildir read-only:
 
    ```sh
-   docker exec mailio mailio import maildir --dry-run /import/root inbox@reey.ru inbox@vyrtsev.com
-   docker exec mailio mailio import maildir /import/root inbox@reey.ru inbox@vyrtsev.com
+   docker exec mailio mailio import maildir --dry-run /import/root inbox@example.org inbox@example.net
+   docker exec mailio mailio import maildir /import/root inbox@example.org inbox@example.net
    ```
 
    Several addresses delivered into one Maildir are sorted to whoever `X-Original-To` names, the

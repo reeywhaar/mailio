@@ -21,7 +21,7 @@ CREATE TABLE user_passwords (
   id           TEXT PRIMARY KEY,
   user_id      TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
   label        TEXT NOT NULL,
-  -- The tag of its login: inbox+k3x9@reey.ru signs in with this password and no other. Empty
+  -- The tag of its login: inbox+k3x9@example.org signs in with this password and no other. Empty
   -- for the plain address.
   login        TEXT NOT NULL,
   hash         TEXT NOT NULL,

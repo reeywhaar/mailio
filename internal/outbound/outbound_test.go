@@ -111,11 +111,11 @@ func newRig(t *testing.T) *rig {
 	var logged bytes.Buffer
 	log := slog.New(slog.NewJSONHandler(&logged, nil))
 
-	d, err := st.CreateDomain(ctx, "reey.ru")
+	d, err := st.CreateDomain(ctx, "example.org")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, a := range []string{"inbox@reey.ru", "other@reey.ru"} {
+	for _, a := range []string{"inbox@example.org", "other@example.org"} {
 		if _, err := st.CreateAccount(ctx, a, "correct horse"); err != nil {
 			t.Fatal(err)
 		}
@@ -197,7 +197,7 @@ func (r *rig) submit(login, password, from string, to []string, body string) err
 	return c.Quit()
 }
 
-const letter = "From: Misha <inbox@reey.ru>\r\nTo: someone@example.com\r\nSubject: Hi\r\n\r\nHello.\r\n"
+const letter = "From: Misha <inbox@example.org>\r\nTo: someone@example.com\r\nSubject: Hi\r\n\r\nHello.\r\n"
 
 func (r *rig) inbox(addr string) []string {
 	r.t.Helper()
@@ -218,8 +218,8 @@ func (r *rig) inbox(addr string) []string {
 
 func TestSubmittedMailGoesThroughTheRelaySignedAndLocalMailStaysHome(t *testing.T) {
 	r := newRig(t)
-	if err := r.submit("inbox@reey.ru", "correct horse", "inbox+news@reey.ru",
-		[]string{"someone@example.com", "other@reey.ru"}, letter); err != nil {
+	if err := r.submit("inbox@example.org", "correct horse", "inbox+news@example.org",
+		[]string{"someone@example.com", "other@example.org"}, letter); err != nil {
 		t.Fatal(err)
 	}
 	r.sender.runOnce(context.Background())
@@ -228,27 +228,27 @@ func TestSubmittedMailGoesThroughTheRelaySignedAndLocalMailStaysHome(t *testing.
 		t.Fatalf("the relay got %d messages", len(r.relay.got))
 	}
 	got := r.relay.got[0]
-	if got.from != "inbox+news@reey.ru" || len(got.rcpts) != 1 || got.rcpts[0] != "someone@example.com" {
+	if got.from != "inbox+news@example.org" || len(got.rcpts) != 1 || got.rcpts[0] != "someone@example.com" {
 		t.Errorf("the relay got %s → %v", got.from, got.rcpts)
 	}
 	// The signature verifies against the record mailio publishes.
 	record, _ := dkimkey.Record(r.domain.DKIMKey)
 	vs, err := dkim.VerifyWithOptions(bytes.NewReader(got.data), &dkim.VerifyOptions{
 		LookupTXT: func(name string) ([]string, error) {
-			if name != dkimkey.RecordName("reey.ru", dkimkey.Selector) {
+			if name != dkimkey.RecordName("example.org", dkimkey.Selector) {
 				t.Errorf("looked up %s", name)
 			}
 			return []string{record}, nil
 		},
 	})
-	if err != nil || len(vs) != 1 || vs[0].Err != nil || vs[0].Domain != "reey.ru" {
+	if err != nil || len(vs) != 1 || vs[0].Err != nil || vs[0].Domain != "example.org" {
 		t.Errorf("dkim: %v %+v", err, vs)
 	}
 	if !strings.Contains(string(got.data), "Message-ID: <") || !strings.Contains(string(got.data), "Date: ") {
 		t.Error("Message-ID or Date was not added")
 	}
 
-	if local := r.inbox("other@reey.ru"); len(local) != 1 || !strings.Contains(local[0], "Subject: Hi") {
+	if local := r.inbox("other@example.org"); len(local) != 1 || !strings.Contains(local[0], "Subject: Hi") {
 		t.Errorf("the local recipient got %d", len(local))
 	}
 	if q, _ := r.st.Outbound(context.Background()); len(q) != 0 {
@@ -258,11 +258,11 @@ func TestSubmittedMailGoesThroughTheRelaySignedAndLocalMailStaysHome(t *testing.
 
 func TestAnAccountSendsOnlyAsItself(t *testing.T) {
 	r := newRig(t)
-	err := r.submit("inbox@reey.ru", "correct horse", "other@reey.ru", []string{"someone@example.com"}, letter)
+	err := r.submit("inbox@example.org", "correct horse", "other@example.org", []string{"someone@example.com"}, letter)
 	if err == nil || !strings.Contains(err.Error(), "553") {
 		t.Errorf("sending as somebody else: %v", err)
 	}
-	err = r.submit("inbox@reey.ru", "wrong guess", "inbox@reey.ru", []string{"someone@example.com"}, letter)
+	err = r.submit("inbox@example.org", "wrong guess", "inbox@example.org", []string{"someone@example.com"}, letter)
 	if err == nil {
 		t.Error("a wrong password sent mail")
 	}
@@ -275,13 +275,13 @@ func TestARefusedRecipientIsReportedAndATemporaryOneRetried(t *testing.T) {
 	r := newRig(t)
 	r.relay.refuse["bad@example.com"] = &gosmtp.SMTPError{Code: 550, EnhancedCode: gosmtp.EnhancedCode{5, 1, 1}, Message: "No such user"}
 	r.relay.refuse["later@example.com"] = &gosmtp.SMTPError{Code: 451, EnhancedCode: gosmtp.EnhancedCode{4, 3, 0}, Message: "Try later"}
-	if err := r.submit("inbox@reey.ru", "correct horse", "inbox@reey.ru",
+	if err := r.submit("inbox@example.org", "correct horse", "inbox@example.org",
 		[]string{"bad@example.com", "later@example.com"}, letter); err != nil {
 		t.Fatal(err)
 	}
 	r.sender.runOnce(context.Background())
 
-	bounces := r.inbox("inbox@reey.ru")
+	bounces := r.inbox("inbox@example.org")
 	if len(bounces) != 1 || !strings.Contains(bounces[0], "Undelivered mail to bad@example.com") || !strings.Contains(bounces[0], "No such user") {
 		t.Errorf("bounces: %v", bounces)
 	}
@@ -294,7 +294,7 @@ func TestARefusedRecipientIsReportedAndATemporaryOneRetried(t *testing.T) {
 func TestAWrongRelayPasswordIsRetriedNotBounced(t *testing.T) {
 	r := newRig(t)
 	r.relay.password = "changed"
-	if err := r.submit("inbox@reey.ru", "correct horse", "inbox@reey.ru", []string{"someone@example.com"}, letter); err != nil {
+	if err := r.submit("inbox@example.org", "correct horse", "inbox@example.org", []string{"someone@example.com"}, letter); err != nil {
 		t.Fatal(err)
 	}
 	r.sender.runOnce(context.Background())
@@ -331,7 +331,7 @@ func TestADomainThatSendsDirectlySkipsTheDefaultRelay(t *testing.T) {
 		return dial(ctx, network, addr)
 	}
 
-	if err := r.submit("inbox@reey.ru", "correct horse", "inbox@reey.ru", []string{"someone@example.com"}, letter); err != nil {
+	if err := r.submit("inbox@example.org", "correct horse", "inbox@example.org", []string{"someone@example.com"}, letter); err != nil {
 		t.Fatal(err)
 	}
 	r.sender.runOnce(ctx)
@@ -356,25 +356,25 @@ func TestASubmissionLargerThanAllowedIsRefused(t *testing.T) {
 	r := newRig(t)
 	ctx := context.Background()
 	big := letter + strings.Repeat("A line of an attachment, encoded the way mail carries one.\r\n", 20000)
-	inbox, _ := r.st.Authenticate(ctx, "inbox@reey.ru", "correct horse")
-	other, _ := r.st.Authenticate(ctx, "other@reey.ru", "correct horse")
+	inbox, _ := r.st.Authenticate(ctx, "inbox@example.org", "correct horse")
+	other, _ := r.st.Authenticate(ctx, "other@example.org", "correct horse")
 
 	if err := r.st.SetAccountMessageLimit(ctx, other.ID, 1<<20); err != nil {
 		t.Fatal(err)
 	}
-	err := r.submit("inbox@reey.ru", "correct horse", "inbox@reey.ru", []string{"someone@example.com", "other@reey.ru"}, big)
-	if err == nil || !strings.Contains(err.Error(), "552") || !strings.Contains(err.Error(), "other@reey.ru") {
+	err := r.submit("inbox@example.org", "correct horse", "inbox@example.org", []string{"someone@example.com", "other@example.org"}, big)
+	if err == nil || !strings.Contains(err.Error(), "552") || !strings.Contains(err.Error(), "other@example.org") {
 		t.Errorf("a local recipient's: %v", err)
 	}
-	if err := r.submit("inbox@reey.ru", "correct horse", "inbox@reey.ru", []string{"someone@example.com"}, big); err != nil {
+	if err := r.submit("inbox@example.org", "correct horse", "inbox@example.org", []string{"someone@example.com"}, big); err != nil {
 		t.Errorf("within the sender's: %v", err)
 	}
 
 	if err := r.st.SetAccountMessageLimit(ctx, inbox.ID, 1<<20); err != nil {
 		t.Fatal(err)
 	}
-	err = r.submit("inbox@reey.ru", "correct horse", "inbox@reey.ru", []string{"someone@example.com"}, big)
-	if err == nil || !strings.Contains(err.Error(), "552") || !strings.Contains(err.Error(), "inbox@reey.ru sends up to 1 MB") {
+	err = r.submit("inbox@example.org", "correct horse", "inbox@example.org", []string{"someone@example.com"}, big)
+	if err == nil || !strings.Contains(err.Error(), "552") || !strings.Contains(err.Error(), "inbox@example.org sends up to 1 MB") {
 		t.Errorf("the sender's own: %v", err)
 	}
 }
@@ -383,7 +383,7 @@ func TestASubmissionLargerThanAllowedIsRefused(t *testing.T) {
 func TestAnAccountsOwnRelayCarriesItsMail(t *testing.T) {
 	r := newRig(t)
 	ctx := context.Background()
-	inbox, _ := r.st.Authenticate(ctx, "inbox@reey.ru", "correct horse")
+	inbox, _ := r.st.Authenticate(ctx, "inbox@example.org", "correct horse")
 	set, _ := r.st.Settings(ctx)
 	if err := r.st.SetDomainVia(ctx, r.domain.ID, store.ViaBuiltIn); err != nil {
 		t.Fatal(err)
@@ -391,7 +391,7 @@ func TestAnAccountsOwnRelayCarriesItsMail(t *testing.T) {
 	if err := r.st.SetAccountVia(ctx, inbox.ID, set.RelayID); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.submit("inbox@reey.ru", "correct horse", "inbox@reey.ru", []string{"someone@example.com"}, letter); err != nil {
+	if err := r.submit("inbox@example.org", "correct horse", "inbox@example.org", []string{"someone@example.com"}, letter); err != nil {
 		t.Fatal(err)
 	}
 	r.sender.runOnce(ctx)
@@ -404,24 +404,24 @@ func TestAnAccountsOwnRelayCarriesItsMail(t *testing.T) {
 func TestAnAccountSendsAsItsAliasSignedForTheAliasesDomain(t *testing.T) {
 	r := newRig(t)
 	ctx := context.Background()
-	inbox, _ := r.st.Authenticate(ctx, "inbox@reey.ru", "correct horse")
-	other, _ := r.st.Authenticate(ctx, "other@reey.ru", "correct horse")
-	vy, err := r.st.CreateDomain(ctx, "vyrtsev.com")
+	inbox, _ := r.st.Authenticate(ctx, "inbox@example.org", "correct horse")
+	other, _ := r.st.Authenticate(ctx, "other@example.org", "correct horse")
+	vy, err := r.st.CreateDomain(ctx, "example.net")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.st.CreateAlias(ctx, "shop@vyrtsev.com", inbox.ID); err != nil {
+	if _, err := r.st.CreateAlias(ctx, "shop@example.net", inbox.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.st.CreateAlias(ctx, "billing@vyrtsev.com", other.ID); err != nil {
+	if _, err := r.st.CreateAlias(ctx, "billing@example.net", other.ID); err != nil {
 		t.Fatal(err)
 	}
 
-	body := "From: Shop <shop@vyrtsev.com>\r\nTo: someone@example.com\r\nSubject: Hi\r\n\r\nHello.\r\n"
-	if err := r.submit("inbox@reey.ru", "correct horse", "shop+news@vyrtsev.com", []string{"someone@example.com"}, body); err != nil {
+	body := "From: Shop <shop@example.net>\r\nTo: someone@example.com\r\nSubject: Hi\r\n\r\nHello.\r\n"
+	if err := r.submit("inbox@example.org", "correct horse", "shop+news@example.net", []string{"someone@example.com"}, body); err != nil {
 		t.Fatal(err)
 	}
-	err = r.submit("inbox@reey.ru", "correct horse", "billing@vyrtsev.com", []string{"someone@example.com"}, body)
+	err = r.submit("inbox@example.org", "correct horse", "billing@example.net", []string{"someone@example.com"}, body)
 	if err == nil || !strings.Contains(err.Error(), "553") {
 		t.Errorf("as somebody else's alias: %v", err)
 	}
@@ -431,19 +431,19 @@ func TestAnAccountSendsAsItsAliasSignedForTheAliasesDomain(t *testing.T) {
 		t.Fatalf("the relay got %d messages", len(r.relay.got))
 	}
 	got := r.relay.got[0]
-	if got.from != "shop+news@vyrtsev.com" {
+	if got.from != "shop+news@example.net" {
 		t.Errorf("sent from %s", got.from)
 	}
 	record, _ := dkimkey.Record(vy.DKIMKey)
 	vs, err := dkim.VerifyWithOptions(bytes.NewReader(got.data), &dkim.VerifyOptions{
 		LookupTXT: func(name string) ([]string, error) {
-			if name != dkimkey.RecordName("vyrtsev.com", dkimkey.Selector) {
+			if name != dkimkey.RecordName("example.net", dkimkey.Selector) {
 				t.Errorf("looked up %s", name)
 			}
 			return []string{record}, nil
 		},
 	})
-	if err != nil || len(vs) != 1 || vs[0].Err != nil || vs[0].Domain != "vyrtsev.com" {
+	if err != nil || len(vs) != 1 || vs[0].Err != nil || vs[0].Domain != "example.net" {
 		t.Errorf("dkim: %v %+v", err, vs)
 	}
 }

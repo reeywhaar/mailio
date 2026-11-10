@@ -3,11 +3,11 @@ package address
 import "testing"
 
 func TestAnAddressIsLowercasedAndSplitAtThePlus(t *testing.T) {
-	a, err := Parse("  Inbox+Shop.Amazon@Reey.RU. ")
+	a, err := Parse("  Inbox+Shop.Amazon@Example.ORG. ")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.String() != "inbox+shop.amazon@reey.ru" {
+	if a.String() != "inbox+shop.amazon@example.org" {
 		t.Errorf("String() = %q", a.String())
 	}
 	if a.Name() != "inbox" || a.Tag() != "shop.amazon" {
@@ -16,7 +16,7 @@ func TestAnAddressIsLowercasedAndSplitAtThePlus(t *testing.T) {
 }
 
 func TestOnlyTheFirstPlusSeparates(t *testing.T) {
-	a, err := Parse("inbox+a+b@reey.ru")
+	a, err := Parse("inbox+a+b@example.org")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +26,7 @@ func TestOnlyTheFirstPlusSeparates(t *testing.T) {
 }
 
 func TestAnAddressWithoutATagIsItsOwnName(t *testing.T) {
-	a, err := Parse("inbox@reey.ru")
+	a, err := Parse("inbox@example.org")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,20 +39,20 @@ func TestWhatIsNotAnAddressIsRefused(t *testing.T) {
 	for _, s := range []string{
 		"",
 		"inbox",
-		"@reey.ru",
+		"@example.org",
 		"inbox@",
-		"inbox@reey",
-		"in box@reey.ru",
-		`"in box"@reey.ru`,
-		".inbox@reey.ru",
-		"inbox.@reey.ru",
-		"in..box@reey.ru",
+		"inbox@example",
+		"in box@example.org",
+		`"in box"@example.org`,
+		".inbox@example.org",
+		"inbox.@example.org",
+		"in..box@example.org",
 		"inbox@[127.0.0.1]",
 		"inbox@127.0.0.1",
-		"inbox@-reey.ru",
-		"inbox@reey..ru",
-		"inbox@reey_ru.com",
-		"пчёлка@reey.ru",
+		"inbox@-example.org",
+		"inbox@example..org",
+		"inbox@example_org.com",
+		"пчёлка@example.org",
 	} {
 		if _, err := Parse(s); err == nil {
 			t.Errorf("Parse(%q) succeeded", s)
@@ -61,10 +61,10 @@ func TestWhatIsNotAnAddressIsRefused(t *testing.T) {
 }
 
 func TestAnAccountCannotBeRegisteredUnderATaggedAddress(t *testing.T) {
-	if _, err := ParseAccount("inbox+shop@reey.ru"); err == nil {
+	if _, err := ParseAccount("inbox+shop@example.org"); err == nil {
 		t.Error("ParseAccount accepted a +")
 	}
-	if _, err := ParseAccount("inbox@reey.ru"); err != nil {
+	if _, err := ParseAccount("inbox@example.org"); err != nil {
 		t.Error(err)
 	}
 }

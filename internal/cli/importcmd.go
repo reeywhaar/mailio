@@ -24,8 +24,8 @@ func importMaildirCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "maildir <dir> <address>...",
 		Short: "Import a Maildir into accounts' mailboxes, sorted by who each message was sent to",
-		Example: "  docker exec mailio mailio import maildir /import/root inbox@reey.ru inbox@vyrtsev.com\n" +
-			"  docker exec mailio mailio import maildir --dry-run /import/root inbox@reey.ru",
+		Example: "  docker exec mailio mailio import maildir /import/root inbox@example.org inbox@example.net\n" +
+			"  docker exec mailio mailio import maildir --dry-run /import/root inbox@example.org",
 		Args: cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_, st, _, err := setup()

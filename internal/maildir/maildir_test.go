@@ -31,42 +31,42 @@ func TestASharedMaildirIsSortedToWhoEachMessageWasSentTo(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	for _, d := range []string{"reey.ru", "vyrtsev.com"} {
+	for _, d := range []string{"example.org", "example.net"} {
 		if _, err := st.CreateDomain(ctx, d); err != nil {
 			t.Fatal(err)
 		}
 	}
-	reey, _ := st.CreateAccount(ctx, "inbox@reey.ru", "correct horse")
-	vyr, _ := st.CreateAccount(ctx, "inbox@vyrtsev.com", "correct horse")
+	orgInbox, _ := st.CreateAccount(ctx, "inbox@example.org", "correct horse")
+	netInbox, _ := st.CreateAccount(ctx, "inbox@example.net", "correct horse")
 
 	root := t.TempDir()
 	old := time.Date(2025, 3, 1, 10, 0, 0, 0, time.UTC)
-	write(t, filepath.Join(root, "cur", "1.a:2,S"), "X-Original-To: inbox+shop@reey.ru\r\nDelivered-To: root@mail.vyrtsev.com\r\nSubject: a\r\n\r\nx\r\n", old)
-	write(t, filepath.Join(root, "new", "2.b"), "X-Original-To: inbox@vyrtsev.com\r\nSubject: b\r\n\r\nx\r\n", old.Add(time.Hour))
-	write(t, filepath.Join(root, "cur", "3.c:2,FR"), "To: Someone <inbox@vyrtsev.com>\r\nSubject: c\r\n\r\nx\r\n", old.Add(2*time.Hour))
-	write(t, filepath.Join(root, ".Sent", "cur", "4.d:2,S"), "From: inbox@reey.ru\r\nTo: anna@example.com\r\nSubject: d\r\n\r\nx\r\n", old)
-	write(t, filepath.Join(root, ".Projects.2025", "cur", "5.e:2,S"), "X-Original-To: inbox@reey.ru\r\nSubject: e\r\n\r\nx\r\n", old)
+	write(t, filepath.Join(root, "cur", "1.a:2,S"), "X-Original-To: inbox+shop@example.org\r\nDelivered-To: root@mail.example.net\r\nSubject: a\r\n\r\nx\r\n", old)
+	write(t, filepath.Join(root, "new", "2.b"), "X-Original-To: inbox@example.net\r\nSubject: b\r\n\r\nx\r\n", old.Add(time.Hour))
+	write(t, filepath.Join(root, "cur", "3.c:2,FR"), "To: Someone <inbox@example.net>\r\nSubject: c\r\n\r\nx\r\n", old.Add(2*time.Hour))
+	write(t, filepath.Join(root, ".Sent", "cur", "4.d:2,S"), "From: inbox@example.org\r\nTo: anna@example.com\r\nSubject: d\r\n\r\nx\r\n", old)
+	write(t, filepath.Join(root, ".Projects.2025", "cur", "5.e:2,S"), "X-Original-To: inbox@example.org\r\nSubject: e\r\n\r\nx\r\n", old)
 
-	res, err := Import(ctx, st, root, []*store.Account{reey, vyr}, true)
+	res, err := Import(ctx, st, root, []*store.Account{orgInbox, netInbox}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res["inbox@reey.ru INBOX"] != 1 || res["inbox@vyrtsev.com INBOX"] != 2 || res["inbox@reey.ru Sent"] != 1 || res["inbox@reey.ru Projects/2025"] != 1 {
+	if res["inbox@example.org INBOX"] != 1 || res["inbox@example.net INBOX"] != 2 || res["inbox@example.org Sent"] != 1 || res["inbox@example.org Projects/2025"] != 1 {
 		t.Fatalf("dry run: %v", res)
 	}
-	if box, _ := st.MailboxNamed(ctx, reey.ID, store.Inbox); box != nil {
+	if box, _ := st.MailboxNamed(ctx, orgInbox.ID, store.Inbox); box != nil {
 		if msgs, _ := st.Messages(ctx, box.ID, nil); len(msgs) != 0 {
 			t.Fatal("a dry run wrote")
 		}
 	}
 
-	if _, err := Import(ctx, st, root, []*store.Account{reey, vyr}, false); err != nil {
+	if _, err := Import(ctx, st, root, []*store.Account{orgInbox, netInbox}, false); err != nil {
 		t.Fatal(err)
 	}
-	box, _ := st.MailboxNamed(ctx, vyr.ID, store.Inbox)
+	box, _ := st.MailboxNamed(ctx, netInbox.ID, store.Inbox)
 	msgs, _ := st.Messages(ctx, box.ID, nil)
 	if len(msgs) != 2 {
-		t.Fatalf("vyrtsev inbox has %d", len(msgs))
+		t.Fatalf("example.net inbox has %d", len(msgs))
 	}
 	// Order, flags and arrival time come from the files: new/ is unread, :2,FR is flagged and answered.
 	if len(msgs[0].Flags) != 0 || !msgs[0].ReceivedAt.Equal(old.Add(time.Hour)) {
@@ -75,7 +75,7 @@ func TestASharedMaildirIsSortedToWhoEachMessageWasSentTo(t *testing.T) {
 	if len(msgs[1].Flags) != 2 || msgs[1].Flags[0] != `\Answered` || msgs[1].Flags[1] != `\Flagged` {
 		t.Errorf("second: %+v", msgs[1])
 	}
-	if _, err := st.MailboxNamed(ctx, reey.ID, "Projects/2025"); err != nil {
+	if _, err := st.MailboxNamed(ctx, orgInbox.ID, "Projects/2025"); err != nil {
 		t.Errorf("the nested folder was not made: %v", err)
 	}
 }
