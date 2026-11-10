@@ -198,9 +198,14 @@ func (s *Server) listQueue(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, len(list))
 	for i, o := range list {
+		var release any
+		if !o.ReleaseAt.IsZero() {
+			release = o.ReleaseAt.Unix()
+		}
 		out[i] = map[string]any{
 			"id": o.ID, "sender": o.Sender, "recipient": o.Recipient, "attempts": o.Attempts,
 			"last_error": o.LastError, "next_at": o.NextAt.Unix(), "created_at": o.CreatedAt.Unix(),
+			"release_at": release,
 		}
 	}
 	writeJSON(w, http.StatusOK, out)

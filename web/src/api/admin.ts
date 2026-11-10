@@ -134,6 +134,8 @@ export type Queued = {
   last_error: string;
   next_at: number;
   created_at: number;
+  /** When a held message is sent, as its sender asked; null for one sent at once. */
+  release_at: number | null;
 };
 
 /** What an account does with mail sent to it. */

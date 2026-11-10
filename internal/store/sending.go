@@ -370,10 +370,25 @@ type OutboundRecipient struct {
 	CreatedAt time.Time
 	LastError string
 	NextAt    time.Time
+	// ReleaseAt is when a held message is sent, or zero for one sent at once.
+	ReleaseAt time.Time
+}
+
+// Since is when the recipient's tries count from: its release, for held mail.
+func (o *OutboundRecipient) Since() time.Time {
+	if o.ReleaseAt.After(o.CreatedAt) {
+		return o.ReleaseAt
+	}
+	return o.CreatedAt
 }
 
 // Enqueue queues a message for recipients on other servers. Due at once.
 func (s *Store) Enqueue(ctx context.Context, sender, accountID string, raw []byte, recipients []string) error {
+	return s.Hold(ctx, sender, accountID, raw, recipients, time.Time{})
+}
+
+// Hold queues a message until release; a zero or past one is at once.
+func (s *Store) Hold(ctx context.Context, sender, accountID string, raw []byte, recipients []string, release time.Time) error {
 	tx, err := s.writer.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("enqueue: %w", err)
@@ -384,9 +399,13 @@ func (s *Store) Enqueue(ctx context.Context, sender, accountID string, raw []byt
 	if accountID != "" {
 		account = accountID
 	}
+	due, held := now, any(nil)
+	if release.After(now) {
+		due, held = release, unix(release)
+	}
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO outbound_messages (sender, account_id, raw, created_at) VALUES (?, ?, ?, ?)`,
-		sender, account, raw, unix(now))
+		`INSERT INTO outbound_messages (sender, account_id, raw, created_at, release_at) VALUES (?, ?, ?, ?, ?)`,
+		sender, account, raw, unix(now), held)
 	if err != nil {
 		return fmt.Errorf("enqueue: %w", err)
 	}
@@ -394,7 +413,7 @@ func (s *Store) Enqueue(ctx context.Context, sender, accountID string, raw []byt
 	for _, rcpt := range recipients {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO outbound_recipients (message_id, recipient, next_at) VALUES (?, ?, ?)`,
-			id, rcpt, unix(now)); err != nil {
+			id, rcpt, unix(due)); err != nil {
 			return fmt.Errorf("enqueue: %w", err)
 		}
 	}
@@ -406,21 +425,24 @@ func (s *Store) Enqueue(ctx context.Context, sender, accountID string, raw []byt
 }
 
 const outboundColumns = `r.id, r.message_id, m.sender, coalesce(m.account_id, ''), r.recipient, r.attempts,
-	m.created_at, r.last_error, r.next_at`
+	m.created_at, r.last_error, r.next_at, coalesce(m.release_at, 0)`
 
 func scanOutbound(rows *sql.Rows) ([]OutboundRecipient, error) {
 	defer rows.Close()
 	var out []OutboundRecipient
 	for rows.Next() {
 		var (
-			o              OutboundRecipient
-			created, after int64
+			o                       OutboundRecipient
+			created, after, release int64
 		)
 		if err := rows.Scan(&o.ID, &o.MessageID, &o.Sender, &o.AccountID, &o.Recipient, &o.Attempts,
-			&created, &o.LastError, &after); err != nil {
+			&created, &o.LastError, &after, &release); err != nil {
 			return nil, err
 		}
 		o.CreatedAt, o.NextAt = fromUnix(created), fromUnix(after)
+		if release != 0 {
+			o.ReleaseAt = fromUnix(release)
+		}
 		out = append(out, o)
 	}
 	return out, rows.Err()
@@ -513,7 +535,11 @@ func (s *Store) DeferOutbound(ctx context.Context, id int64, next time.Time, rea
 
 // RetryOutbound makes everything queued due now, for the admin who has just fixed the relay.
 func (s *Store) RetryOutbound(ctx context.Context) error {
-	_, err := s.writer.ExecContext(ctx, `UPDATE outbound_recipients SET next_at = ?`, unix(s.Now()))
+	// Held mail waits for its time: its sender chose it.
+	now := unix(s.Now())
+	_, err := s.writer.ExecContext(ctx,
+		`UPDATE outbound_recipients SET next_at = ?1
+		  WHERE message_id NOT IN (SELECT id FROM outbound_messages WHERE release_at > ?1)`, now)
 	return err
 }
 

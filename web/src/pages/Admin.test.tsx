@@ -373,6 +373,38 @@ test("an account's mail is cleared from its danger zone, after a confirm saying 
   );
 });
 
+test("held mail in the queue says when it goes, tried mail how often it was tried", async () => {
+  routes({
+    "GET /api/queue": () => ({
+      body: [
+        {
+          id: 1,
+          sender: "inbox@example.org",
+          recipient: "someone@example.com",
+          attempts: 0,
+          last_error: "",
+          next_at: 1795000000,
+          created_at: 1,
+          release_at: 1795000000,
+        },
+        {
+          id: 2,
+          sender: "inbox@example.org",
+          recipient: "nobody@example.com",
+          attempts: 2,
+          last_error: "451 try later",
+          next_at: 2,
+          created_at: 1,
+          release_at: null,
+        },
+      ],
+    }),
+  });
+  mount();
+  expect(await screen.findByText(/^Held until: /)).toBeTruthy();
+  expect(screen.getByText("Attempts: 2 · 451 try later")).toBeTruthy();
+});
+
 test("a credential is added by its label, and its login and password are shown once", async () => {
   const { sent } = routes({
     "POST /api/accounts/ac_1/credentials": () => ({

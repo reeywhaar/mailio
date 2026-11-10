@@ -91,3 +91,45 @@ func (s *Store) follow(ctx context.Context, r *Recipient, u *Account) error {
 		}
 	}
 }
+
+// Deliveries splits recipients into the mailboxes here their mail goes to, once each however many
+// of an account's addresses it was sent to, and the addresses at other servers. An address here
+// that takes no mail is in neither: refused while the sender was still connected, or dropped.
+func (s *Store) Deliveries(ctx context.Context, recipients []string) ([]Delivery, []string, error) {
+	var (
+		local  []Delivery
+		remote []string
+	)
+	seen := map[int64]bool{}
+	for _, rcpt := range recipients {
+		a, err := address.Parse(rcpt)
+		if err != nil {
+			return nil, nil, err
+		}
+		r, err := s.Resolve(ctx, a)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !r.Ours {
+			remote = append(remote, rcpt)
+			continue
+		}
+		if r.Account == nil || r.Drop {
+			continue
+		}
+		box, err := s.MailboxNamed(ctx, r.Account.ID, Inbox)
+		if err != nil {
+			return nil, nil, err
+		}
+		if r.Junk {
+			if j, err := s.SpecialMailbox(ctx, r.Account.ID, `\Junk`); err == nil {
+				box = j
+			}
+		}
+		if !seen[box.ID] {
+			seen[box.ID] = true
+			local = append(local, Delivery{MailboxID: box.ID})
+		}
+	}
+	return local, remote, nil
+}

@@ -319,6 +319,24 @@ relay that cannot be reached or refuses the sign-in is always temporary, so a wr
 password is fixed in the admin interface and nothing is lost meanwhile. Retry now sends the
 queue at once.
 
+### A message can be held and sent later
+
+Submission offers FUTURERELEASE (RFC 4865): a client adds `HOLDFOR=<seconds>` or
+`HOLDUNTIL=<UTC time>` to `MAIL FROM`, and mailio holds the message in the queue until then, up
+to a year on; longer is refused while the client is still connected. A held message waits for
+everybody, accounts here too, and Retry now leaves it to its time. Its five days of tries count
+from when it is released. The queue shows it as held, and until when.
+
+The message is sent as the client wrote it, `Date` included: a client that wants the date it is
+sent at writes that one.
+
+go-smtp's release has no FUTURERELEASE, so mailio builds against it with
+[patches/github.com/emersion/go-smtp+v0.25.1.patch](../patches/github.com/emersion/go-smtp+v0.25.1.patch)
+applied. `sh patch-packages.sh` does that for every patch in `patches/`, as npm's patch-package
+does: it fetches the release, applies the patch to a copy in `.patched/`, which git ignores, and
+points `go.mod` at the copy. The Dockerfile and CI run it; run it once after cloning, and again
+when a patch changes.
+
 ## DMARC is obeyed and nothing else filters
 
 An arriving message gets SPF, DKIM and DMARC checked and an Authentication-Results header. When

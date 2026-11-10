@@ -11,7 +11,8 @@ live in the database and are managed in its admin interface; mail is read with
   account says.
 - **Sends on 465 and 587,** signed with each domain's DKIM key, directly or through a relay such
   as Gmail when the host may not send on 25 itself; relays are a list, one is the default, and a
-  domain can choose another. Failures are retried for five days and reported to the sender.
+  domain can choose another. Failures are retried for five days and reported to the sender. A
+  client can have a message held and sent later, up to a year on (FUTURERELEASE).
 - **Plus addresses.** `inbox+shop@example.com` arrives in `inbox@example.com`.
 - **A credential per device.** Each has a label, its own login, `inbox+k3x9@example.com`, and a
   password, generated or typed and shown once, and shows when it was last used. Delete the phone's without
@@ -135,6 +136,7 @@ without writing.
 Go 1.27 and Node 26.
 
 ```sh
+sh patch-packages.sh                            # dependencies' patches, once after cloning
 go test ./...                                   # the server, including SMTP in and IMAP out end to end
 npm --prefix web ci && npm --prefix web test    # the admin interface
 
@@ -162,6 +164,7 @@ internal/
   maildir/          the importer
   api/              the admin interface's JSON
   backup/           snapshots to backio
+patches/            fixes to dependencies, as diffs: FUTURERELEASE for go-smtp
 web/                the admin interface: React, Tailwind
 docs/               decisions: deploy, addresses, storage, API, conventions
 ```

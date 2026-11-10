@@ -20,6 +20,10 @@ RUN test -s dist/index.html && test -s dist/favicon.svg
 FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
+# The modules go.mod replaces with their releases and the patches in patches/: see patch-packages.sh.
+COPY patch-packages.sh ./
+COPY patches ./patches
+RUN apk add --no-cache patch && sh patch-packages.sh
 RUN go mod download
 COPY main.go ./
 COPY internal ./internal

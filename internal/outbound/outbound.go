@@ -81,6 +81,8 @@ func (s *Sender) runOnce(ctx context.Context) {
 		}
 		return
 	}
+	// Held mail to accounts here was queued too, and is delivered here now its time has come.
+	due = s.deliverLocal(ctx, due)
 	// The relay is the sending account's own, its domain's, or the default; a message has one
 	// sender, so one relay, and nil sends it straight to each recipient's MX.
 	relays := map[string]*store.Relay{}
@@ -143,6 +145,63 @@ func (s *Sender) runOnce(ctx context.Context) {
 	}
 }
 
+// deliverLocal delivers the due recipients at mailio's own domains to their mailboxes, and returns
+// the rest, for other servers. Only held mail queues a recipient here.
+func (s *Sender) deliverLocal(ctx context.Context, due []store.OutboundRecipient) []store.OutboundRecipient {
+	byMessage := map[int64][]store.OutboundRecipient{}
+	var messages []int64
+	var remote []store.OutboundRecipient
+	for _, r := range due {
+		if _, err := s.st.DomainByName(ctx, domainOf(r.Recipient)); err != nil {
+			remote = append(remote, r)
+			continue
+		}
+		if byMessage[r.MessageID] == nil {
+			messages = append(messages, r.MessageID)
+		}
+		byMessage[r.MessageID] = append(byMessage[r.MessageID], r)
+	}
+	for _, id := range messages {
+		rcpts := byMessage[id]
+		err := s.deliverHere(ctx, id, rcpts)
+		if err != nil {
+			s.log.Error("delivering held mail here failed", "error", err)
+			for _, r := range rcpts {
+				wait := backoff[min(r.Attempts, len(backoff)-1)]
+				if err := s.st.DeferOutbound(ctx, r.ID, time.Now().Add(wait), err.Error()); err != nil {
+					s.log.Error("deferring a recipient failed", "error", err)
+				}
+			}
+			continue
+		}
+		done := make([]int64, len(rcpts))
+		for i, r := range rcpts {
+			done[i] = r.ID
+		}
+		if err := s.st.FinishOutbound(ctx, done); err != nil {
+			s.log.Error("finishing recipients failed", "error", err)
+		}
+		s.log.Info("held mail delivered here", "account", rcpts[0].AccountID, "recipients", len(rcpts))
+	}
+	return remote
+}
+
+func (s *Sender) deliverHere(ctx context.Context, messageID int64, rcpts []store.OutboundRecipient) error {
+	raw, err := s.st.OutboundRaw(ctx, messageID)
+	if err != nil {
+		return err
+	}
+	addrs := make([]string, len(rcpts))
+	for i, r := range rcpts {
+		addrs[i] = r.Recipient
+	}
+	to, _, err := s.st.Deliveries(ctx, addrs)
+	if err != nil || len(to) == 0 {
+		return err
+	}
+	return s.st.Deliver(ctx, raw, time.Now(), to)
+}
+
 // settle records what happened to each recipient.
 func (s *Sender) settle(ctx context.Context, rcpts []store.OutboundRecipient, raw []byte, results map[int64]error) {
 	var done []int64
@@ -154,7 +213,7 @@ func (s *Sender) settle(ctx context.Context, rcpts []store.OutboundRecipient, ra
 		case err == nil:
 			done = append(done, r.ID)
 			s.log.Info("mail sent", "account", r.AccountID, "attempts", r.Attempts+1)
-		case permanent(err) || time.Since(r.CreatedAt) > GiveUpAfter:
+		case permanent(err) || time.Since(r.Since()) > GiveUpAfter:
 			done = append(done, r.ID)
 			failed = append(failed, r)
 			reasons = append(reasons, err.Error())

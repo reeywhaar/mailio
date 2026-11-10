@@ -24,6 +24,10 @@ import (
 	"mailio/internal/store"
 )
 
+// MaxHold is the longest a client may have mailio hold a message before sending it
+// (FUTURERELEASE, RFC 4865).
+const MaxHold = 365 * 24 * time.Hour
+
 // Queue is where submitted mail for other servers goes.
 type Queue interface {
 	Wake()
@@ -54,6 +58,9 @@ func (sub *Submission) Server(cfg *tls.Config) *smtp.Server {
 	s.ReadTimeout = 5 * time.Minute
 	s.WriteTimeout = time.Minute
 	s.EnableSMTPUTF8 = true
+	// A client may ask for a message to be sent later, with HOLDFOR or HOLDUNTIL on MAIL.
+	s.EnableFUTURERELEASE = true
+	s.MaxFutureRelease = MaxHold
 	s.ErrorLog = logger{sub.log}
 	return s
 }
@@ -74,6 +81,8 @@ type subSession struct {
 	size     int64
 	limit    int64
 	limitFor string
+	// hold is when the client asked the message to be sent, or zero for at once.
+	hold time.Time
 }
 
 var _ smtp.AuthSession = (*subSession)(nil)
@@ -112,6 +121,7 @@ func (s *subSession) Reset() {
 	s.from = ""
 	s.rcpts = nil
 	s.size, s.limit, s.limitFor = 0, 0, ""
+	s.hold = time.Time{}
 }
 
 func (s *subSession) Logout() error { return nil }
@@ -132,6 +142,10 @@ func (s *subSession) Mail(from string, opts *smtp.MailOptions) error {
 	s.limit = s.account.MessageLimit
 	if opts != nil {
 		s.size = opts.Size
+		// A time already past is now.
+		if opts.HoldUntil.After(time.Now()) {
+			s.hold = opts.HoldUntil
+		}
 	}
 	if s.size > s.limit {
 		return s.tooBig()
@@ -202,36 +216,22 @@ func (s *subSession) Data(r io.Reader) error {
 		return errTemporary
 	}
 
+	// Held, every recipient waits in the queue, those here too: the time is the sender's.
+	if !s.hold.IsZero() {
+		if err := s.sub.st.Hold(ctx, s.from, s.account.ID, raw, s.rcpts, s.hold); err != nil {
+			s.sub.log.Error("holding a message failed", "account", s.account.ID, "error", err)
+			return errTemporary
+		}
+		s.sub.queue.Wake()
+		s.sub.log.Info("mail held", "account", s.account.ID, "recipients", len(s.rcpts), "until", s.hold.UTC().Format(time.RFC3339), "bytes", len(raw))
+		return nil
+	}
+
 	// Mail between accounts of this server never leaves it.
-	var local []store.Delivery
-	var remote []string
-	seen := map[int64]bool{}
-	for _, rcpt := range s.rcpts {
-		a, _ := address.Parse(rcpt)
-		res, err := s.sub.st.Resolve(ctx, a)
-		if err != nil {
-			return errTemporary
-		}
-		if !res.Ours {
-			remote = append(remote, rcpt)
-			continue
-		}
-		if res.Account == nil || res.Drop {
-			continue
-		}
-		box, err := s.sub.st.MailboxNamed(ctx, res.Account.ID, store.Inbox)
-		if err != nil {
-			return errTemporary
-		}
-		if res.Junk {
-			if j, err := s.sub.st.SpecialMailbox(ctx, res.Account.ID, `\Junk`); err == nil {
-				box = j
-			}
-		}
-		if !seen[box.ID] {
-			seen[box.ID] = true
-			local = append(local, store.Delivery{MailboxID: box.ID})
-		}
+	local, remote, err := s.sub.st.Deliveries(ctx, s.rcpts)
+	if err != nil {
+		s.sub.log.Error("resolving recipients failed", "account", s.account.ID, "error", err)
+		return errTemporary
 	}
 	if len(local) > 0 {
 		if err := s.sub.st.Deliver(ctx, raw, time.Now(), local); err != nil {

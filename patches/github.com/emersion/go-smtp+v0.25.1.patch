@@ -1,0 +1,172 @@
+diff --git a/conn.go b/conn.go
+index 2d50d3a..6c9d00b 100644
+--- a/conn.go
++++ b/conn.go
+@@ -308,6 +308,10 @@ func (c *Conn) handleGreet(enhanced bool, arg string) {
+ 			caps = append(caps, fmt.Sprintf("MT-PRIORITY %s", c.server.MtPriorityProfile))
+ 		}
+ 	}
++	if c.server.EnableFUTURERELEASE {
++		caps = append(caps, fmt.Sprintf("FUTURERELEASE %d %s", int64(c.server.MaxFutureRelease.Seconds()),
++			time.Now().Add(c.server.MaxFutureRelease).UTC().Format(time.RFC3339)))
++	}
+ 
+ 	args := []string{"Hello " + domain}
+ 	args = append(args, caps...)
+@@ -433,6 +437,34 @@ func (c *Conn) handleMail(arg string) {
+ 				}
+ 			}
+ 			opts.Auth = &value
++		case "HOLDFOR", "HOLDUNTIL":
++			if !c.server.EnableFUTURERELEASE {
++				c.writeResponse(504, EnhancedCode{5, 5, 4}, "FUTURERELEASE is not implemented")
++				return
++			}
++			if !opts.HoldUntil.IsZero() {
++				c.writeResponse(501, EnhancedCode{5, 5, 4}, "Only one of HOLDFOR and HOLDUNTIL may be given")
++				return
++			}
++			if key == "HOLDFOR" {
++				secs, err := strconv.ParseUint(value, 10, 32)
++				if err != nil {
++					c.writeResponse(501, EnhancedCode{5, 5, 4}, "Unable to parse HOLDFOR as seconds")
++					return
++				}
++				opts.HoldUntil = time.Now().Add(time.Duration(secs) * time.Second)
++			} else {
++				until, err := time.Parse(time.RFC3339Nano, value)
++				if err != nil {
++					c.writeResponse(501, EnhancedCode{5, 5, 4}, "Unable to parse HOLDUNTIL as a date-time")
++					return
++				}
++				opts.HoldUntil = until
++			}
++			if opts.HoldUntil.After(time.Now().Add(c.server.MaxFutureRelease)) {
++				c.writeResponse(501, EnhancedCode{5, 5, 4}, "Release time is beyond the longest hold")
++				return
++			}
+ 		default:
+ 			c.writeResponse(500, EnhancedCode{5, 5, 4}, "Unknown MAIL FROM argument")
+ 			return
+diff --git a/futurerelease_test.go b/futurerelease_test.go
+new file mode 100644
+index 0000000..882634a
+--- /dev/null
++++ b/futurerelease_test.go
+@@ -0,0 +1,78 @@
++package smtp_test
++
++import (
++	"io"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/emersion/go-smtp"
++)
++
++func TestServerFUTURERELEASE(t *testing.T) {
++	be, s, c, scanner, caps := testServerEhlo(t,
++		func(s *smtp.Server) {
++			s.EnableFUTURERELEASE = true
++			s.MaxFutureRelease = time.Hour
++		})
++	defer s.Close()
++	defer c.Close()
++
++	advertised := false
++	for capability := range caps {
++		if strings.HasPrefix(capability, "FUTURERELEASE 3600 ") {
++			advertised = true
++		}
++	}
++	if !advertised {
++		t.Fatal("Missing capability: FUTURERELEASE", caps)
++	}
++
++	malformed := []string{
++		"MAIL FROM:<root@nsa.gov> HOLDFOR=soon",
++		"MAIL FROM:<root@nsa.gov> HOLDUNTIL=tomorrow",
++		"MAIL FROM:<root@nsa.gov> HOLDFOR=7200",
++		"MAIL FROM:<root@nsa.gov> HOLDFOR=60 HOLDUNTIL=" + time.Now().Add(time.Minute).UTC().Format(time.RFC3339),
++	}
++	for _, msg := range malformed {
++		io.WriteString(c, msg+"\r\n")
++		scanner.Scan()
++		if !strings.HasPrefix(scanner.Text(), "501 5.5.4") {
++			t.Fatal("Unexpected response to", msg+":", scanner.Text())
++		}
++	}
++
++	io.WriteString(c, "MAIL FROM:<root@nsa.gov> HOLDFOR=60\r\n")
++	scanner.Scan()
++	if !strings.HasPrefix(scanner.Text(), "250 ") {
++		t.Fatal("Invalid HOLDFOR:", scanner.Text())
++	}
++	io.WriteString(c, "RCPT TO:<root@gchq.gov.uk>\r\n")
++	scanner.Scan()
++	io.WriteString(c, "DATA\r\n")
++	scanner.Scan()
++	io.WriteString(c, "Hey <3\r\n.\r\n")
++	scanner.Scan()
++	if !strings.HasPrefix(scanner.Text(), "250 ") {
++		t.Fatal("Invalid DATA response:", scanner.Text())
++	}
++	// Not signed in, so the test backend files it as anonymous.
++	if len(be.anonmsgs) != 1 {
++		t.Fatal("Invalid number of sent messages:", len(be.anonmsgs))
++	}
++	if until := be.anonmsgs[0].Opts.HoldUntil; time.Until(until) < 55*time.Second || time.Until(until) > time.Minute {
++		t.Fatal("Invalid HoldUntil:", until)
++	}
++}
++
++func TestServerFUTURERELEASEOff(t *testing.T) {
++	_, s, c, scanner, _ := testServerEhlo(t)
++	defer s.Close()
++	defer c.Close()
++
++	io.WriteString(c, "MAIL FROM:<root@nsa.gov> HOLDFOR=60\r\n")
++	scanner.Scan()
++	if !strings.HasPrefix(scanner.Text(), "504 5.5.4") {
++		t.Fatal("Unexpected response:", scanner.Text())
++	}
++}
+diff --git a/server.go b/server.go
+index e0e0acd..05711f3 100644
+--- a/server.go
++++ b/server.go
+@@ -79,6 +79,16 @@ type Server struct {
+ 	// Default value of NONE to advertise no specific profile.
+ 	MtPriorityProfile PriorityProfile
+ 
++	// Advertise FUTURERELEASE (RFC 4865) capability, and accept the HOLDFOR
++	// and HOLDUNTIL arguments of MAIL as MailOptions.HoldUntil.
++	// Should be used only if backend supports it: the backend holds the
++	// message until then.
++	EnableFUTURERELEASE bool
++	// The longest a message may be held, advertised as seconds and as the
++	// latest release date. Required when FUTURERELEASE is enabled; a later
++	// release is refused.
++	MaxFutureRelease time.Duration
++
+ 	// The server backend.
+ 	Backend Backend
+ 
+diff --git a/smtp.go b/smtp.go
+index 405f5c5..b725954 100644
+--- a/smtp.go
++++ b/smtp.go
+@@ -71,6 +71,12 @@ type MailOptions struct {
+ 	//
+ 	// Defined in RFC 4954.
+ 	Auth *string
++
++	// When to release the message, from HOLDFOR or HOLDUNTIL; zero to send
++	// it at once. A time already past is the client's to have meant now.
++	//
++	// Defined in RFC 4865.
++	HoldUntil time.Time
+ }
+ 
+ type DSNNotify string

@@ -30,6 +30,10 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # go.mod replaces the modules in patches/ with their releases, patched, made here.
+      - name: Patch packages
+        run: sh patch-packages.sh
+
       - name: Check formatting
         run: |
           unformatted=$(gofmt -l .)

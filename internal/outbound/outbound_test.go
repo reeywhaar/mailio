@@ -5,10 +5,12 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"io"
 	"log/slog"
 	"net"
 	"net/smtp"
+	"net/textproto"
 	"os"
 	"strings"
 	"sync"
@@ -445,5 +447,102 @@ func TestAnAccountSendsAsItsAliasSignedForTheAliasesDomain(t *testing.T) {
 	})
 	if err != nil || len(vs) != 1 || vs[0].Err != nil || vs[0].Domain != "example.net" {
 		t.Errorf("dkim: %v %+v", err, vs)
+	}
+}
+
+// submitHeld sends as an account over 465 by hand, MAIL FROM carrying hold, an argument such as
+// HOLDFOR=3600, which net/smtp cannot send. It returns the EHLO answer and the first refusal.
+func (r *rig) submitHeld(login, password, from, hold string, to []string, body string) (string, error) {
+	r.t.Helper()
+	conn, err := tls.Dial("tcp", r.sub, &tls.Config{InsecureSkipVerify: true})
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	defer conn.Close()
+	c := textproto.NewConn(conn)
+	if _, _, err := c.ReadResponse(220); err != nil {
+		return "", err
+	}
+	step := func(code int, format string, args ...any) (string, error) {
+		id, err := c.Cmd(format, args...)
+		if err != nil {
+			return "", err
+		}
+		c.StartResponse(id)
+		defer c.EndResponse(id)
+		_, msg, err := c.ReadResponse(code)
+		return msg, err
+	}
+	ehlo, err := step(250, "EHLO localhost")
+	if err != nil {
+		return "", err
+	}
+	auth := base64.StdEncoding.EncodeToString([]byte("\x00" + login + "\x00" + password))
+	if _, err := step(235, "AUTH PLAIN %s", auth); err != nil {
+		return ehlo, err
+	}
+	if _, err := step(250, "MAIL FROM:<%s> %s", from, hold); err != nil {
+		return ehlo, err
+	}
+	for _, rcpt := range to {
+		if _, err := step(250, "RCPT TO:<%s>", rcpt); err != nil {
+			return ehlo, err
+		}
+	}
+	if _, err := step(354, "DATA"); err != nil {
+		return ehlo, err
+	}
+	w := c.DotWriter()
+	w.Write([]byte(body))
+	w.Close()
+	if _, _, err := c.ReadResponse(250); err != nil {
+		return ehlo, err
+	}
+	return ehlo, nil
+}
+
+// A message held until a time the client chose waits in the queue, there and here alike, Retry
+// now included, and then goes: to the relay, and to the mailbox here.
+func TestAHeldMessageGoesAtItsTime(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	ehlo, err := r.submitHeld("inbox@example.org", "correct horse", "inbox@example.org", "HOLDFOR=3600",
+		[]string{"someone@example.com", "other@example.org"}, letter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ehlo, "FUTURERELEASE 31536000 ") {
+		t.Errorf("EHLO says:\n%s", ehlo)
+	}
+
+	r.sender.runOnce(ctx)
+	if err := r.st.RetryOutbound(ctx); err != nil {
+		t.Fatal(err)
+	}
+	r.sender.runOnce(ctx)
+	if len(r.relay.got) != 0 || len(r.inbox("other@example.org")) != 0 {
+		t.Fatalf("sent before its time: relay %d, here %d", len(r.relay.got), len(r.inbox("other@example.org")))
+	}
+	q, _ := r.st.Outbound(ctx)
+	if len(q) != 2 || time.Until(q[0].ReleaseAt) < 59*time.Minute {
+		t.Fatalf("queued: %+v", q)
+	}
+
+	r.st.SetClock(func() time.Time { return time.Now().Add(time.Hour + time.Minute) })
+	r.sender.runOnce(ctx)
+	if len(r.relay.got) != 1 || r.relay.got[0].rcpts[0] != "someone@example.com" {
+		t.Errorf("the relay got %+v", r.relay.got)
+	}
+	if here := r.inbox("other@example.org"); len(here) != 1 {
+		t.Errorf("here: %d", len(here))
+	}
+	if q, _ := r.st.Outbound(ctx); len(q) != 0 {
+		t.Errorf("the queue holds %d", len(q))
+	}
+
+	// Longer than mailio holds mail is refused while the client can still say so.
+	if _, err := r.submitHeld("inbox@example.org", "correct horse", "inbox@example.org", "HOLDFOR=40000000",
+		[]string{"someone@example.com"}, letter); err == nil || !strings.Contains(err.Error(), "501") {
+		t.Errorf("held two years: %v", err)
 	}
 }

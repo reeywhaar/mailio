@@ -1,8 +1,11 @@
 import { retryQueue, type Queued } from "@app/api/admin";
 import { Button } from "@app/components/Button";
-import { Section, useSave } from "@app/pages/admin/shared";
+import { Section, useSave, when } from "@app/pages/admin/shared";
 
-/** What is waiting to be sent, and why it has not gone yet. */
+/**
+ * What is waiting to be sent, and why it has not gone yet: held until the time its sender chose,
+ * or tried and to be tried again. Retry now leaves held mail to its time.
+ */
 export function Queue({ queue }: { queue: Queued[] }) {
   const { save, busy, error } = useSave();
   return (
@@ -24,8 +27,14 @@ export function Queue({ queue }: { queue: Queued[] }) {
                 {q.sender} → <span className="font-medium">{q.recipient}</span>
               </span>
               <span className="text-muted">
-                Attempts: {q.attempts}
-                {q.last_error ? ` · ${q.last_error}` : ""}
+                {q.release_at && q.attempts === 0 ? (
+                  <>Held until: {when(q.release_at)}</>
+                ) : (
+                  <>
+                    Attempts: {q.attempts}
+                    {q.last_error ? ` · ${q.last_error}` : ""}
+                  </>
+                )}
               </span>
             </li>
           ))}
