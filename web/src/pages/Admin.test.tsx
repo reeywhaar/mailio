@@ -221,7 +221,7 @@ test("closing a dialog forgets what was changed in it", async () => {
   expect(writes(sent)).toEqual([]);
 });
 
-test("a new account asks only its address, and shows its generated password once, to copy", async () => {
+test("a new account is added under its domain by its name alone, and shows its generated password once, to copy", async () => {
   const writeText = vi.fn(async () => {});
   Object.defineProperty(navigator, "clipboard", {
     value: { writeText },
@@ -235,8 +235,8 @@ test("a new account asks only its address, and shows its generated password once
   mount();
   fireEvent.click(await screen.findByRole("button", { name: "Add account" }));
   const d = within(dialog("Add an account"));
-  fireEvent.change(d.getByLabelText("Address"), {
-    target: { value: "misha@reey.ru" },
+  fireEvent.change(d.getByLabelText("Name at reey.ru"), {
+    target: { value: "misha" },
   });
   fireEvent.click(d.getByRole("button", { name: "Add" }));
 

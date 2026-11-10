@@ -68,8 +68,9 @@ admin interface, not a mailbox. Then, in the admin interface:
 
 1. **Add a domain,** and point its MX at the mail host. A click on its row opens its settings,
    and the records mailio keeps for it: SPF, DMARC and its DKIM key.
-2. **Add an account,** with its address. Its first credential is labelled `default`, its login
-   is the address itself, and its password is generated and shown once.
+2. **Add an account** under its domain, with the name before the `@`. Each domain's accounts are
+   listed under it. Its first credential is labelled `default`, its login is the address itself,
+   and its password is generated and shown once.
 3. **Add a relay** under Sending → Configure sending…, if the host's provider blocks outbound
    port 25, press Test, and make it the default.
 

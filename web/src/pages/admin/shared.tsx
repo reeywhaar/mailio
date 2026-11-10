@@ -96,11 +96,14 @@ export function Row({
   title,
   aside,
   summary,
+  nested = false,
   onOpen,
 }: {
   title: string;
   aside?: ReactNode;
   summary?: ReactNode;
+  /** Under the row before it, as an account is under its domain. */
+  nested?: boolean;
   onOpen: () => void;
 }) {
   return (
@@ -108,7 +111,7 @@ export function Row({
       <button
         type="button"
         onClick={onOpen}
-        className="flex w-full flex-col gap-0.5 px-3 py-2 text-left hover:bg-fill focus-visible:bg-fill focus-visible:outline-none"
+        className={`flex w-full flex-col gap-0.5 py-2 pr-3 text-left hover:bg-fill focus-visible:bg-fill focus-visible:outline-none ${nested ? "pl-8" : "pl-3"}`}
       >
         <span className="font-medium">
           {title}

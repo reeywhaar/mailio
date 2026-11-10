@@ -15,7 +15,6 @@ import { ApiError, messageOf } from "@app/api/transport";
 import { Button } from "@app/components/Button";
 import { Wordmark } from "@app/components/Wordmark";
 import { leaveFor } from "@app/leave";
-import { Accounts } from "@app/pages/admin/Accounts";
 import { Admins } from "@app/pages/admin/Admins";
 import { Defaults } from "@app/pages/admin/Defaults";
 import { Domains } from "@app/pages/admin/Domains";
@@ -85,7 +84,6 @@ export function Admin() {
             relays={relays.data}
             dnsAPI={mail.data.dns_api}
           />
-          <Accounts accounts={accounts.data} domains={domains.data} />
           <Queue queue={queue.data} />
           <Admins admins={admins.data} me={me.data} />
         </>

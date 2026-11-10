@@ -16,6 +16,7 @@ import {
 } from "@app/api/admin";
 import { Button } from "@app/components/Button";
 import { CopyBlock } from "@app/components/CopyBlock";
+import { DomainAccounts } from "@app/pages/admin/Accounts";
 import { Dialog } from "@app/components/Dialog";
 import { Field, Select } from "@app/components/Field";
 import { TextField } from "@app/components/TextField";
@@ -47,7 +48,10 @@ type Context = {
   dnsAPI: boolean;
 };
 
-/** The domains, each a row saying what it does; a click opens its settings. */
+/**
+ * The domains, each a card: its row saying what it does, a click opening its settings, and its
+ * accounts under it.
+ */
 export function Domains({ domains, ...ctx }: Context & { domains: Domain[] }) {
   const [adding, setAdding] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
@@ -59,16 +63,22 @@ export function Domains({ domains, ...ctx }: Context & { domains: Domain[] }) {
       action={<Button onClick={() => setAdding(true)}>Add domain</Button>}
     >
       {domains.length ? (
-        <Rows>
+        <div className="flex flex-col gap-3">
           {domains.map((d) => (
-            <Row
-              key={d.id}
-              title={d.name}
-              summary={<DomainSummary domain={d} {...ctx} />}
-              onOpen={() => setOpen(d.id)}
-            />
+            <Rows key={d.id}>
+              <Row
+                title={d.name}
+                summary={<DomainSummary domain={d} {...ctx} />}
+                onOpen={() => setOpen(d.id)}
+              />
+              <DomainAccounts
+                domain={d}
+                accounts={ctx.accounts}
+                domains={domains}
+              />
+            </Rows>
           ))}
-        </Rows>
+        </div>
       ) : (
         <p className="text-sm text-faint">No domains yet.</p>
       )}

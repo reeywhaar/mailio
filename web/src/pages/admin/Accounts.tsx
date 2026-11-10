@@ -20,8 +20,6 @@ import {
   DeleteButton,
   Item,
   Row,
-  Rows,
-  Section,
   ShownCredential,
   Facts,
   Summary,
@@ -37,11 +35,17 @@ import {
   when,
 } from "@app/pages/admin/shared";
 
-/** The accounts, each a row saying what its mail does; a click opens its settings. */
-export function Accounts({
+/**
+ * A domain's accounts, as rows under the domain's own, each saying what its mail does; a click
+ * opens its settings. The last row adds one at the domain.
+ */
+export function DomainAccounts({
+  domain,
   accounts,
   domains,
 }: {
+  domain: Domain;
+  /** Every account: a forward can go to one at another domain. */
   accounts: Account[];
   domains: Domain[];
 }) {
@@ -50,35 +54,42 @@ export function Accounts({
   const account = accounts.find((a) => a.id === open);
 
   return (
-    <Section
-      title="Accounts"
-      action={<Button onClick={() => setAdding(true)}>Add account</Button>}
-    >
-      {accounts.length ? (
-        <Rows>
-          {accounts.map((a) => (
-            <Row
-              key={a.id}
-              title={a.address}
-              summary={<AccountSummary account={a} accounts={accounts} />}
-              onOpen={() => setOpen(a.id)}
-            />
-          ))}
-        </Rows>
-      ) : (
-        <p className="text-sm text-faint">No accounts yet.</p>
-      )}
-      <AddAccountDialog open={adding} onClose={() => setAdding(false)} />
-      {account ? (
-        <AccountDialog
-          open
-          account={account}
-          accounts={accounts}
-          domains={domains}
-          onClose={() => setOpen(null)}
+    <>
+      {accounts
+        .filter((a) => a.domain_id === domain.id)
+        .map((a) => (
+          <Row
+            key={a.id}
+            nested
+            title={a.address}
+            summary={<AccountSummary account={a} accounts={accounts} />}
+            onOpen={() => setOpen(a.id)}
+          />
+        ))}
+      <li>
+        <button
+          type="button"
+          onClick={() => setAdding(true)}
+          className="w-full py-2 pr-3 pl-8 text-left text-sm text-muted hover:bg-fill hover:text-fg focus-visible:bg-fill focus-visible:outline-none"
+        >
+          Add account
+        </button>
+        <AddAccountDialog
+          open={adding}
+          domain={domain}
+          onClose={() => setAdding(false)}
         />
-      ) : null}
-    </Section>
+        {account ? (
+          <AccountDialog
+            open
+            account={account}
+            accounts={accounts}
+            domains={domains}
+            onClose={() => setOpen(null)}
+          />
+        ) : null}
+      </li>
+    </>
   );
 }
 
@@ -109,16 +120,20 @@ function AccountSummary({
   );
 }
 
-/** An address, and nothing else asked: its default credential's password is generated. */
+/**
+ * A name at the domain, and nothing else asked: its default credential's password is generated.
+ */
 function AddAccountDialog({
   open,
+  domain,
   onClose,
 }: {
   open: boolean;
+  domain: Domain;
   onClose: () => void;
 }) {
   const { save, busy, error } = useSave();
-  const [address, setAddress] = useDraft(open, () => "");
+  const [name, setName] = useDraft(open, () => "");
   const [made, setMade] = useDraft<{ login: string; password: string } | null>(
     open,
     () => null,
@@ -128,7 +143,7 @@ function AddAccountDialog({
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     await save(async () => {
-      const a = await createAccount(address);
+      const a = await createAccount(`${name.trim()}@${domain.name}`);
       setMade({ login: a.address, password: a.password });
     });
   };
@@ -150,7 +165,7 @@ function AddAccountDialog({
               type="submit"
               form="add-account"
               variant="solid"
-              disabled={busy || !address.trim()}
+              disabled={busy || !name.trim()}
             >
               Add
             </Button>
@@ -167,14 +182,21 @@ function AddAccountDialog({
           onSubmit={submit}
         >
           <Field label="Address">
-            <TextField
-              type="email"
-              placeholder="name@example.com"
-              autoComplete="off"
-              data-autofocus
-              value={address}
-              onChange={(e) => setAddress(e.target.value)}
-            />
+            <span className="flex items-center gap-2">
+              <TextField
+                placeholder="name"
+                aria-label={`Name at ${domain.name}`}
+                autoComplete="off"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                data-autofocus
+                className="min-w-0 flex-1"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+              <span className="shrink-0 text-muted">@{domain.name}</span>
+            </span>
           </Field>
           <p className="text-sm text-muted">
             Its password is generated, and shown once.
