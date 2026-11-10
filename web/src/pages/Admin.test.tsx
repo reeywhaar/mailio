@@ -156,7 +156,8 @@ test("domains, accounts and admins are rows that summarize them", async () => {
   // The signed-in admin is marked, and is not an account.
   expect(screen.getByRole("button", { name: /^misha/ })).toBeTruthy();
   expect(screen.getByText("you")).toBeTruthy();
-  expect(screen.getAllByText("default").length).toBe(7);
+  // Each setting a domain follows the default for, dimmed and said so to a screen reader.
+  expect(screen.getAllByText("(default)").length).toBe(7);
 });
 
 test("a domain's dialog holds its changes and sends them in one request on Save", async () => {

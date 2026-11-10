@@ -462,7 +462,10 @@ export function Facts({ items }: { items: [string, ReactNode][] }) {
   );
 }
 
-/** A row's summary: each setting a label and its value, marked where it is the default's. */
+/**
+ * A row's summary: each setting a label and its value, dimmed where it is the default's. A screen
+ * reader, which hears no dimming, hears "default" instead.
+ */
 export function Summary({
   parts,
 }: {
@@ -472,8 +475,11 @@ export function Summary({
     <span className="flex flex-wrap gap-x-3 gap-y-0.5">
       {parts.map((p) => (
         <span key={p.label}>
-          {p.label}: <span className="text-fg">{p.value}</span>
-          {p.inherited ? <Tag>default</Tag> : null}
+          {p.label}:{" "}
+          <span className={p.inherited ? "text-faint" : "text-fg"}>
+            {p.value}
+          </span>
+          {p.inherited ? <span className="sr-only"> (default)</span> : null}
         </span>
       ))}
     </span>
