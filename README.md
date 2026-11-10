@@ -88,6 +88,7 @@ docker compose exec mailio mailio admin reset
 | `MAILIO_DNS_API_URL` | a DNS API, to publish records and get the certificate |
 | `MAILIO_BACKUP_URL` | a backio agent's `POST /backup` |
 | `MAILIO_TRUSTED_PROXIES` | whose `X-Forwarded-For` is believed; `private` by default |
+| `MAILIO_STAGING` | `true` for a test copy: Let's Encrypt, the DNS API and DNS checks are off |
 
 Each is explained in [docs/deploy.md](docs/deploy.md), with fail2ban, the ports, and moving from
 the Postfix-based mailio.

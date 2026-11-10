@@ -24,11 +24,21 @@ ghcr.io/reeywhaar/mailio:v2
 | `MAILIO_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `MAILIO_BACKUP_URL` | — | A backio agent's `POST /backup`. Unset, mailio takes no backups |
 | `MAILIO_TRUSTED_PROXIES` | `private` | Whose `X-Forwarded-For` is believed: addresses, ranges, `private`, or `none` |
+| `MAILIO_STAGING` | `false` | `true` turns off Let's Encrypt, the DNS API and the DNS record checks |
 
 ## There is no config file
 
 Domains, accounts, relays and the defaults domains follow are in the database and edited in the
 admin interface. The environment is only for what must be true before the process starts.
+
+## `MAILIO_STAGING` keeps a copy from reaching out
+
+For a copy run on a laptop or a test box, with domains such as `example.localhost` that exist
+nowhere. Set to `true`, mailio asks Let's Encrypt for nothing and keeps its self-signed
+certificate, publishes nothing through the DNS API even when `MAILIO_DNS_API_URL` is set, and
+checks no records; the admin interface says so. Mail is still received, read and sent. Anything
+but `true`, `false`, `1` or `0` refuses to start, since a typo that left it off would ask Let's
+Encrypt for a certificate from the laptop.
 
 ## `MAILIO_PUBLIC_URL` is required and never inferred
 

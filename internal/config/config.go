@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	"mailio/internal/seal"
@@ -45,6 +46,11 @@ const (
 	// TrustedProxiesEnv is whose X-Forwarded-For is believed: addresses and ranges, "private"
 	// for the private and loopback ranges, or "none". Unset, "private".
 	TrustedProxiesEnv = "MAILIO_TRUSTED_PROXIES"
+
+	// StagingEnv, true, keeps mailio from reaching out on its own: Let's Encrypt, the DNS API and
+	// the DNS record checks are off, for a copy run on a laptop or a test box with domains that
+	// exist nowhere.
+	StagingEnv = "MAILIO_STAGING"
 )
 
 const DefaultDataDir = "/data"
@@ -74,7 +80,14 @@ type Config struct {
 
 	// TrustedProxies are the peers whose X-Forwarded-For says who the caller is. Empty, nobody's.
 	TrustedProxies Proxies
+
+	// Staging turns off Let's Encrypt, the DNS API and the DNS record checks.
+	Staging bool
 }
+
+// UsesDNSAPI is whether records are published and certificates proven through the DNS API: one
+// is set, and this is not a staging run.
+func (c *Config) UsesDNSAPI() bool { return c.DNSAPI != "" && !c.Staging }
 
 // Proxies are the addresses a request may come through and still name its caller.
 type Proxies []netip.Prefix
@@ -176,6 +189,13 @@ func Load() (*Config, error) {
 	}
 	if cfg.TrustedProxies, err = ParseProxies(proxies); err != nil {
 		return nil, err
+	}
+	// Strict for the same reason as the level below: a typo that leaves staging off posts to
+	// Let's Encrypt from a laptop.
+	if v := strings.TrimSpace(os.Getenv(StagingEnv)); v != "" {
+		if cfg.Staging, err = strconv.ParseBool(v); err != nil {
+			return nil, fmt.Errorf("%s: %q is not true or false", StagingEnv, v)
+		}
 	}
 	// A startup error rather than a fall back to info: a level that quietly works is one
 	// nobody finds until the log lacks what they came for.

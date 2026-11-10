@@ -83,6 +83,7 @@ export function Admin() {
             accounts={accounts.data}
             relays={relays.data}
             dnsAPI={mail.data.dns_api}
+            staging={mail.data.staging}
           />
           <Queue queue={queue.data} />
           <Admins admins={admins.data} me={me.data} />

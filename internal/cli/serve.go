@@ -65,11 +65,18 @@ func serveCmd() *cobra.Command {
 				return err
 			}
 			sender := outbound.New(st, log, cfg.MailHost)
-			dns := dnsKeeper{dnscheck.NewChecker(st, dnscheck.Authoritative{}, cfg.MailHost), make(chan struct{}, 1)}
+			// A staging run checks no records, so the admin interface is given nothing to ask, and says
+			// none were checked.
+			var keeper dnsKeeper
+			var dnsStatus api.DNS
+			if !cfg.Staging {
+				keeper = dnsKeeper{dnscheck.NewChecker(st, dnscheck.Authoritative{}, cfg.MailHost), make(chan struct{}, 1)}
+				dnsStatus = keeper
+			}
 
 			admin := &http.Server{
 				Addr:              app.ListenAddr,
-				Handler:           api.New(cfg, log, st, mailService{mgr, sender}, dns, web(log)),
+				Handler:           api.New(cfg, log, st, mailService{mgr, sender}, dnsStatus, web(log)),
 				ReadHeaderTimeout: 10 * time.Second,
 			}
 			imap := imapd.New(st, log)
@@ -91,13 +98,18 @@ func serveCmd() *cobra.Command {
 			background.Go(func() { backup.Run(ctx, st, cfg.BackupURL, cfg.DataDir, log) })
 			background.Go(func() { sender.Run(ctx) })
 			var dnsAPI *dnsapi.Client
-			if cfg.DNSAPI != "" {
+			if cfg.UsesDNSAPI() {
 				dnsAPI = dnsapi.New(cfg.DNSAPI)
 				background.Go(func() { (&certs.ACME{M: mgr, API: dnsAPI, Directory: acme.LetsEncryptURL}).Run(ctx) })
 			}
-			background.Go(func() { keepDNS(ctx, st, dnsAPI, dns, cfg.MailHost, log) })
-			if dnsAPI == nil {
+			switch {
+			case cfg.Staging:
+				log.Warn("staging run: Let's Encrypt, the DNS API and the DNS record checks are off, and the mail ports keep a self-signed certificate")
+			case dnsAPI == nil:
 				log.Warn("no DNS API: publish the DNS records shown in the admin interface by hand, and the mail ports keep a self-signed certificate")
+			}
+			if !cfg.Staging {
+				background.Go(func() { keepDNS(ctx, st, dnsAPI, keeper, cfg.MailHost, log) })
 			}
 
 			errc := make(chan error, 5)

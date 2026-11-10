@@ -46,6 +46,8 @@ type Context = {
   accounts: Account[];
   relays: Relay[];
   dnsAPI: boolean;
+  /** Records are not checked in a staging run. */
+  staging: boolean;
 };
 
 /**
@@ -101,6 +103,7 @@ function DomainSummary({
   settings,
   accounts,
   relays,
+  staging,
 }: Context & { domain: Domain }) {
   return (
     <Summary
@@ -131,7 +134,14 @@ function DomainSummary({
           inherited: domain.spf === null,
           value: domain.spf ?? settings.spf,
         },
-        { label: "DNS", value: <DNSSummary domain={domain} /> },
+        {
+          label: "DNS",
+          value: staging ? (
+            "Not checked in staging"
+          ) : (
+            <DNSSummary domain={domain} />
+          ),
+        },
       ]}
     />
   );
@@ -206,6 +216,7 @@ function DomainDialog({
   accounts,
   relays,
   dnsAPI,
+  staging,
 }: Context & {
   open: boolean;
   domain: Domain;
@@ -354,20 +365,24 @@ function DomainDialog({
                 ["DNS records", dnsAPI ? "DNS API" : "By hand"],
                 [
                   "Checked",
-                  domain.dns_checked_at
-                    ? when(domain.dns_checked_at)
-                    : "Not yet",
+                  staging
+                    ? "Not in staging"
+                    : domain.dns_checked_at
+                      ? when(domain.dns_checked_at)
+                      : "Not yet",
                 ],
               ]}
             />
             <span className="flex-1" />
-            <Button
-              size="bar"
-              disabled={check.busy}
-              onClick={() => void check.save(() => checkDomain(domain.id))}
-            >
-              {check.busy ? "Checking…" : "Check now"}
-            </Button>
+            {staging ? null : (
+              <Button
+                size="bar"
+                disabled={check.busy}
+                onClick={() => void check.save(() => checkDomain(domain.id))}
+              >
+                {check.busy ? "Checking…" : "Check now"}
+              </Button>
+            )}
           </div>
           {check.error ? (
             <p className="text-sm text-accent">{check.error}</p>

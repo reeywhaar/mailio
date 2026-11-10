@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 import type { MailStatus } from "@app/api/admin";
 import { Facts, Section } from "@app/pages/admin/shared";
 
@@ -20,6 +22,16 @@ export function MailServer({ mail }: { mail: MailStatus }) {
                 : "Self-signed",
           ],
           ["DNS records", mail.dns_api ? "DNS API" : "By hand"],
+          ...(mail.staging
+            ? ([
+                [
+                  "Staging",
+                  <span className="text-warn">
+                    Let's Encrypt, DNS API and DNS checks off
+                  </span>,
+                ],
+              ] as [string, ReactNode][])
+            : []),
         ]}
       />
     </Section>

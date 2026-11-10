@@ -96,7 +96,12 @@ function routes(over: Parameters<typeof fakeServer>[0] = {}) {
     "GET /api/domains": () => ({ body: [reey] }),
     "GET /api/accounts": () => ({ body: [inbox] }),
     "GET /api/mail": () => ({
-      body: { host: "mail.reey.ru", dns_api: true, certificate: null },
+      body: {
+        host: "mail.reey.ru",
+        dns_api: true,
+        staging: false,
+        certificate: null,
+      },
     }),
     "GET /api/relays": () => ({ body: [] }),
     "GET /api/queue": () => ({ body: [] }),

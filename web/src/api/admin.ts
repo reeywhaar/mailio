@@ -73,6 +73,8 @@ export type DomainChange = {
 export type MailStatus = {
   host: string;
   dns_api: boolean;
+  /** A staging run: Let's Encrypt, the DNS API and the DNS record checks are off. */
+  staging: boolean;
   certificate: { issuer: "self" | "letsencrypt"; not_after: number } | null;
 };
 

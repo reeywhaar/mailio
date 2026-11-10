@@ -9,7 +9,7 @@ import (
 
 // mailStatus is what the admin interface says about the server itself.
 func (s *Server) mailStatus(w http.ResponseWriter, r *http.Request) {
-	out := map[string]any{"host": s.cfg.MailHost, "dns_api": s.cfg.DNSAPI != "", "certificate": nil}
+	out := map[string]any{"host": s.cfg.MailHost, "dns_api": s.cfg.UsesDNSAPI(), "staging": s.cfg.Staging, "certificate": nil}
 	if s.mail != nil {
 		if c := s.mail.Certificate(); c != nil {
 			out["certificate"] = map[string]any{"issuer": c.Issuer, "not_after": c.NotAfter.Unix()}

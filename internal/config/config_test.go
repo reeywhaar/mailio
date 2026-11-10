@@ -8,7 +8,7 @@ import (
 // set clears everything this package reads, so no test passes on another's leftovers.
 func set(t *testing.T, kv map[string]string) {
 	t.Helper()
-	for _, k := range []string{PublicURLEnv, DataDirEnv, LogLevelEnv, BackupURLEnv, TrustedProxiesEnv, MailHostEnv, SecretKeyEnv, DNSAPIEnv} {
+	for _, k := range []string{PublicURLEnv, DataDirEnv, LogLevelEnv, BackupURLEnv, TrustedProxiesEnv, MailHostEnv, SecretKeyEnv, DNSAPIEnv, StagingEnv} {
 		t.Setenv(k, "")
 	}
 	t.Setenv(SecretKeyEnv, testKey)
@@ -50,7 +50,7 @@ func TestAPublicURLIsASchemeAndAHost(t *testing.T) {
 }
 
 func TestABadSettingRefusesToStart(t *testing.T) {
-	for k, v := range map[string]string{LogLevelEnv: "loud", TrustedProxiesEnv: "proxy.example.com", SecretKeyEnv: "short", MailHostEnv: "mail.example.com:25"} {
+	for k, v := range map[string]string{LogLevelEnv: "loud", StagingEnv: "yes please", TrustedProxiesEnv: "proxy.example.com", SecretKeyEnv: "short", MailHostEnv: "mail.example.com:25"} {
 		set(t, map[string]string{PublicURLEnv: "https://mail.example.com", k: v})
 		if _, err := Load(); err == nil {
 			t.Errorf("%s=%q was accepted", k, v)
@@ -98,5 +98,23 @@ func TestASecretKeyIsRequired(t *testing.T) {
 	t.Setenv(SecretKeyEnv, "")
 	if _, err := Load(); err == nil {
 		t.Error("started without a secret key")
+	}
+}
+
+// Staging keeps the DNS API from being used even when one is set, so a copy run locally with the
+// production environment publishes nothing.
+func TestStagingTurnsTheDNSAPIOff(t *testing.T) {
+	for _, c := range []struct {
+		staging string
+		uses    bool
+	}{{"", true}, {"false", true}, {"1", false}, {"true", false}} {
+		set(t, map[string]string{PublicURLEnv: "https://mail.example.com", DNSAPIEnv: "http://doapi:8080", StagingEnv: c.staging})
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.UsesDNSAPI() != c.uses || cfg.Staging == c.uses {
+			t.Errorf("%s=%q: uses the DNS API %v, staging %v", StagingEnv, c.staging, cfg.UsesDNSAPI(), cfg.Staging)
+		}
 	}
 }
