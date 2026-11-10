@@ -19,10 +19,12 @@ import {
   daysTyped,
   toDays,
   trashKept,
+  dmarcHint,
   dmarcLabels,
   limitTyped,
   mbText,
   megabytes,
+  spfHint,
   spfLabels,
   toBytes,
   unknownLabels,
@@ -128,7 +130,7 @@ function DefaultsDialog({
             ))}
           </Select>
         </Field>
-        <Field label="DMARC">
+        <Field label="DMARC" hint={dmarcHint}>
           <Select
             value={draft.dmarc}
             onChange={(e) =>
@@ -142,7 +144,7 @@ function DefaultsDialog({
             ))}
           </Select>
         </Field>
-        <Field label="SPF">
+        <Field label="SPF" hint={spfHint}>
           <Select
             value={draft.spf}
             onChange={(e) => setDraft({ ...draft, spf: e.target.value as SPF })}

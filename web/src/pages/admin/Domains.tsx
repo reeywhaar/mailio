@@ -37,12 +37,14 @@ import {
   Section,
   Summary,
   AccountOptions,
+  dmarcHint,
   dmarcLabels,
   keepsMail,
   limitTyped,
   mbText,
   megabytes,
   relayName,
+  spfHint,
   spfLabels,
   toBytes,
   unknownLabels,
@@ -384,7 +386,7 @@ function DomainDialog({
           onChange={(trash) => set({ trash })}
           inherited={{ from: "the default", days: settings.trash_days }}
         />
-        <Field label="DMARC">
+        <Field label="DMARC" hint={dmarcHint}>
           <Select
             value={draft.dmarc}
             onChange={(e) => set({ dmarc: e.target.value as DMARC | "" })}
@@ -397,7 +399,7 @@ function DomainDialog({
             ))}
           </Select>
         </Field>
-        <Field label="SPF">
+        <Field label="SPF" hint={spfHint}>
           <Select
             value={draft.spf}
             onChange={(e) => set({ spf: e.target.value as SPF | "" })}

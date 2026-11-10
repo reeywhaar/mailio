@@ -485,6 +485,12 @@ export const unknownLabels: Record<Unknown, string> = {
   junk: "Junk",
 };
 
+/** DMARC and SPF in plain words, under their fields. */
+export const dmarcHint =
+  "What other mail servers do with mail that claims to be from the domain but did not come from this server, such as a forgery.";
+export const spfHint =
+  "Which server sends the domain's mail, this one, and how other mail servers treat mail from any other.";
+
 export const dmarcLabels: Record<DMARC, string> = {
   reject: "Refuse forgeries (reject)",
   quarantine: "Send forgeries to spam (quarantine)",
