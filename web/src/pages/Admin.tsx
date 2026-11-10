@@ -77,7 +77,7 @@ export function Admin() {
         <>
           <MailServer mail={mail.data} />
           <Sending settings={settings.data} relays={relays.data} />
-          <Defaults settings={settings.data} accounts={accounts.data} />
+          <Defaults settings={settings.data} />
           <Domains
             domains={domains.data}
             settings={settings.data}
@@ -85,7 +85,7 @@ export function Admin() {
             relays={relays.data}
             dnsAPI={mail.data.dns_api}
           />
-          <Accounts accounts={accounts.data} />
+          <Accounts accounts={accounts.data} domains={domains.data} />
           <Queue queue={queue.data} />
           <Admins admins={admins.data} me={me.data} />
         </>

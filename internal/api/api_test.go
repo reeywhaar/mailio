@@ -12,12 +12,14 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
 	"golang.org/x/crypto/bcrypt"
 
 	"mailio/internal/config"
+	"mailio/internal/dnscheck"
 	"mailio/internal/seal"
 	"mailio/internal/store"
 )
@@ -36,6 +38,12 @@ type harness struct {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
+	return newHarnessWith(t, nil)
+}
+
+// newHarnessWith runs the server with the DNS dns makes, nil for none.
+func newHarnessWith(t *testing.T, dns func(*store.Store) DNS) *harness {
+	t.Helper()
 	st, err := store.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -44,8 +52,12 @@ func newHarness(t *testing.T) *harness {
 	sealer, _ := seal.New(make([]byte, seal.KeySize))
 	st.SetSealer(sealer)
 	u, _ := url.Parse("http://mail.example.com")
-	cfg := &config.Config{PublicURL: u}
-	srv := httptest.NewServer(New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), st, nil, nil))
+	cfg := &config.Config{PublicURL: u, MailHost: "mail.example.com"}
+	var d DNS
+	if dns != nil {
+		d = dns(st)
+	}
+	srv := httptest.NewServer(New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), st, nil, d, nil))
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
 	return &harness{t: t, st: st, srv: srv, c: &http.Client{Jar: jar}}
@@ -99,7 +111,11 @@ func (h *harness) list(path string) []map[string]any {
 // signedIn is a browser that has used the first admin link.
 func signedIn(t *testing.T) *harness {
 	t.Helper()
-	h := newHarness(t)
+	return signIn(t, newHarness(t))
+}
+
+func signIn(t *testing.T, h *harness) *harness {
+	t.Helper()
 	token, _, err := h.st.CreateAdminLink(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -359,21 +375,6 @@ func TestRelaysAreListedWithoutTheirPasswords(t *testing.T) {
 	}
 }
 
-func TestADomainShowsTheRecordsItNeeds(t *testing.T) {
-	h := signedIn(t)
-	_, d := h.do("POST", "/api/domains", map[string]any{"name": "reey.ru"})
-	records, _ := d["records"].([]any)
-	var types []string
-	for _, r := range records {
-		rec := r.(map[string]any)
-		types = append(types, rec["type"].(string)+" "+rec["name"].(string))
-	}
-	want := "TXT reey.ru,TXT _dmarc.reey.ru,TXT mailio._domainkey.reey.ru"
-	if strings.Join(types, ",") != want {
-		t.Errorf("records: %v", types)
-	}
-}
-
 func TestAnAccountHasCredentialsEachWithItsLogin(t *testing.T) {
 	h := signedIn(t)
 	h.do("POST", "/api/domains", map[string]any{"name": "reey.ru"})
@@ -410,14 +411,30 @@ func TestAnAccountHasCredentialsEachWithItsLogin(t *testing.T) {
 	pid := p["id"].(string)
 
 	// A new password for the same login: the old one stops.
-	code, p = h.do("POST", "/api/accounts/"+id+"/credentials/"+pid+"/reset", nil)
-	if code != http.StatusOK || p["login"] != login || p["password"] == phone {
+	code, p = h.do("POST", "/api/accounts/"+id+"/credentials/"+pid+"/reset", map[string]any{"password": ""})
+	if code != http.StatusOK || p["login"] != login || p["password"] == phone || len(p["password"].(string)) != store.GeneratedLength {
 		t.Fatalf("reset: %d %v", code, p)
 	}
 	if _, err := h.st.Authenticate(context.Background(), login, phone); err == nil {
 		t.Error("the old password still signs in")
 	}
+
+	// One the admin types, for a mail client particular about passwords, and never one too short.
+	if code, _ := h.do("POST", "/api/accounts/"+id+"/credentials/"+pid+"/reset", map[string]any{"password": "short"}); code != http.StatusBadRequest {
+		t.Errorf("a short password: %d", code)
+	}
+	code, p = h.do("POST", "/api/accounts/"+id+"/credentials/"+pid+"/reset", map[string]any{"password": "only letters here"})
+	if code != http.StatusOK || p["password"] != "only letters here" {
+		t.Fatalf("a typed password: %d %v", code, p)
+	}
 	phone = p["password"].(string)
+	if _, err := h.st.Authenticate(context.Background(), login, phone); err != nil {
+		t.Errorf("the typed password does not sign in: %v", err)
+	}
+	code, typed := h.do("POST", "/api/accounts/"+id+"/credentials", map[string]any{"label": "Old client", "password": "typed for it"})
+	if code != http.StatusCreated || typed["password"] != "typed for it" {
+		t.Errorf("a credential added with a typed password: %d %v", code, typed)
+	}
 	if code, _ := h.do("DELETE", "/api/accounts/"+id+"/credentials/"+pid, nil); code != http.StatusNoContent {
 		t.Errorf("delete: %d", code)
 	}
@@ -476,5 +493,62 @@ func TestTheDefaultsAndADomainsOwn(t *testing.T) {
 	code, d = h.do("PATCH", "/api/domains/"+id, map[string]any{"relay": "", "dmarc": ""})
 	if code != http.StatusOK || d["relay"] != nil || d["dmarc"] != nil {
 		t.Errorf("back to the defaults: %d %v", code, d)
+	}
+}
+
+// lookup is DNS as a map, for the checker.
+type lookup map[string][]string
+
+func (l lookup) TXT(_ context.Context, name string) ([]string, error) { return l["TXT "+name], nil }
+func (l lookup) MX(_ context.Context, name string) ([]string, error)  { return l["MX "+name], nil }
+
+// checker is the DNS serve runs, counting the nudges a change gives it.
+type checker struct {
+	*dnscheck.Checker
+	changed *int
+}
+
+func (c checker) Changed() { *c.changed++ }
+
+func TestADomainShowsWhatDNSServesForEachRecord(t *testing.T) {
+	changed := 0
+	dns := lookup{"MX reey.ru": {"mail.example.com."}, "TXT _dmarc.reey.ru": {"v=DMARC1; p=none"}}
+	h := signIn(t, newHarnessWith(t, func(st *store.Store) DNS {
+		return checker{dnscheck.NewChecker(st, dns, "mail.example.com"), &changed}
+	}))
+	_, d := h.do("POST", "/api/domains", map[string]any{"name": "reey.ru"})
+	if changed != 1 {
+		t.Errorf("a new domain nudged the checker %d times", changed)
+	}
+	statuses := func(d map[string]any) []any {
+		var out []any
+		for _, r := range d["records"].([]any) {
+			r := r.(map[string]any)
+			out = append(out, fmt.Sprintf("%s %s %v %v", r["type"], r["name"], r["managed"], r["status"]))
+		}
+		return out
+	}
+	// MX is checked like the rest, and never published.
+	want := []any{"MX reey.ru false <nil>", "TXT reey.ru true <nil>", "TXT _dmarc.reey.ru true <nil>", "TXT mailio._domainkey.reey.ru true <nil>"}
+	if got := statuses(d); !reflect.DeepEqual(got, want) || d["dns_checked_at"] != nil {
+		t.Errorf("before a check: %v %v", got, d["dns_checked_at"])
+	}
+
+	id := d["id"].(string)
+	code, d := h.do("POST", "/api/domains/"+id+"/check", nil)
+	want = []any{"MX reey.ru false ok", "TXT reey.ru true missing", "TXT _dmarc.reey.ru true different", "TXT mailio._domainkey.reey.ru true missing"}
+	if got := statuses(d); code != http.StatusOK || !reflect.DeepEqual(got, want) || d["dns_checked_at"] == nil {
+		t.Errorf("checked: %d %v %v", code, got, d["dns_checked_at"])
+	}
+	if found := d["records"].([]any)[2].(map[string]any)["found"]; !reflect.DeepEqual(found, []any{"v=DMARC1; p=none"}) {
+		t.Errorf("what DMARC was found: %v", found)
+	}
+
+	_, d = h.do("PATCH", "/api/domains/"+id, map[string]any{"dmarc": "none"})
+	if changed != 2 {
+		t.Errorf("a changed domain nudged the checker %d times in all", changed)
+	}
+	if got := statuses(d)[2]; got != "TXT _dmarc.reey.ru true <nil>" {
+		t.Errorf("a changed record keeps the old check: %v", got)
 	}
 }

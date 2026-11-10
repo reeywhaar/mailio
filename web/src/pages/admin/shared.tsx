@@ -1,10 +1,13 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import {
   BUILT_IN,
   type Account,
   type DMARC,
+  type DNSRecord,
+  type DNSStatus,
+  type Domain,
   type Incoming,
   type Relay,
   type SPF,
@@ -12,6 +15,8 @@ import {
 } from "@app/api/admin";
 import { ApiError, messageOf } from "@app/api/transport";
 import { Button, type Size } from "@app/components/Button";
+import { CopyBlock } from "@app/components/CopyBlock";
+import { Dialog } from "@app/components/Dialog";
 import { TextField } from "@app/components/TextField";
 import { leaveFor } from "@app/leave";
 import { generatePassword } from "@app/password";
@@ -117,44 +122,124 @@ export function Row({
   );
 }
 
-/** Two presses, the second within a few seconds, so a stray click deletes nothing. */
+/**
+ * One entry of a list inside a dialog: what it is on the left, its commands at its right. On a
+ * phone the commands go on a line of their own, rather than wrapping wherever they run out.
+ */
+export function Item({
+  title,
+  meta,
+  detail,
+  actions,
+  children,
+}: {
+  title: string;
+  /** Beside the title, quieter. */
+  meta?: ReactNode;
+  /** Under the title, in mono: a login, a host. */
+  detail?: string;
+  actions: ReactNode;
+  children?: ReactNode;
+}) {
+  return (
+    <li className="flex flex-col gap-2 px-3 py-2 sm:flex-row sm:items-center sm:gap-3">
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="flex flex-wrap items-baseline gap-x-2">
+          <span className="font-medium">{title}</span>
+          {meta ? <span className="text-faint">{meta}</span> : null}
+        </span>
+        {detail ? (
+          <code className="font-mono text-xs break-all text-muted">
+            {detail}
+          </code>
+        ) : null}
+        {children}
+      </div>
+      <span className="flex shrink-0 items-center gap-2">{actions}</span>
+    </li>
+  );
+}
+
+/**
+ * Whether a button that has just appeared should still ignore a press: a stuttered double click
+ * lands its second click on whatever replaced the first button, and a Done there throws away a
+ * password shown once.
+ */
+export function useSettling(shown: unknown, ms = 500) {
+  const since = useRef(0);
+  useEffect(() => {
+    since.current = performance.now();
+  }, [shown]);
+  return () => performance.now() - since.current < ms;
+}
+
+/**
+ * "Delete…", which asks first in a dialog of its own: what goes, and what goes with it. A
+ * refusal stays there with the server's sentence.
+ */
 export function DeleteButton({
+  what,
+  facts,
+  note,
+  onDelete,
+  onDeleted,
   disabled,
-  onConfirm,
   size = "field",
   label = "Delete…",
 }: {
-  disabled: boolean;
-  onConfirm: () => void;
+  /** What is deleted, for the title: "credential". */
+  what: string;
+  facts: [string, ReactNode][];
+  note?: string;
+  onDelete: () => Promise<unknown>;
+  onDeleted?: () => void;
+  disabled?: boolean;
   size?: Size;
   label?: string;
 }) {
-  const [armed, setArmed] = useState(false);
-  useEffect(() => {
-    if (!armed) return;
-    const t = setTimeout(() => setArmed(false), 4000);
-    return () => clearTimeout(t);
-  }, [armed]);
-
-  if (armed) {
-    return (
-      <Button
-        variant="danger"
-        size={size}
-        disabled={disabled}
-        onClick={() => {
-          setArmed(false);
-          onConfirm();
-        }}
-      >
-        Really delete?
-      </Button>
-    );
-  }
+  const [open, setOpen] = useState(false);
+  const { save, busy, error, clear } = useSave();
+  const settling = useSettling(open);
+  const close = () => {
+    clear();
+    setOpen(false);
+  };
+  const confirm = async () => {
+    if (settling()) return;
+    if (await save(onDelete)) {
+      setOpen(false);
+      onDeleted?.();
+    }
+  };
   return (
-    <Button size={size} disabled={disabled} onClick={() => setArmed(true)}>
-      {label}
-    </Button>
+    <>
+      <Button size={size} disabled={disabled} onClick={() => setOpen(true)}>
+        {label}
+      </Button>
+      <Dialog
+        open={open}
+        onClose={close}
+        title={`Delete ${what}`}
+        footer={
+          <>
+            <Button onClick={close}>Cancel</Button>
+            <Button
+              variant="danger"
+              disabled={busy}
+              onClick={() => void confirm()}
+            >
+              Delete
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-3">
+          <Facts items={facts} />
+          {note ? <p className="text-sm text-muted">{note}</p> : null}
+          {error ? <p className="text-sm text-accent">{error}</p> : null}
+        </div>
+      </Dialog>
+    </>
   );
 }
 
@@ -193,25 +278,56 @@ export function ShownCredential({
   password: string;
 }) {
   return (
-    <div className="flex flex-col gap-2 text-sm">
-      <div className="flex flex-col gap-1 rounded-md border border-line bg-surface px-3 py-2">
-        <span className="text-muted">Login</span>
-        <code className="font-mono break-all select-all">{login}</code>
-        <span className="text-muted">Password</span>
-        <code className="font-mono break-all select-all">{password}</code>
-      </div>
-      <p className="text-muted">
-        Copy it now: it is not shown again. A lost one is replaced, never looked
-        up.
+    <div className="flex flex-col gap-2">
+      <CopyBlock
+        rows={[
+          { label: "Login", value: login },
+          { label: "Password", value: password },
+        ]}
+      />
+      <p className="text-sm text-muted">
+        Shown once: only its hash is kept. A lost one is replaced.
       </p>
     </div>
+  );
+}
+
+/** Labels and their values, as a section shows what it holds. */
+export function Facts({ items }: { items: [string, ReactNode][] }) {
+  return (
+    <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+      {items.map(([label, value]) => (
+        <Fragment key={label}>
+          <dt className="text-muted">{label}</dt>
+          <dd className="min-w-0 break-words">{value}</dd>
+        </Fragment>
+      ))}
+    </dl>
+  );
+}
+
+/** A row's summary: each setting a label and its value, marked where it is the default's. */
+export function Summary({
+  parts,
+}: {
+  parts: { label: string; value: ReactNode; inherited?: boolean }[];
+}) {
+  return (
+    <span className="flex flex-wrap gap-x-3 gap-y-0.5">
+      {parts.map((p) => (
+        <span key={p.label}>
+          {p.label}: <span className="text-fg">{p.value}</span>
+          {p.inherited ? <Tag>default</Tag> : null}
+        </span>
+      ))}
+    </span>
   );
 }
 
 export const unknownLabels: Record<Unknown, string> = {
   reject: "Reject",
   drop: "Drop",
-  junk: "Junk to…",
+  junk: "Junk",
 };
 
 export const dmarcLabels: Record<DMARC, string> = {
@@ -229,31 +345,207 @@ export const spfLabels: Record<SPF, string> = {
 export const incomingLabels: Record<Incoming, string> = {
   keep: "Keep",
   reject: "Reject",
-  forward: "Forward to…",
+  forward: "Forward",
 };
 
-/** An account by id, as its address. */
-export function addressOf(id: string | null, accounts: Account[]) {
+export const dnsStatusLabels: Record<DNSStatus, string> = {
+  ok: "OK",
+  missing: "Missing",
+  different: "Different",
+  several: "Several records",
+  failed: "Couldn't check",
+};
+
+/** A record status as a word, colored by whether it needs fixing. */
+export function DNSStatusMark({ record }: { record: DNSRecord }) {
+  const { status } = record;
+  if (!status) return <span className="text-faint">Not checked</span>;
+  if (status === "failed") return <FailedCheck record={record} />;
   return (
-    accounts.find((a) => a.id === id)?.address ?? "an account since deleted"
+    <span className={status === "ok" ? "text-ok" : "text-accent"}>
+      {dnsStatusLabels[status]}
+    </span>
   );
 }
 
-/** How a relay choice reads: a relay's label, or built in. */
-export function relayName(id: string | null, relays: Relay[]) {
-  if (!id || id === BUILT_IN) return "built in";
-  return relays.find((r) => r.id === id)?.label ?? "a relay since deleted";
+/** "Couldn't check", which opens why. */
+function FailedCheck({ record }: { record: DNSRecord }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="text-accent underline decoration-dotted underline-offset-2 hover:decoration-solid"
+      >
+        {dnsStatusLabels.failed}
+      </button>
+      <Dialog
+        open={open}
+        onClose={() => setOpen(false)}
+        title={dnsStatusLabels.failed}
+        footer={<Button onClick={() => setOpen(false)}>Close</Button>}
+      >
+        <div className="flex flex-col gap-3 text-sm">
+          <Facts
+            items={[
+              ["Type", record.type],
+              [
+                "Name",
+                <span className="font-mono break-all">{record.name}</span>,
+              ],
+            ]}
+          />
+          <p className="break-words">
+            {record.error ?? "No reason was given."}
+          </p>
+        </div>
+      </Dialog>
+    </>
+  );
 }
 
-/** What happens to unknown mail, as a summary says it. */
+/** A domain's records at once: how many need fixing, or why that is not known. */
+export function DNSSummary({ domain }: { domain: Domain }) {
+  const statuses = domain.records.map((r) => r.status);
+  const problems = statuses.filter(
+    (s) => s === "missing" || s === "different" || s === "several",
+  ).length;
+  if (problems) {
+    return (
+      <span className="text-accent">
+        {problems} {problems === 1 ? "problem" : "problems"}
+      </span>
+    );
+  }
+  if (statuses.includes("failed")) {
+    return <span className="text-accent">{dnsStatusLabels.failed}</span>;
+  }
+  if (statuses.includes(null)) return <>Not checked</>;
+  return <span className="text-ok">OK</span>;
+}
+
+/** Whether mail can be sent on to an account: only one that keeps its own takes it. */
+export const keepsMail = (a: Account) => a.incoming === "keep";
+
+/** An account as a picker offers it, marked where it would not keep what is sent on. */
+export function accountOption(a: Account) {
+  if (a.incoming === "reject") return `${a.address} · no-reply`;
+  if (a.incoming === "forward") return `${a.address} · forwards`;
+  return a.address;
+}
+
+/** A small word beside a value: quiet for "default", red for what loses mail. */
+export function Tag({
+  children,
+  bad = false,
+}: {
+  children: ReactNode;
+  bad?: boolean;
+}) {
+  return (
+    <span
+      className={`ml-1.5 rounded bg-fill px-1 py-px text-xs ${bad ? "text-accent" : "text-faint"}`}
+    >
+      {children}
+    </span>
+  );
+}
+
+/**
+ * A setting and the account its mail goes to: "Forward → b@reey.ru". Marked when that account
+ * would not keep it, which only data saved before the rule can show.
+ */
+export function Toward({
+  label,
+  to,
+  accounts,
+}: {
+  label: string;
+  to: string | null;
+  accounts: Account[];
+}) {
+  const target = accounts.find((a) => a.id === to);
+  return (
+    <>
+      {label}
+      <span className="mx-1.5 text-faint">→</span>
+      {target?.address ?? "Deleted account"}
+      {target?.incoming === "reject" ? <Tag bad>no-reply</Tag> : null}
+      {target?.incoming === "forward" ? <Tag bad>forwards</Tag> : null}
+    </>
+  );
+}
+
+/** Who sends mail on to an account: those forwarding to it, and domains whose junk it gets. */
+export function sendersTo(id: string, accounts: Account[], domains: Domain[]) {
+  return [
+    ...accounts
+      .filter((a) => a.incoming === "forward" && a.forward_account_id === id)
+      .map((a) => ({ name: a.address, sends: "forward" })),
+    ...domains
+      .filter((d) => d.unknown === "junk" && d.unknown_account_id === id)
+      .map((d) => ({ name: d.name, sends: "junk" })),
+  ];
+}
+
+/**
+ * Who sends mail on to an account, listed under its incoming mail, whose other choices are off
+ * while they do. Red for an account saved before the rule, set to something else already.
+ */
+export function Senders({
+  senders,
+  blocked,
+}: {
+  senders: { name: string; sends: string }[];
+  blocked: boolean;
+}) {
+  const tone = blocked
+    ? "border-accent/40 bg-accent/10 text-accent"
+    : "border-warn/40 bg-warn/10 text-warn";
+  return (
+    <div
+      className={`flex flex-col gap-1 rounded-md border px-3 py-2 text-sm ${tone}`}
+    >
+      <span>
+        {blocked
+          ? "Mail is sent on here, so it keeps its mail. Change these first:"
+          : "Keeps its mail while mail is sent on here from:"}
+      </span>
+      <ul className="flex flex-wrap gap-x-3 gap-y-1 text-fg">
+        {senders.map((s) => (
+          <li key={s.sends + s.name}>
+            {s.name}
+            <Tag>{s.sends}</Tag>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** An account by id, as its address. */
+export function addressOf(id: string | null, accounts: Account[]) {
+  return accounts.find((a) => a.id === id)?.address ?? "Deleted account";
+}
+
+/** A relay choice by name: a relay's label, or built-in. */
+export function relayName(id: string | null, relays: Relay[]) {
+  if (!id || id === BUILT_IN) return "Built-in";
+  return relays.find((r) => r.id === id)?.label ?? "Deleted relay";
+}
+
+/** What happens to unknown mail, with who gets it when it is junk. */
 export function unknownSummary(
   unknown: Unknown,
   junkTo: string | null,
   accounts: Account[],
 ) {
-  return unknown === "junk"
-    ? `junk to ${addressOf(junkTo, accounts)}`
-    : unknown;
+  return unknown === "junk" ? (
+    <Toward label="Junk" to={junkTo} accounts={accounts} />
+  ) : (
+    unknownLabels[unknown]
+  );
 }
 
 /** A moment in the viewer's own zone, to the minute: last use is recorded to the hour. */

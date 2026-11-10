@@ -56,7 +56,7 @@ func (d *Domain) UnknownFor(set *Settings) (Unknown, string) {
 	if d.UnknownOwn {
 		return d.Unknown, d.UnknownAccountID
 	}
-	return set.Unknown, set.UnknownAccountID
+	return set.Unknown, ""
 }
 
 // Policies are what mailio publishes for the domain: its own, or the defaults.
@@ -168,7 +168,7 @@ func domainWhere(ctx context.Context, db queryer, where string, args ...any) (*D
 // checkUnknown validates what is done with unknown mail: accountID names who gets it for
 // UnknownJunk, and is empty otherwise. The account may be at any domain: junk for one domain can be
 // read by somebody at another.
-func (s *Store) checkUnknown(ctx context.Context, u Unknown, accountID string) (any, error) {
+func checkUnknown(ctx context.Context, q queryer, u Unknown, accountID string) (any, error) {
 	if !u.valid() {
 		return nil, Invalid("Unknown mail is rejected, dropped, or delivered as junk.")
 	}
@@ -181,7 +181,11 @@ func (s *Store) checkUnknown(ctx context.Context, u Unknown, accountID string) (
 	if accountID == "" {
 		return nil, nil
 	}
-	if _, err := s.AccountByID(ctx, accountID); err != nil {
+	a, err := accountWhere(ctx, q, "u.id = ?", accountID)
+	if err != nil {
+		return nil, err
+	}
+	if err := keeps(a, "junk"); err != nil {
 		return nil, err
 	}
 	return accountID, nil
@@ -194,17 +198,26 @@ func (s *Store) SetUnknown(ctx context.Context, domainID string, u Unknown, acco
 	if !own {
 		u, accountID = UnknownReject, ""
 	}
-	target, err := s.checkUnknown(ctx, u, accountID)
+	// Checked in the transaction that writes, as SetIncoming checks the other side.
+	tx, err := s.writer.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("set unknown: %w", err)
+	}
+	defer tx.Rollback()
+	target, err := checkUnknown(ctx, tx, u, accountID)
 	if err != nil {
 		return err
 	}
 	// The comparison is what makes saving the same choice no change, and nothing for the backup
 	// loop to count.
-	res, err := s.writer.ExecContext(ctx,
+	res, err := tx.ExecContext(ctx,
 		`UPDATE domains SET unknown = ?, unknown_account_id = ?, unknown_own = ?
 		  WHERE id = ? AND (unknown <> ? OR unknown_account_id IS NOT ? OR unknown_own <> ?)`,
 		u, target, own, domainID, u, target, own)
 	if err != nil {
+		return fmt.Errorf("set unknown: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("set unknown: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n > 0 {

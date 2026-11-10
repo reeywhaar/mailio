@@ -62,5 +62,11 @@ function scrollbarWidth(el: HTMLElement): number {
   if (el === document.body || el === document.documentElement) {
     return window.innerWidth - document.documentElement.clientWidth;
   }
-  return el.offsetWidth - el.clientWidth;
+  // offsetWidth counts the borders as well, and a border is not a scrollbar: on a bordered box
+  // with none, the difference alone padded it by the borders' width and rewrapped its text.
+  const style = getComputedStyle(el);
+  const borders =
+    (Number.parseFloat(style.borderLeftWidth) || 0) +
+    (Number.parseFloat(style.borderRightWidth) || 0);
+  return Math.max(0, el.offsetWidth - el.clientWidth - borders);
 }

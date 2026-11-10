@@ -9,6 +9,7 @@ import {
   setIncoming,
   type Account,
   type Credential,
+  type Domain,
   type Incoming,
 } from "@app/api/admin";
 import { Button } from "@app/components/Button";
@@ -17,19 +18,33 @@ import { Field, Select } from "@app/components/Field";
 import { TextField } from "@app/components/TextField";
 import {
   DeleteButton,
+  Item,
   Row,
   Rows,
   Section,
   ShownCredential,
-  addressOf,
+  Facts,
+  Summary,
+  Toward,
+  accountOption,
   incomingLabels,
+  keepsMail,
+  sendersTo,
+  Senders,
   useDraft,
   useSave,
+  useSettling,
   when,
 } from "@app/pages/admin/shared";
 
 /** The accounts, each a row saying what its mail does; a click opens its settings. */
-export function Accounts({ accounts }: { accounts: Account[] }) {
+export function Accounts({
+  accounts,
+  domains,
+}: {
+  accounts: Account[];
+  domains: Domain[];
+}) {
   const [adding, setAdding] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
   const account = accounts.find((a) => a.id === open);
@@ -59,6 +74,7 @@ export function Accounts({ accounts }: { accounts: Account[] }) {
           open
           account={account}
           accounts={accounts}
+          domains={domains}
           onClose={() => setOpen(null)}
         />
       ) : null}
@@ -73,20 +89,23 @@ function AccountSummary({
   account: Account;
   accounts: Account[];
 }) {
-  const mail =
-    account.incoming === "keep"
-      ? "keeps its mail"
-      : account.incoming === "reject"
-        ? "refuses mail"
-        : `forwards to ${addressOf(account.forward_account_id, accounts)}`;
-  const n = account.credentials.length;
+  const incoming =
+    account.incoming === "forward" ? (
+      <Toward
+        label="Forward"
+        to={account.forward_account_id}
+        accounts={accounts}
+      />
+    ) : (
+      incomingLabels[account.incoming]
+    );
   return (
-    <>
-      {mail} ·{" "}
-      {n
-        ? `${n} ${n === 1 ? "credential" : "credentials"}`
-        : "no credentials: nobody signs in"}
-    </>
+    <Summary
+      parts={[
+        { label: "Incoming", value: incoming },
+        { label: "Credentials", value: account.credentials.length },
+      ]}
+    />
   );
 }
 
@@ -104,6 +123,7 @@ function AddAccountDialog({
     open,
     () => null,
   );
+  const settling = useSettling(made);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -120,7 +140,7 @@ function AddAccountDialog({
       title={made ? "Account added" : "Add an account"}
       footer={
         made ? (
-          <Button variant="solid" onClick={onClose}>
+          <Button variant="solid" onClick={() => !settling() && onClose()}>
             Done
           </Button>
         ) : (
@@ -173,19 +193,24 @@ function AccountDialog({
   open,
   account,
   accounts,
+  domains,
   onClose,
 }: {
   open: boolean;
   account: Account;
   accounts: Account[];
+  domains: Domain[];
   onClose: () => void;
 }) {
   const { save, busy, error } = useSave();
   const others = accounts.filter((a) => a.id !== account.id);
+  // Mail sent on here has to stay here: it was sent on once already.
+  const senders = sendersTo(account.id, accounts, domains);
   const [draft, setDraft] = useDraft<Draft>(open, () => ({
     incoming: account.incoming,
-    forwardTo: account.forward_account_id ?? others[0]?.id ?? "",
+    forwardTo: account.forward_account_id ?? others.find(keepsMail)?.id ?? "",
   }));
+  const blocked = senders.length > 0 && draft.incoming !== "keep";
   // The credential being added (null) or given a new password; undefined is no dialog.
   const [credential, setCredential] = useState<Credential | null | undefined>(
     undefined,
@@ -208,17 +233,18 @@ function AccountDialog({
       open={open}
       onClose={onClose}
       title={account.address}
+      wide
       footer={
         <>
           <span className="mr-auto">
             <DeleteButton
               disabled={busy}
               label="Delete account…"
-              onConfirm={() =>
-                void save(() => deleteAccount(account.id)).then(
-                  (ok) => ok && onClose(),
-                )
-              }
+              what="account"
+              facts={[["Address", account.address]]}
+              note="Its credentials, mailboxes and every message in them go with it."
+              onDelete={() => deleteAccount(account.id)}
+              onDeleted={onClose}
             />
           </span>
           <Button onClick={onClose}>Cancel</Button>
@@ -227,7 +253,9 @@ function AccountDialog({
             form="account"
             variant="solid"
             disabled={
-              busy || (draft.incoming === "forward" && !draft.forwardTo)
+              busy ||
+              blocked ||
+              (draft.incoming === "forward" && !draft.forwardTo)
             }
           >
             Save
@@ -247,13 +275,22 @@ function AccountDialog({
               <option
                 key={i}
                 value={i}
-                disabled={i === "forward" && !others.length}
+                disabled={
+                  i !== "keep" &&
+                  (senders.length > 0 ||
+                    (i === "forward" && !others.some(keepsMail)))
+                }
               >
-                {incomingLabels[i]}
+                {i === "reject"
+                  ? `${incomingLabels[i]} · no-reply account`
+                  : incomingLabels[i]}
               </option>
             ))}
           </Select>
         </Field>
+        {senders.length ? (
+          <Senders senders={senders} blocked={blocked} />
+        ) : null}
         {draft.incoming === "forward" ? (
           <Field label="Who gets the mail">
             <Select
@@ -263,8 +300,8 @@ function AccountDialog({
               }
             >
               {others.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.address}
+                <option key={a.id} value={a.id} disabled={!keepsMail(a)}>
+                  {accountOption(a)}
                 </option>
               ))}
             </Select>
@@ -284,15 +321,13 @@ function AccountDialog({
         {account.credentials.length ? (
           <ul className="divide-y divide-line rounded-md border border-line">
             {account.credentials.map((c) => (
-              <li key={c.id} className="flex flex-col gap-1 px-3 py-2">
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <span className="font-medium">{c.label}</span>
-                  <span className="text-faint">
-                    {c.last_used_at
-                      ? `used ${when(c.last_used_at)}`
-                      : "never used"}
-                  </span>
-                  <span className="ml-auto flex items-center gap-2">
+              <Item
+                key={c.id}
+                title={c.label}
+                meta={`Last used: ${c.last_used_at ? when(c.last_used_at) : "never"}`}
+                detail={c.login}
+                actions={
+                  <>
                     <Button
                       size="bar"
                       disabled={busy}
@@ -303,20 +338,21 @@ function AccountDialog({
                     <DeleteButton
                       size="bar"
                       disabled={busy}
-                      onConfirm={() =>
-                        void save(() => deleteCredential(account.id, c.id))
-                      }
+                      what="credential"
+                      facts={[
+                        ["Label", c.label],
+                        ["Login", c.login],
+                      ]}
+                      note="Whatever signs in with it stops."
+                      onDelete={() => deleteCredential(account.id, c.id)}
                     />
-                  </span>
-                </div>
-                <code className="font-mono text-xs text-muted">{c.login}</code>
-              </li>
+                  </>
+                }
+              />
             ))}
           </ul>
         ) : (
-          <p className="text-faint">
-            No credentials: the account receives mail and nobody signs in as it.
-          </p>
+          <p className="text-faint">No credentials.</p>
         )}
       </div>
 
@@ -346,28 +382,27 @@ function CredentialDialog({
   onClose: () => void;
 }) {
   const { save, busy, error } = useSave();
-  const [label, setLabel] = useDraft(open, () => "");
+  const [draft, setDraft] = useDraft(open, () => ({ label: "", password: "" }));
   const [made, setMade] = useDraft<{ login: string; password: string } | null>(
     open,
     () => null,
   );
+  const settling = useSettling(made);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     await save(async () => {
       const c = credential
-        ? await resetCredential(account.id, credential.id)
-        : await addCredential(account.id, label);
+        ? await resetCredential(account.id, credential.id, draft.password)
+        : await addCredential(account.id, draft.label, draft.password);
       setMade({ login: c.login, password: c.password });
     });
   };
 
-  const title = made
-    ? credential
-      ? `New password for ${credential.label}`
-      : "Credential added"
-    : credential
-      ? `New password for ${credential.label}`
+  const title = credential
+    ? `New password for ${credential.label}`
+    : made
+      ? "Credential added"
       : "Add a credential";
 
   return (
@@ -377,7 +412,7 @@ function CredentialDialog({
       title={title}
       footer={
         made ? (
-          <Button variant="solid" onClick={onClose}>
+          <Button variant="solid" onClick={() => !settling() && onClose()}>
             Done
           </Button>
         ) : (
@@ -387,7 +422,7 @@ function CredentialDialog({
               type="submit"
               form="credential"
               variant="solid"
-              disabled={busy || (!credential && !label.trim())}
+              disabled={busy || (!credential && !draft.label.trim())}
             >
               {credential ? "Replace" : "Add"}
             </Button>
@@ -400,26 +435,34 @@ function CredentialDialog({
       ) : (
         <form id="credential" className="flex flex-col gap-3" onSubmit={submit}>
           {credential ? (
-            <p className="text-sm text-muted">
-              {credential.login} gets a new password. Whatever signs in with the
-              old one stops until it is given the new one.
-            </p>
+            <Facts items={[["Login", credential.login]]} />
           ) : (
-            <>
-              <Field label="Label">
-                <TextField
-                  placeholder="What it is for, e.g. iPhone"
-                  autoComplete="off"
-                  data-autofocus
-                  value={label}
-                  onChange={(e) => setLabel(e.target.value)}
-                />
-              </Field>
-              <p className="text-sm text-muted">
-                It gets a login of its own and a generated password, shown once.
-              </p>
-            </>
+            <Field label="Label">
+              <TextField
+                placeholder="iPhone"
+                autoComplete="off"
+                data-autofocus
+                value={draft.label}
+                onChange={(e) => setDraft({ ...draft, label: e.target.value })}
+              />
+            </Field>
           )}
+          <Field
+            label="Password"
+            hint="Empty: generated, 24 characters. Shown once either way."
+          >
+            <TextField
+              placeholder="Generated"
+              autoComplete="off"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              className="font-mono"
+              data-autofocus={credential ? true : undefined}
+              value={draft.password}
+              onChange={(e) => setDraft({ ...draft, password: e.target.value })}
+            />
+          </Field>
           {error ? <p className="text-sm text-accent">{error}</p> : null}
         </form>
       )}

@@ -21,10 +21,11 @@ wrong guess costs the same, and the log can say which credential signed in. A lo
 with another account: no account's address has a `+`, and the name before it is always the
 login's own account. Mail sent to a login address arrives like any tagged mail.
 
-**Every password is generated, 24 characters, and shown once.** The answer that makes it carries
-it, and from then on only its hash is kept. A lost one is replaced: the credential keeps its login
-and gets a new generated password, and whatever signed in with the old one stops until it is
-given the new one.
+**A password is generated, 24 characters, unless the admin types one,** for a mail client that is
+particular about what a password holds; at least 8 characters either way. It is shown once: the
+answer that makes it carries it, and from then on only its hash is kept. A lost one is replaced:
+the credential keeps its login and gets a new password, and whatever signed in with the old one
+stops until it is given the new one.
 
 ## An account keeps, refuses or forwards its mail
 
@@ -34,9 +35,14 @@ given the new one.
 | `reject` | is refused at `RCPT TO`, `550 5.2.1`: an address that only sends, such as `noreply@` |
 | `forward` | is delivered to another account's INBOX instead |
 
-A forward follows the target's own setting, so forwarding into an address that rejects rejects.
-Saving one that would come back round is refused, and an account others forward to cannot be
-deleted until they stop.
+**Mail is sent on once, to an account that keeps it.** A forward, or a domain's junk, goes only
+to an account whose incoming is `keep`: one that is no-reply would refuse it, and one that
+forwards would make a chain. And an account mail is sent on to keeps its mail: while somebody
+forwards to it or it gets a domain's junk, it stays `keep` and is not deleted. Both sides are
+checked in the transaction that saves, so there are no chains and no circles to follow.
+
+Delivery still follows at most 5 forwards before refusing the mail, for anything saved before
+the rule.
 
 ## An admin is not an account
 
@@ -58,17 +64,18 @@ spelled one way and bounces spelled another is worse than two addresses that can
 
 ## Mail for an address nobody has follows a default, which a domain can override
 
-One of three. The default is set under Defaults in the admin interface, and a domain's own
-setting, in its settings dialog, wins over it:
+The default is set under Defaults in the admin interface, and a domain's own setting, in its
+settings dialog, wins over it:
 
-| setting | what happens |
-| --- | --- |
-| `reject` | refused while the sender is still connected. The default until changed |
-| `drop` | accepted and thrown away |
-| `junk` | delivered to one chosen account, as junk |
+| setting | what happens | |
+| --- | --- | --- |
+| `reject` | refused while the sender is still connected | the default until changed |
+| `drop` | accepted and thrown away | default or a domain's |
+| `junk` | delivered to one chosen account, as junk | a domain's only |
 
-The `junk` account may be at any domain. An account that gets junk, the default's or a domain's,
-cannot be deleted until that is set to something else.
+**Junk is never the default.** It goes to one account, which is somebody at one domain, and the
+junk of every domain landing in one person's mailbox is a choice to make per domain. The account
+may be at any domain, and cannot be deleted while a domain sends it junk.
 
 ## An unknown address is refused while the sender is still connected
 

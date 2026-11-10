@@ -252,19 +252,32 @@ by a click on its row. A domain that does not follows the default, whatever it b
 
 | | default | a domain's own |
 | --- | --- | --- |
-| unknown addresses | `reject` | `reject`, `drop`, or `junk` to an account; see [addresses.md](addresses.md) |
+| unknown addresses | `reject` or `drop` | `reject`, `drop`, or `junk` to an account; see [addresses.md](addresses.md) |
 | DMARC | `reject` | `reject`, `quarantine` or `none` |
 | SPF ending | `~all` | `-all`, `~all` or `?all` |
-| relay | built in, or one of the relays | built in, or one of the relays |
+| relay | built-in, or one of the relays | built-in, or one of the relays |
 
 ## DNS records
 
 Each domain's are in its settings: SPF, DMARC and its DKIM key. With `MAILIO_DNS_API_URL`,
-mailio publishes them every ten minutes, **rewriting them to its own each time**: managing a
-domain's mail records is mailio's job, so whatever else was there is replaced. Other records on
-the domain are left alone, a site verification among them.
+mailio publishes them at start, every ten minutes, and right after a domain or the defaults
+change, **rewriting them to its own each time**: managing a domain's mail records is mailio's job,
+so whatever else was there is replaced. Other records on the domain are left alone, a site
+verification among them.
 
 **MX is set outside mailio,** pointing at `MAILIO_MAIL_HOST`.
+
+### Every record is checked against what DNS serves
+
+On the same rounds, with or without a DNS API, mailio asks each domain's own nameservers for its
+records, MX included, so a resolver's cached answer neither hides a fix nor a breakage. Each is
+marked in the domain's settings: **OK**; **Missing**; **Different**, with what was found; **Several
+records**, two SPF or two DMARC at one name, which receivers read as neither; or **Couldn't
+check**, which opens the reason: no nameserver answered, or the domain is not in public DNS at
+all. The domain's row counts the problems, and Check now looks
+again at once. Values are compared as receivers read them, so spacing and tag order do not count.
+
+The results are kept in memory: a restart checks again.
 
 **DMARC** is what receivers do with mail that claims the domain and carries no signature of it.
 `reject` by default, since every message mailio sends is signed with the domain's DKIM key;
@@ -276,12 +289,12 @@ The key is published as `mailio._domainkey`, not the `mail._domainkey` the Postf
 used, so the old key keeps verifying mail it signed while the new one takes over. Delete the old
 one when nothing signed with it is still in flight.
 
-## Sending goes through a relay, or is built in
+## Sending goes through a relay, or is built-in
 
 Many hosting providers block outbound port 25. Relays are a list under Sending → Configure
 sending…, each with a label of its own, added and changed in a dialog, with Test to check it signs
-in. The default is one of them, or **built in**: mailio delivering to each recipient's MX itself.
-A domain can use another relay, or built in, in its settings; the relay a message goes through is
+in. The default is one of them, or **built-in**: mailio delivering to each recipient's MX itself.
+A domain can use another relay, or built-in, in its settings; the relay a message goes through is
 chosen by its sender's domain. A relay that is the default or a domain's cannot be deleted until
 it is not.
 

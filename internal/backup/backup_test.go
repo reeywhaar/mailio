@@ -111,6 +111,7 @@ func TestOnlyContentCountsAsAChange(t *testing.T) {
 	moved("a password", func() error { _, err := st.AddCredential(ctx, u.ID, "phone", "battery staple"); return err })
 	moved("no-reply", func() error { return st.SetIncoming(ctx, u.ID, store.IncomingReject, "") })
 	still("no-reply again", func() error { return st.SetIncoming(ctx, u.ID, store.IncomingReject, "") })
+	moved("keeping its mail", func() error { return st.SetIncoming(ctx, u.ID, store.IncomingKeep, "") })
 	moved("junk", func() error { return st.SetUnknown(ctx, d.ID, store.UnknownJunk, u.ID) })
 	still("the same junk again", func() error { return st.SetUnknown(ctx, d.ID, store.UnknownJunk, u.ID) })
 	moved("dropping instead", func() error { return st.SetUnknown(ctx, d.ID, store.UnknownDrop, "") })

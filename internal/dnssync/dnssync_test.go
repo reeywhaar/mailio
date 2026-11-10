@@ -80,7 +80,7 @@ func TestTheDomainsMailRecordsAreMailiosAndTheRestAreLeftAlone(t *testing.T) {
 	srv := httptest.NewServer(fake)
 	defer srv.Close()
 
-	if err := Sync(ctx, st, dnsapi.New(srv.URL), "mail.vyrtsev.com", slog.New(slog.DiscardHandler)); err != nil {
+	if _, err := Sync(ctx, st, dnsapi.New(srv.URL), "mail.vyrtsev.com", slog.New(slog.DiscardHandler)); err != nil {
 		t.Fatal(err)
 	}
 	sort.Ints(fake.deleted)
@@ -107,7 +107,7 @@ func TestTheDomainsMailRecordsAreMailiosAndTheRestAreLeftAlone(t *testing.T) {
 
 	// A second run changes nothing.
 	fake.created, fake.deleted = nil, nil
-	if err := Sync(ctx, st, dnsapi.New(srv.URL), "mail.vyrtsev.com", slog.New(slog.DiscardHandler)); err != nil {
+	if _, err := Sync(ctx, st, dnsapi.New(srv.URL), "mail.vyrtsev.com", slog.New(slog.DiscardHandler)); err != nil {
 		t.Fatal(err)
 	}
 	if len(fake.created)+len(fake.deleted) != 0 {
@@ -123,7 +123,7 @@ func TestADomainTheAPIDoesNotManageIsLeftAlone(t *testing.T) {
 	fake := &doapi{zone: dnsapi.Zone{Name: "reey.ru"}}
 	srv := httptest.NewServer(fake)
 	defer srv.Close()
-	if err := Sync(ctx, st, dnsapi.New(srv.URL), "mail.vyrtsev.com", slog.New(slog.DiscardHandler)); err != nil {
+	if _, err := Sync(ctx, st, dnsapi.New(srv.URL), "mail.vyrtsev.com", slog.New(slog.DiscardHandler)); err != nil {
 		t.Fatal(err)
 	}
 	if len(fake.created) != 0 {
@@ -161,7 +161,7 @@ func TestDMARCFollowsTheDomainsSetting(t *testing.T) {
 	defer srv.Close()
 	sync := func() string {
 		t.Helper()
-		if err := Sync(ctx, st, dnsapi.New(srv.URL), "mail.vyrtsev.com", slog.New(slog.DiscardHandler)); err != nil {
+		if _, err := Sync(ctx, st, dnsapi.New(srv.URL), "mail.vyrtsev.com", slog.New(slog.DiscardHandler)); err != nil {
 			t.Fatal(err)
 		}
 		for _, r := range fake.zone.Records {
@@ -195,7 +195,7 @@ func TestADomainPublishesTheDefaultsItFollows(t *testing.T) {
 	srv := httptest.NewServer(fake)
 	defer srv.Close()
 	st.SetSettings(ctx, store.Settings{Unknown: store.UnknownReject, DMARC: store.DMARCQuarantine, SPF: store.SPFFail})
-	if err := Sync(ctx, st, dnsapi.New(srv.URL), "mail.vyrtsev.com", slog.New(slog.DiscardHandler)); err != nil {
+	if _, err := Sync(ctx, st, dnsapi.New(srv.URL), "mail.vyrtsev.com", slog.New(slog.DiscardHandler)); err != nil {
 		t.Fatal(err)
 	}
 	got := map[string]string{}

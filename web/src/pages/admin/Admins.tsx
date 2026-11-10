@@ -143,13 +143,15 @@ function AdminDialog({
             <DeleteButton
               disabled={busy}
               label="Delete admin…"
-              onConfirm={() =>
-                void save(() => deleteAdmin(admin.id)).then((ok) => {
-                  if (!ok) return;
-                  if (you) leaveFor("/login");
-                  else onClose();
-                })
+              what="admin"
+              facts={[["Name", admin.name]]}
+              note={
+                you
+                  ? "That is you: you are signed out."
+                  : "They are signed out everywhere."
               }
+              onDelete={() => deleteAdmin(admin.id)}
+              onDeleted={() => (you ? leaveFor("/login") : onClose())}
             />
           </span>
           <Button onClick={onClose}>Cancel</Button>

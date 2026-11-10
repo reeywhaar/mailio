@@ -3,26 +3,39 @@ import { request } from "@app/api/transport";
 /** What happens to mail for an address nobody has. */
 export type Unknown = "reject" | "drop" | "junk";
 
+/** What the default can be: junk goes to one account, which only a domain chooses. */
+export type DefaultUnknown = Exclude<Unknown, "junk">;
+
 /** What receivers do with mail forging a domain, which mailio publishes as its DMARC. */
 export type DMARC = "reject" | "quarantine" | "none";
 
 /** How a domain's SPF ends: what it says about mail from servers it does not name. */
 export type SPF = "-all" | "~all" | "?all";
 
-/** A DNS record mailio keeps for a domain. */
+/** How a record compares with what DNS serves. */
+export type DNSStatus = "ok" | "missing" | "different" | "several" | "failed";
+
+/** A DNS record a domain should have, and how it was last found. */
 export type DNSRecord = {
   type: string;
   name: string;
   data: string;
+  /** False for MX: set outside mailio, and only checked. */
+  managed: boolean;
+  /** Null until the first check. */
+  status: DNSStatus | null;
+  /** What DNS served, when it is not what is wanted. */
+  found: string[];
+  /** Why the lookup failed, for status "failed". */
+  error: string | null;
 };
 
 /**
- * The defaults every domain follows unless it has its own. The junk account is set exactly when
- * unknown is "junk"; a null relay is built in, straight to each recipient's server.
+ * The defaults every domain follows unless it has its own. A null relay is built-in, straight to
+ * each recipient's server.
  */
 export type Settings = {
-  unknown: Unknown;
-  unknown_account_id: string | null;
+  unknown: DefaultUnknown;
   dmarc: DMARC;
   spf: SPF;
   relay_id: string | null;
@@ -43,6 +56,8 @@ export type Domain = {
   /** BUILT_IN, a relay's id, or null for the default. */
   relay: string | null;
   records: DNSRecord[];
+  /** When its records were last checked; null for not yet. */
+  dns_checked_at: number | null;
   created_at: number;
 };
 
@@ -172,6 +187,10 @@ export const createDomain = (name: string) =>
 export const updateDomain = (id: string, change: DomainChange) =>
   request<Domain>(`/api/domains/${id}`, { method: "PATCH", body: change });
 
+/** Looks up the domain's records now, rather than at the next round. */
+export const checkDomain = (id: string) =>
+  request<Domain>(`/api/domains/${id}/check`, { method: "POST" });
+
 export const deleteDomain = (id: string) =>
   request<void>(`/api/domains/${id}`, { method: "DELETE" });
 
@@ -197,18 +216,29 @@ export const setIncoming = (
 export const deleteAccount = (id: string) =>
   request<void>(`/api/accounts/${id}`, { method: "DELETE" });
 
-/** Adds a credential with a generated password, shown in this answer only. */
-export const addCredential = (accountID: string, label: string) =>
+/**
+ * Adds a credential with the password given, or a generated one for "". The answer is the one
+ * place it is shown.
+ */
+export const addCredential = (
+  accountID: string,
+  label: string,
+  password: string,
+) =>
   request<MadeCredential>(`/api/accounts/${accountID}/credentials`, {
     method: "POST",
-    body: { label },
+    body: { label, password },
   });
 
-/** Replaces a credential's password with a generated one, keeping its login. */
-export const resetCredential = (accountID: string, id: string) =>
+/** Replaces a credential's password, keeping its login: the one given, or generated for "". */
+export const resetCredential = (
+  accountID: string,
+  id: string,
+  password: string,
+) =>
   request<MadeCredential>(
     `/api/accounts/${accountID}/credentials/${id}/reset`,
-    { method: "POST" },
+    { method: "POST", body: { password } },
   );
 
 export const deleteCredential = (accountID: string, id: string) =>

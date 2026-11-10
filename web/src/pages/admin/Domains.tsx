@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 
 import {
   BUILT_IN,
+  checkDomain,
   createDomain,
   deleteDomain,
   updateDomain,
@@ -14,21 +15,29 @@ import {
   type Unknown,
 } from "@app/api/admin";
 import { Button } from "@app/components/Button";
+import { CopyBlock } from "@app/components/CopyBlock";
 import { Dialog } from "@app/components/Dialog";
 import { Field, Select } from "@app/components/Field";
 import { TextField } from "@app/components/TextField";
 import {
+  DNSStatusMark,
+  DNSSummary,
   DeleteButton,
+  Facts,
   Row,
   Rows,
   Section,
+  Summary,
+  accountOption,
   dmarcLabels,
+  keepsMail,
   relayName,
   spfLabels,
   unknownLabels,
   unknownSummary,
   useDraft,
   useSave,
+  when,
 } from "@app/pages/admin/shared";
 
 type Context = {
@@ -83,43 +92,38 @@ function DomainSummary({
   accounts,
   relays,
 }: Context & { domain: Domain }) {
-  const parts = [
-    {
-      label: "Unknown addresses",
-      own: domain.unknown !== null,
-      value: unknownSummary(
-        domain.unknown ?? settings.unknown,
-        domain.unknown
-          ? domain.unknown_account_id
-          : settings.unknown_account_id,
-        accounts,
-      ),
-    },
-    {
-      label: "Sending",
-      own: domain.relay !== null,
-      value: relayName(domain.relay ?? settings.relay_id, relays),
-    },
-    {
-      label: "DMARC",
-      own: domain.dmarc !== null,
-      value: domain.dmarc ?? settings.dmarc,
-    },
-    {
-      label: "SPF",
-      own: domain.spf !== null,
-      value: domain.spf ?? settings.spf,
-    },
-  ];
   return (
-    <span className="flex flex-wrap gap-x-3 gap-y-0.5">
-      {parts.map((p) => (
-        <span key={p.label}>
-          {p.label}: <span className="text-fg">{p.value}</span>
-          {p.own ? null : <span className="text-faint"> (default)</span>}
-        </span>
-      ))}
-    </span>
+    <Summary
+      parts={[
+        {
+          label: "Unknown addresses",
+          inherited: domain.unknown === null,
+          value: domain.unknown
+            ? unknownSummary(
+                domain.unknown,
+                domain.unknown_account_id,
+                accounts,
+              )
+            : unknownLabels[settings.unknown],
+        },
+        {
+          label: "Sending",
+          inherited: domain.relay === null,
+          value: relayName(domain.relay ?? settings.relay_id, relays),
+        },
+        {
+          label: "DMARC",
+          inherited: domain.dmarc === null,
+          value: domain.dmarc ?? settings.dmarc,
+        },
+        {
+          label: "SPF",
+          inherited: domain.spf === null,
+          value: domain.spf ?? settings.spf,
+        },
+        { label: "DNS", value: <DNSSummary domain={domain} /> },
+      ]}
+    />
   );
 }
 
@@ -198,13 +202,14 @@ function DomainDialog({
   onClose: () => void;
 }) {
   const { save, busy, error } = useSave();
+  const check = useSave();
   const [draft, setDraft] = useDraft<Draft>(open, () => ({
     unknown: domain.unknown ?? "",
     // Junk goes to somebody at the same domain when there is somebody, the likely reader.
     junkTo:
       domain.unknown_account_id ??
-      accounts.find((a) => a.domain_id === domain.id)?.id ??
-      accounts[0]?.id ??
+      accounts.find((a) => a.domain_id === domain.id && keepsMail(a))?.id ??
+      accounts.find(keepsMail)?.id ??
       "",
     dmarc: domain.dmarc ?? "",
     spf: domain.spf ?? "",
@@ -231,17 +236,18 @@ function DomainDialog({
       open={open}
       onClose={onClose}
       title={domain.name}
+      wide
       footer={
         <>
           <span className="mr-auto">
             <DeleteButton
               disabled={busy}
               label="Delete domain…"
-              onConfirm={() =>
-                void save(() => deleteDomain(domain.id)).then(
-                  (ok) => ok && onClose(),
-                )
-              }
+              what="domain"
+              facts={[["Domain", domain.name]]}
+              note="Its DKIM key goes with it. A domain with accounts is kept until they are deleted."
+              onDelete={() => deleteDomain(domain.id)}
+              onDeleted={onClose}
             />
           </span>
           <Button onClick={onClose}>Cancel</Button>
@@ -262,19 +268,12 @@ function DomainDialog({
             value={draft.unknown}
             onChange={(e) => set({ unknown: e.target.value as Unknown | "" })}
           >
-            <option value="">
-              Default:{" "}
-              {unknownSummary(
-                settings.unknown,
-                settings.unknown_account_id,
-                accounts,
-              )}
-            </option>
+            <option value="">Default: {unknownLabels[settings.unknown]}</option>
             {(Object.keys(unknownLabels) as Unknown[]).map((u) => (
               <option
                 key={u}
                 value={u}
-                disabled={u === "junk" && !accounts.length}
+                disabled={u === "junk" && !accounts.some(keepsMail)}
               >
                 {unknownLabels[u]}
               </option>
@@ -288,8 +287,8 @@ function DomainDialog({
               onChange={(e) => set({ junkTo: e.target.value })}
             >
               {accounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.address}
+                <option key={a.id} value={a.id} disabled={!keepsMail(a)}>
+                  {accountOption(a)}
                 </option>
               ))}
             </Select>
@@ -303,12 +302,10 @@ function DomainDialog({
             <option value="">
               Default: {relayName(settings.relay_id, relays)}
             </option>
-            <option value={BUILT_IN}>
-              Built in, straight to each recipient
-            </option>
+            <option value={BUILT_IN}>Built-in</option>
             {relays.map((r) => (
               <option key={r.id} value={r.id}>
-                Through {r.label}
+                {r.label}
               </option>
             ))}
           </Select>
@@ -340,24 +337,59 @@ function DomainDialog({
           </Select>
         </Field>
         {error ? <p className="text-sm text-accent">{error}</p> : null}
-        <div className="flex flex-col gap-2 border-t border-line pt-3 text-sm">
-          <p className="text-muted">
-            {dnsAPI
-              ? "mailio keeps these current through the DNS API, as last saved."
-              : "Add these at the domain's DNS provider, as last saved."}
-          </p>
-          {domain.records.map((r) => (
-            <div
-              key={r.type + r.name + r.data}
-              className="flex flex-col gap-0.5"
+        <div className="flex flex-col gap-2 border-t border-line pt-3">
+          <div className="flex items-start gap-3">
+            <Facts
+              items={[
+                ["DNS records", dnsAPI ? "DNS API" : "By hand"],
+                [
+                  "Checked",
+                  domain.dns_checked_at
+                    ? when(domain.dns_checked_at)
+                    : "Not yet",
+                ],
+              ]}
+            />
+            <span className="flex-1" />
+            <Button
+              size="bar"
+              disabled={check.busy}
+              onClick={() => void check.save(() => checkDomain(domain.id))}
             >
-              <span className="text-muted">
-                {r.type} <span className="font-mono text-fg">{r.name}</span>
-              </span>
-              <code className="font-mono text-xs break-all select-all">
-                {r.data}
-              </code>
-            </div>
+              {check.busy ? "Checking…" : "Check now"}
+            </Button>
+          </div>
+          {check.error ? (
+            <p className="text-sm text-accent">{check.error}</p>
+          ) : null}
+          {domain.records.map((r) => (
+            <CopyBlock
+              key={r.type + r.name}
+              title={r.type}
+              aside={
+                <span className="flex gap-2">
+                  {r.managed ? null : (
+                    <span className="text-faint">Set outside mailio</span>
+                  )}
+                  <DNSStatusMark record={r} />
+                </span>
+              }
+              rows={[
+                { label: "Name", value: r.name },
+                { label: "Value", value: r.data },
+              ]}
+            >
+              {r.found.length ? (
+                <div className="flex flex-col gap-0.5 pr-1.5">
+                  <span className="text-muted">Found</span>
+                  {r.found.map((f) => (
+                    <code key={f} className="font-mono break-all text-accent">
+                      {f}
+                    </code>
+                  ))}
+                </div>
+              ) : null}
+            </CopyBlock>
           ))}
         </div>
       </form>

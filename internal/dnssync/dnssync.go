@@ -37,21 +37,22 @@ func Wanted(d *store.Domain, set *store.Settings, mailHost string) []Record {
 	return out
 }
 
-// Sync publishes every domain's records through the API. A domain the API does not manage is left
-// to whoever does, with the records shown in the admin interface.
-func Sync(ctx context.Context, st *store.Store, api *dnsapi.Client, mailHost string, log *slog.Logger) error {
+// Sync publishes every domain's records through the API, and says how many it changed. A domain
+// the API does not manage is left to whoever does, with the records shown in the admin interface.
+func Sync(ctx context.Context, st *store.Store, api *dnsapi.Client, mailHost string, log *slog.Logger) (int, error) {
 	domains, err := st.Domains(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	set, err := st.Settings(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	zones, err := api.Zones(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
+	changed := 0
 	for i := range domains {
 		d := &domains[i]
 		zone, _, ok := dnsapi.ZoneFor(zones, d.Name)
@@ -59,15 +60,19 @@ func Sync(ctx context.Context, st *store.Store, api *dnsapi.Client, mailHost str
 			continue
 		}
 		for _, want := range Wanted(d, set, mailHost) {
-			if err := apply(ctx, api, zone, want, log); err != nil {
-				return fmt.Errorf("%s %s: %w", want.Type, want.Name, err)
+			did, err := apply(ctx, api, zone, want, log)
+			if err != nil {
+				return changed, fmt.Errorf("%s %s: %w", want.Type, want.Name, err)
+			}
+			if did {
+				changed++
 			}
 		}
 	}
-	return nil
+	return changed, nil
 }
 
-func apply(ctx context.Context, api *dnsapi.Client, zone *dnsapi.Zone, want Record, log *slog.Logger) error {
+func apply(ctx context.Context, api *dnsapi.Client, zone *dnsapi.Zone, want Record, log *slog.Logger) (bool, error) {
 	_, rel, _ := dnsapi.ZoneFor([]dnsapi.Zone{*zone}, want.Name)
 	var same []dnsapi.Record
 	for _, r := range zone.Records {
@@ -81,18 +86,18 @@ func apply(ctx context.Context, api *dnsapi.Client, zone *dnsapi.Zone, want Reco
 		same = append(same, r)
 	}
 	if len(same) == 1 && strings.EqualFold(same[0].Data, want.Data) {
-		return nil
+		return false, nil
 	}
 	for _, r := range same {
 		if err := api.Delete(ctx, zone.Name, r.ID); err != nil {
-			return err
+			return false, err
 		}
 	}
 	if err := api.Create(ctx, zone.Name, want.Type, rel, want.Data, 0); err != nil {
-		return err
+		return false, err
 	}
 	log.Info("dns record published", "type", want.Type, "name", want.Name)
-	return nil
+	return true, nil
 }
 
 func kind(txt string) string {

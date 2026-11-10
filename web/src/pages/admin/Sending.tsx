@@ -16,13 +16,15 @@ import { Field, Select } from "@app/components/Field";
 import { TextField } from "@app/components/TextField";
 import {
   DeleteButton,
+  Facts,
+  Item,
   Section,
   relayName,
   useDraft,
   useSave,
 } from "@app/pages/admin/shared";
 
-/** How mail goes out: a line saying so, and the relays behind a button. */
+/** How mail goes out: the default relay and the list, which the dialog changes. */
 export function Sending({
   settings,
   relays,
@@ -36,12 +38,12 @@ export function Sending({
       title="Sending"
       action={<Button onClick={() => setOpen(true)}>Configure sending…</Button>}
     >
-      <p className="text-sm text-muted">
-        {settings.relay_id
-          ? `Mail goes out through ${relayName(settings.relay_id, relays)}`
-          : "Mail goes out built in, straight to each recipient's server, which many hosting providers block on port 25"}
-        , unless a domain's own settings say otherwise.
-      </p>
+      <Facts
+        items={[
+          ["Default", relayName(settings.relay_id, relays)],
+          ["Relays", relays.map((r) => r.label).join(", ") || "None"],
+        ]}
+      />
       <SendingDialog
         open={open}
         onClose={() => setOpen(false)}
@@ -88,6 +90,7 @@ function SendingDialog({
       open={open}
       onClose={onClose}
       title="Sending"
+      wide
       footer={
         <>
           <Button onClick={onClose}>Cancel</Button>
@@ -108,10 +111,12 @@ function SendingDialog({
         {relays.length ? (
           <ul className="divide-y divide-line rounded-md border border-line bg-bg">
             {relays.map((r) => (
-              <li key={r.id} className="flex flex-col gap-1 px-3 py-2">
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                  <span className="font-medium">{r.label}</span>
-                  <span className="ml-auto flex items-center gap-2">
+              <Item
+                key={r.id}
+                title={r.label}
+                detail={`${r.host}:${r.port}`}
+                actions={
+                  <>
                     <Button
                       size="bar"
                       disabled={busy}
@@ -122,7 +127,7 @@ function SendingDialog({
                             ok &&
                             setTested({
                               id: r.id,
-                              text: "It accepted the sign-in.",
+                              text: "Signed in.",
                             }),
                         );
                       }}
@@ -139,17 +144,21 @@ function SendingDialog({
                     <DeleteButton
                       size="bar"
                       disabled={busy}
-                      onConfirm={() => void save(() => deleteRelay(r.id))}
+                      what="relay"
+                      facts={[
+                        ["Label", r.label],
+                        ["Host", `${r.host}:${r.port}`],
+                      ]}
+                      note="A relay that is the default or a domain's is kept until it is not."
+                      onDelete={() => deleteRelay(r.id)}
                     />
-                  </span>
-                </div>
-                <code className="font-mono text-xs text-muted">
-                  {r.host}:{r.port}
-                </code>
+                  </>
+                }
+              >
                 {tested?.id === r.id ? (
-                  <span className="text-muted">{tested.text}</span>
+                  <span className="text-ok">{tested.text}</span>
                 ) : null}
-              </li>
+              </Item>
             ))}
           </ul>
         ) : (
@@ -160,14 +169,15 @@ function SendingDialog({
           onSubmit={submit}
           className="border-t border-line pt-3"
         >
-          <Field label="Default for every domain">
+          <Field
+            label="Default"
+            hint="Built-in: straight to each recipient's server, on port 25."
+          >
             <Select value={relay} onChange={(e) => setRelay(e.target.value)}>
-              <option value="">
-                Built in: straight to each recipient's server
-              </option>
+              <option value="">Built-in</option>
               {relays.map((r) => (
                 <option key={r.id} value={r.id}>
-                  Through {r.label}
+                  {r.label}
                 </option>
               ))}
             </Select>

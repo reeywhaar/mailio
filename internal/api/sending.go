@@ -131,8 +131,7 @@ func settingsJSON(set *store.Settings) map[string]any {
 		return v
 	}
 	return map[string]any{
-		"unknown": set.Unknown, "unknown_account_id": orNull(set.UnknownAccountID),
-		"dmarc": set.DMARC, "spf": set.SPF, "relay_id": orNull(set.RelayID),
+		"unknown": set.Unknown, "dmarc": set.DMARC, "spf": set.SPF, "relay_id": orNull(set.RelayID),
 	}
 }
 
@@ -149,19 +148,15 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 // in.
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Unknown          store.Unknown `json:"unknown"`
-		UnknownAccountID *string       `json:"unknown_account_id"`
-		DMARC            store.DMARC   `json:"dmarc"`
-		SPF              store.SPF     `json:"spf"`
-		RelayID          *string       `json:"relay_id"`
+		Unknown store.Unknown `json:"unknown"`
+		DMARC   store.DMARC   `json:"dmarc"`
+		SPF     store.SPF     `json:"spf"`
+		RelayID *string       `json:"relay_id"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
 	set := store.Settings{Unknown: req.Unknown, DMARC: req.DMARC, SPF: req.SPF}
-	if req.UnknownAccountID != nil {
-		set.UnknownAccountID = *req.UnknownAccountID
-	}
 	if req.RelayID != nil {
 		set.RelayID = *req.RelayID
 	}
@@ -171,6 +166,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	s.log.Info("settings changed", "unknown", set.Unknown, "dmarc", set.DMARC, "spf", set.SPF,
 		"relay", set.RelayID, "by", adminOf(r).ID)
+	s.changed()
 	s.getSettings(w, r)
 }
 

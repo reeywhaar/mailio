@@ -11,12 +11,14 @@ import {
 import { lockScroll } from "@app/components/scrollLock";
 
 /**
- * The dialog a piece of the tree is inside, if it is inside one.
+ * The scrolling body of the dialog a piece of the tree is inside, if it is inside one: what a
+ * dialog opened on top holds still. The body rather than the dialog, because the body is what
+ * scrolls; the dialog box around it never does.
  *
- * A ref rather than the element, because the provider is the dialog itself and its element does
- * not exist until after the first render; by the time a child's effect reads .current, it does.
+ * A ref rather than the element, because the element does not exist until after the first render;
+ * by the time a child's effect reads .current, it does.
  */
-const DialogContext = createContext<RefObject<HTMLDialogElement | null> | null>(
+const DialogContext = createContext<RefObject<HTMLDivElement | null> | null>(
   null,
 );
 
@@ -59,6 +61,7 @@ export function Dialog({
   wide?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const body = useRef<HTMLDivElement>(null);
   const titleID = useId();
   const parent = useContext(DialogContext);
 
@@ -93,8 +96,8 @@ export function Dialog({
     // Both are needed and neither covers the other: holding the page still leaves a parent
     // dialog free to scroll away underneath, and the reverse.
     const releasePage = lockScroll(document.body);
-    const above = parent?.current;
-    const releaseParent = above ? lockScroll(above) : undefined;
+    const under = parent?.current;
+    const releaseParent = under ? lockScroll(under) : undefined;
     return () => {
       releaseParent?.();
       releasePage();
@@ -150,7 +153,7 @@ export function Dialog({
       {/* Unmounted while closed, so a form inside starts empty rather than holding whatever was
           typed and abandoned last time. */}
       {open ? (
-        <DialogContext.Provider value={ref}>
+        <DialogContext.Provider value={body}>
           {/*
             The body scrolls and the footer does not, so what a dialog asks for is never below
             the fold with nothing to press.
@@ -210,7 +213,10 @@ export function Dialog({
           {/* flex-auto, not flex-1, here and in what fills it: a card's height is fitted to its
               contents, and Safari fits a flex-1 child at its basis of 0 — the body came out as its
               padding and nothing else. Growing from what it holds still takes the slack on a phone. */}
-          <div className="flex min-h-0 flex-auto flex-col gap-4 overflow-y-auto overscroll-contain px-4 pt-4 sm:px-5">
+          <div
+            ref={body}
+            className="flex min-h-0 flex-auto flex-col gap-4 overflow-y-auto overscroll-contain px-4 pt-4 sm:px-5"
+          >
             {children}
             {/* A box with a height rather than padding on the box that scrolls.
 

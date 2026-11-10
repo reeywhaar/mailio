@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	"mailio/internal/dnssync"
+	"mailio/internal/dnscheck"
 	"mailio/internal/ids"
 	"mailio/internal/store"
 )
@@ -52,7 +52,8 @@ func adminJSON(a *store.Admin) map[string]any {
 }
 
 // domainJSON shows a domain's own DMARC, SPF and relay as null when it follows the default, and
-// its records as they are published, defaults applied. Its relay is "builtin" or a relay's id.
+// its records as they are published, defaults applied, each with what DNS served when last
+// checked. Its relay is "builtin" or a relay's id.
 func (s *Server) domainJSON(d *store.Domain, set *store.Settings) map[string]any {
 	orNull := func(v string) any {
 		if v == "" {
@@ -60,6 +61,7 @@ func (s *Server) domainJSON(d *store.Domain, set *store.Settings) map[string]any
 		}
 		return v
 	}
+	records, checkedAt := s.recordsJSON(d, set)
 	relay := ""
 	switch d.Via {
 	case store.ViaBuiltIn:
@@ -75,8 +77,59 @@ func (s *Server) domainJSON(d *store.Domain, set *store.Settings) map[string]any
 		"dmarc":              orNull(string(d.DMARC)),
 		"spf":                orNull(string(d.SPF)),
 		"relay":              orNull(relay),
-		"records":            dnssync.Wanted(d, set, s.cfg.MailHost),
+		"records":            records,
+		"dns_checked_at":     checkedAt,
 		"created_at":         d.CreatedAt.Unix(),
+	}
+}
+
+// recordsJSON is each record a domain should have and its last check: a null status for none yet.
+// MX is checked and never published, being set outside mailio.
+func (s *Server) recordsJSON(d *store.Domain, set *store.Settings) ([]map[string]any, any) {
+	var checkedAt any
+	wanted := dnscheck.Wanted(d, set, s.cfg.MailHost)
+	out := make([]map[string]any, len(wanted))
+	for i, want := range wanted {
+		var status, failure any
+		found := []string{}
+		if s.dns != nil {
+			if r, at, ok := s.dns.Last(d.ID, want); ok {
+				status, checkedAt = r.Status, at.Unix()
+				if r.Found != nil {
+					found = r.Found
+				}
+				if r.Error != "" {
+					failure = r.Error
+				}
+			}
+		}
+		out[i] = map[string]any{
+			"type": want.Type, "name": want.Name, "data": want.Data,
+			"managed": want.Type != "MX", "status": status, "found": found, "error": failure,
+		}
+	}
+	return out, checkedAt
+}
+
+// checkDomain looks up the domain's records now, rather than at the next round.
+func (s *Server) checkDomain(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, ids.Domain)
+	if !ok {
+		return
+	}
+	if s.dns != nil {
+		if err := s.dns.CheckDomain(r.Context(), id); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+	}
+	s.writeDomain(w, r, http.StatusOK, id)
+}
+
+// changed has the domains' records published and checked again soon.
+func (s *Server) changed() {
+	if s.dns != nil {
+		s.dns.Changed()
 	}
 }
 
@@ -149,6 +202,7 @@ func (s *Server) createDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("domain added", "domain", d.ID, "by", adminOf(r).ID)
+	s.changed()
 	s.writeDomain(w, r, http.StatusCreated, d.ID)
 }
 
@@ -202,6 +256,7 @@ func (s *Server) updateDomain(w http.ResponseWriter, r *http.Request) {
 		}
 		s.log.Info("domain changed", "domain", id, "relay", *req.Relay, "by", adminOf(r).ID)
 	}
+	s.changed()
 	s.writeDomain(w, r, http.StatusOK, id)
 }
 
@@ -311,12 +366,13 @@ func (s *Server) addCredential(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Label string `json:"label"`
+		Label    string `json:"label"`
+		Password string `json:"password"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
-	password := store.GeneratePassword()
+	password := orGenerated(req.Password)
 	p, err := s.st.AddCredential(r.Context(), id, req.Label, password)
 	if err != nil {
 		s.fail(w, r, err)
@@ -326,7 +382,7 @@ func (s *Server) addCredential(w http.ResponseWriter, r *http.Request) {
 	s.log.Info("credential added", "account", id, "credential", p.ID, "by", adminOf(r).ID)
 }
 
-// resetCredential replaces a password with a newly generated one, keeping its label and login.
+// resetCredential replaces a password, keeping its label and login.
 func (s *Server) resetCredential(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, ids.Account)
 	if !ok {
@@ -336,7 +392,13 @@ func (s *Server) resetCredential(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	password := store.GeneratePassword()
+	var req struct {
+		Password string `json:"password"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	password := orGenerated(req.Password)
 	p, err := s.st.ResetCredential(r.Context(), id, pid, password)
 	if err != nil {
 		s.fail(w, r, err)
@@ -344,6 +406,15 @@ func (s *Server) resetCredential(w http.ResponseWriter, r *http.Request) {
 	}
 	s.answerCredential(w, r, http.StatusOK, id, p, password)
 	s.log.Info("credential reset", "account", id, "credential", pid, "by", adminOf(r).ID)
+}
+
+// orGenerated is the password an admin typed, or, when they typed none, a generated one: some
+// mail clients are particular about what a password may hold, and the admin knows which.
+func orGenerated(password string) string {
+	if password == "" {
+		return store.GeneratePassword()
+	}
+	return password
 }
 
 // answerCredential is a credential with, this once, its password.

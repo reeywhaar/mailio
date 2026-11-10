@@ -21,6 +21,7 @@ import (
 	"mailio/internal/certs"
 	"mailio/internal/config"
 	"mailio/internal/dnsapi"
+	"mailio/internal/dnscheck"
 	"mailio/internal/dnssync"
 	"mailio/internal/imapd"
 	"mailio/internal/outbound"
@@ -64,10 +65,11 @@ func serveCmd() *cobra.Command {
 				return err
 			}
 			sender := outbound.New(st, log, cfg.MailHost)
+			dns := dnsKeeper{dnscheck.NewChecker(st, dnscheck.Authoritative{}, cfg.MailHost), make(chan struct{}, 1)}
 
 			admin := &http.Server{
 				Addr:              app.ListenAddr,
-				Handler:           api.New(cfg, log, st, mailService{mgr, sender}, web(log)),
+				Handler:           api.New(cfg, log, st, mailService{mgr, sender}, dns, web(log)),
 				ReadHeaderTimeout: 10 * time.Second,
 			}
 			imap := imapd.New(st, log)
@@ -88,11 +90,13 @@ func serveCmd() *cobra.Command {
 			background.Go(func() { sweep(ctx, st, log) })
 			background.Go(func() { backup.Run(ctx, st, cfg.BackupURL, cfg.DataDir, log) })
 			background.Go(func() { sender.Run(ctx) })
+			var dnsAPI *dnsapi.Client
 			if cfg.DNSAPI != "" {
-				dns := dnsapi.New(cfg.DNSAPI)
-				background.Go(func() { syncDNS(ctx, st, dns, cfg.MailHost, log) })
-				background.Go(func() { (&certs.ACME{M: mgr, API: dns, Directory: acme.LetsEncryptURL}).Run(ctx) })
-			} else {
+				dnsAPI = dnsapi.New(cfg.DNSAPI)
+				background.Go(func() { (&certs.ACME{M: mgr, API: dnsAPI, Directory: acme.LetsEncryptURL}).Run(ctx) })
+			}
+			background.Go(func() { keepDNS(ctx, st, dnsAPI, dns, cfg.MailHost, log) })
+			if dnsAPI == nil {
 				log.Warn("no DNS API: publish the DNS records shown in the admin interface by hand, and the mail ports keep a self-signed certificate")
 			}
 
@@ -190,19 +194,49 @@ func (m mailService) TestRelay(ctx context.Context, r *store.Relay) error {
 }
 func (m mailService) Wake() { m.sender.Wake() }
 
-// syncDNS publishes the domains' records now and every ten minutes, so a domain added in the admin
-// interface has its DKIM key published soon after.
-func syncDNS(ctx context.Context, st *store.Store, dns *dnsapi.Client, host string, log *slog.Logger) {
+// dnsKeeper is the domains' records as the admin interface sees them: the last check of each, and
+// a nudge for keepDNS when one may have changed.
+type dnsKeeper struct {
+	*dnscheck.Checker
+	wake chan struct{}
+}
+
+func (k dnsKeeper) Changed() {
+	select {
+	case k.wake <- struct{}{}:
+	default:
+	}
+}
+
+// keepDNS publishes the domains' records through the DNS API when there is one, then checks what
+// DNS serves for them: at start, every ten minutes, and right after a change in the admin
+// interface, so a new domain's DKIM key is out within seconds.
+func keepDNS(ctx context.Context, st *store.Store, api *dnsapi.Client, k dnsKeeper, host string, log *slog.Logger) {
 	t := time.NewTicker(10 * time.Minute)
 	defer t.Stop()
 	for {
-		if err := dnssync.Sync(ctx, st, dns, host, log); err != nil && ctx.Err() == nil {
-			log.Error("publishing dns records failed", "error", err)
+		if api != nil {
+			n, err := dnssync.Sync(ctx, st, api, host, log)
+			if err != nil && ctx.Err() == nil {
+				log.Error("publishing dns records failed", "error", err)
+			}
+			// The zone's nameservers take a moment to serve what was just published.
+			if n > 0 {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(30 * time.Second):
+				}
+			}
+		}
+		if err := k.CheckAll(ctx); err != nil && ctx.Err() == nil {
+			log.Error("checking dns records failed", "error", err)
 		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+		case <-k.wake:
 		}
 	}
 }

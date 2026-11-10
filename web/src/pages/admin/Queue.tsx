@@ -24,7 +24,7 @@ export function Queue({ queue }: { queue: Queued[] }) {
                 {q.sender} → <span className="font-medium">{q.recipient}</span>
               </span>
               <span className="text-muted">
-                {q.attempts} {q.attempts === 1 ? "attempt" : "attempts"}
+                Attempts: {q.attempts}
                 {q.last_error ? ` · ${q.last_error}` : ""}
               </span>
             </li>

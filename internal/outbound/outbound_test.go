@@ -303,7 +303,7 @@ func TestAWrongRelayPasswordIsRetriedNotBounced(t *testing.T) {
 	}
 }
 
-// A domain set to built in goes to the recipient's MX, whatever the default relay.
+// A domain set to built-in goes to the recipient's MX, whatever the default relay.
 func TestADomainThatSendsDirectlySkipsTheDefaultRelay(t *testing.T) {
 	r := newRig(t)
 	ctx := context.Background()

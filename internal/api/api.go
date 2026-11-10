@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"mailio/internal/config"
+	"mailio/internal/dnscheck"
+	"mailio/internal/dnssync"
 	"mailio/internal/store"
 )
 
@@ -36,12 +38,24 @@ type Mail interface {
 	Wake()
 }
 
+// DNS is what the admin interface asks of the records each domain should have. Nil in tests about
+// something else.
+type DNS interface {
+	// Last is a record's last check; ok is false for none yet.
+	Last(domainID string, want dnssync.Record) (r dnscheck.Result, at time.Time, ok bool)
+	// CheckDomain checks one domain's records now.
+	CheckDomain(ctx context.Context, id string) error
+	// Changed says what a domain should publish may have changed: publish and check again soon.
+	Changed()
+}
+
 // Server is the HTTP handler.
 type Server struct {
 	cfg  *config.Config
 	log  *slog.Logger
 	st   *store.Store
 	mail Mail
+	dns  DNS
 	mux  *http.ServeMux
 
 	// Two buckets with two jobs: the global one bounds bcrypt on unauthenticated endpoints, the
@@ -51,12 +65,13 @@ type Server struct {
 }
 
 // New builds the handler. web is the built bundle, or nil for a checkout that never built it.
-func New(cfg *config.Config, log *slog.Logger, st *store.Store, mail Mail, web fs.FS) *Server {
+func New(cfg *config.Config, log *slog.Logger, st *store.Store, mail Mail, dns DNS, web fs.FS) *Server {
 	s := &Server{
 		cfg:        cfg,
 		log:        log,
 		st:         st,
 		mail:       mail,
+		dns:        dns,
 		mux:        http.NewServeMux(),
 		signInAll:  newLimiter(30, 2*time.Second),
 		signInName: newLimiter(5, 12*time.Second),
@@ -73,6 +88,7 @@ func New(cfg *config.Config, log *slog.Logger, st *store.Store, mail Mail, web f
 	s.mux.Handle("GET /api/domains", s.requireAdmin(s.listDomains))
 	s.mux.Handle("POST /api/domains", s.requireAdmin(s.createDomain))
 	s.mux.Handle("PATCH /api/domains/{id}", s.requireAdmin(s.updateDomain))
+	s.mux.Handle("POST /api/domains/{id}/check", s.requireAdmin(s.checkDomain))
 	s.mux.Handle("DELETE /api/domains/{id}", s.requireAdmin(s.deleteDomain))
 
 	s.mux.Handle("GET /api/accounts", s.requireAdmin(s.listAccounts))

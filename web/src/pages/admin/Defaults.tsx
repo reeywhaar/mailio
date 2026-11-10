@@ -2,58 +2,45 @@ import { useState, type FormEvent } from "react";
 
 import {
   setSettings,
-  type Account,
   type DMARC,
+  type DefaultUnknown,
   type SPF,
   type Settings,
-  type Unknown,
 } from "@app/api/admin";
 import { Button } from "@app/components/Button";
 import { Dialog } from "@app/components/Dialog";
 import { Field, Select } from "@app/components/Field";
 import {
+  Facts,
   Section,
   dmarcLabels,
   spfLabels,
   unknownLabels,
-  unknownSummary,
   useDraft,
   useSave,
 } from "@app/pages/admin/shared";
 
+const defaultUnknowns: DefaultUnknown[] = ["reject", "drop"];
+
 /** What every domain does and publishes unless its own settings say otherwise. */
-export function Defaults({
-  settings,
-  accounts,
-}: {
-  settings: Settings;
-  accounts: Account[];
-}) {
+export function Defaults({ settings }: { settings: Settings }) {
   const [open, setOpen] = useState(false);
   return (
     <Section
       title="Defaults"
       action={<Button onClick={() => setOpen(true)}>Change…</Button>}
     >
-      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-        <dt className="text-muted">Unknown addresses</dt>
-        <dd>
-          {unknownSummary(
-            settings.unknown,
-            settings.unknown_account_id,
-            accounts,
-          )}
-        </dd>
-        <dt className="text-muted">DMARC</dt>
-        <dd>{dmarcLabels[settings.dmarc]}</dd>
-        <dt className="text-muted">SPF</dt>
-        <dd>{spfLabels[settings.spf]}</dd>
-      </dl>
+      <Facts
+        items={[
+          ["Unknown addresses", unknownLabels[settings.unknown]],
+          ["DMARC", dmarcLabels[settings.dmarc]],
+          ["SPF", spfLabels[settings.spf]],
+        ]}
+      />
       <DefaultsDialog
         open={open}
         onClose={() => setOpen(false)}
         settings={settings}
-        accounts={accounts}
       />
     </Section>
   );
@@ -63,28 +50,16 @@ function DefaultsDialog({
   open,
   onClose,
   settings,
-  accounts,
 }: {
   open: boolean;
   onClose: () => void;
   settings: Settings;
-  accounts: Account[];
 }) {
   const { save, busy, error } = useSave();
-  const [draft, setDraft] = useDraft(open, () => ({
-    ...settings,
-    unknown_account_id: settings.unknown_account_id ?? accounts[0]?.id ?? null,
-  }));
+  const [draft, setDraft] = useDraft(open, () => settings);
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    const ok = await save(() =>
-      setSettings({
-        ...draft,
-        unknown_account_id:
-          draft.unknown === "junk" ? draft.unknown_account_id : null,
-      }),
-    );
-    if (ok) onClose();
+    if (await save(() => setSettings(draft))) onClose();
   };
   return (
     <Dialog
@@ -94,57 +69,30 @@ function DefaultsDialog({
       footer={
         <>
           <Button onClick={onClose}>Cancel</Button>
-          <Button
-            type="submit"
-            form="defaults"
-            variant="solid"
-            disabled={
-              busy || (draft.unknown === "junk" && !draft.unknown_account_id)
-            }
-          >
+          <Button type="submit" form="defaults" variant="solid" disabled={busy}>
             Save
           </Button>
         </>
       }
     >
       <form id="defaults" className="flex flex-col gap-3" onSubmit={submit}>
-        <p className="text-sm text-muted">
-          Every domain follows these unless its own settings say otherwise.
-        </p>
-        <Field label="Unknown addresses">
+        <Field
+          label="Unknown addresses"
+          hint="Junk to an account is chosen per domain."
+        >
           <Select
             value={draft.unknown}
             onChange={(e) =>
-              setDraft({ ...draft, unknown: e.target.value as Unknown })
+              setDraft({ ...draft, unknown: e.target.value as DefaultUnknown })
             }
           >
-            {(Object.keys(unknownLabels) as Unknown[]).map((u) => (
-              <option
-                key={u}
-                value={u}
-                disabled={u === "junk" && !accounts.length}
-              >
+            {defaultUnknowns.map((u) => (
+              <option key={u} value={u}>
                 {unknownLabels[u]}
               </option>
             ))}
           </Select>
         </Field>
-        {draft.unknown === "junk" ? (
-          <Field label="Who gets the junk">
-            <Select
-              value={draft.unknown_account_id ?? ""}
-              onChange={(e) =>
-                setDraft({ ...draft, unknown_account_id: e.target.value })
-              }
-            >
-              {accounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.address}
-                </option>
-              ))}
-            </Select>
-          </Field>
-        ) : null}
         <Field label="DMARC">
           <Select
             value={draft.dmarc}

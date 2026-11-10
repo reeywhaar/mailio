@@ -535,16 +535,18 @@ func TestIncomingMailIsKeptRefusedOrForwarded(t *testing.T) {
 	if r := resolve(t, st, "billing@reey.ru"); r.Account == nil || r.Account.ID != inbox.ID || r.Refused {
 		t.Errorf("forward: %+v", r)
 	}
-	// Forwarding into an address that refuses mail refuses it.
-	if err := st.SetIncoming(ctx, inbox.ID, IncomingForward, noreply.ID); err != nil {
+	// A chain saved before forwards had to end where they land is still followed, and one that
+	// ends at an account refusing mail refuses it.
+	if _, err := st.writer.ExecContext(ctx,
+		`UPDATE accounts SET incoming = 'forward', forward_account_id = ? WHERE id = ?`, noreply.ID, inbox.ID); err != nil {
 		t.Fatal(err)
 	}
 	if r := resolve(t, st, "billing@reey.ru"); r.Account != nil || !r.Refused {
-		t.Errorf("forward to a refusing account: %+v", r)
+		t.Errorf("an old chain to a refusing account: %+v", r)
 	}
-	// A circle is refused when it would be made.
-	if err := st.SetIncoming(ctx, noreply.ID, IncomingForward, billing.ID); !errors.Is(err, ErrConflict) {
-		t.Errorf("a circle: %v", err)
+	if _, err := st.writer.ExecContext(ctx,
+		`UPDATE accounts SET incoming = 'keep', forward_account_id = NULL WHERE id = ?`, inbox.ID); err != nil {
+		t.Fatal(err)
 	}
 	for _, c := range []struct {
 		in Incoming
@@ -589,7 +591,12 @@ func TestADomainFollowsTheDefaultsUnlessItHasItsOwn(t *testing.T) {
 	if got := policies(); got != "none -all" {
 		t.Errorf("back to the defaults: %s", got)
 	}
-	for _, bad := range []Settings{{DMARC: "bounce", SPF: SPFFail}, {DMARC: DMARCReject, SPF: "+all"}} {
+	for _, bad := range []Settings{
+		{Unknown: UnknownReject, DMARC: "bounce", SPF: SPFFail},
+		{Unknown: UnknownReject, DMARC: DMARCReject, SPF: "+all"},
+		// Junk goes to one account, which only a domain can choose.
+		{Unknown: UnknownJunk, DMARC: DMARCReject, SPF: SPFSoftFail},
+	} {
 		if err := st.SetSettings(ctx, bad); !errors.Is(err, ErrInvalid) {
 			t.Errorf("%+v: %v", bad, err)
 		}
@@ -612,11 +619,11 @@ func TestADomainSendsThroughTheDefaultBuiltInOrItsOwnRelay(t *testing.T) {
 			t.Fatal(err)
 		}
 		if r == nil {
-			return "built in"
+			return "built-in"
 		}
 		return r.Label + " " + r.Password
 	}
-	if got := via("reey.ru"); got != "built in" {
+	if got := via("reey.ru"); got != "built-in" {
 		t.Errorf("no relay at all: %s", got)
 	}
 	gmail, err := st.CreateRelay(ctx, Relay{Label: "Gmail", Host: "smtp.gmail.com", Port: 587, Security: SecurityStartTLS, Username: "me", Password: "gmail secret"})
@@ -632,8 +639,8 @@ func TestADomainSendsThroughTheDefaultBuiltInOrItsOwnRelay(t *testing.T) {
 		t.Errorf("the default: %s", got)
 	}
 	st.SetDomainVia(ctx, d.ID, ViaBuiltIn)
-	if got := via("reey.ru"); got != "built in" {
-		t.Errorf("built in: %s", got)
+	if got := via("reey.ru"); got != "built-in" {
+		t.Errorf("built-in: %s", got)
 	}
 	st.SetDomainVia(ctx, d.ID, yandex.ID)
 	if got := via("reey.ru"); got != "Yandex yandex secret" {
@@ -691,5 +698,54 @@ func TestTheRelayFromBeforeTheListStillOpens(t *testing.T) {
 	}
 	if r, err := st.RelayByID(ctx, r.ID); err != nil || r.Password != "old secret" || r.Label != "Gmail" {
 		t.Errorf("after saving: %+v %v", r, err)
+	}
+}
+
+// Mail is sent on once, to an account that keeps it: a forward or a domain's junk never goes to an
+// account that refuses mail or forwards it again, and an account mail is sent on to keeps it.
+func TestMailIsSentOnOnlyToAnAccountThatKeepsIt(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	inbox := account(t, st, "inbox@reey.ru")
+	billing := account(t, st, "billing@reey.ru")
+	noreply := account(t, st, "noreply@reey.ru")
+	other := account(t, st, "other@reey.ru")
+	d, _ := st.DomainByName(ctx, "reey.ru")
+	if err := st.SetIncoming(ctx, noreply.ID, IncomingReject, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetIncoming(ctx, billing.ID, IncomingForward, inbox.ID); err != nil {
+		t.Fatal(err)
+	}
+	refused := func(what string, err error, says string) {
+		t.Helper()
+		if !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), says) {
+			t.Errorf("%s: %v", what, err)
+		}
+	}
+	refused("forward to a no-reply account", st.SetIncoming(ctx, other.ID, IncomingForward, noreply.ID), "no-reply")
+	refused("forward to a forwarding account", st.SetIncoming(ctx, other.ID, IncomingForward, billing.ID), "forwards its own mail")
+	refused("junk to a no-reply account", st.SetUnknown(ctx, d.ID, UnknownJunk, noreply.ID), "no-reply")
+	refused("junk to a forwarding account", st.SetUnknown(ctx, d.ID, UnknownJunk, billing.ID), "forwards its own mail")
+	// So a circle cannot be made: what it would come back to forwards already.
+	refused("a circle", st.SetIncoming(ctx, inbox.ID, IncomingForward, billing.ID), "forwards to inbox@reey.ru")
+
+	// What mail is forwarded to keeps it: it neither forwards nor refuses.
+	refused("forwarded to, then no-reply", st.SetIncoming(ctx, inbox.ID, IncomingReject, ""), "billing@reey.ru forwards to inbox@reey.ru")
+	refused("forwarded to, then forwarding", st.SetIncoming(ctx, inbox.ID, IncomingForward, other.ID), "billing@reey.ru forwards to inbox@reey.ru")
+	// And so does what gets a domain's junk.
+	if err := st.SetUnknown(ctx, d.ID, UnknownJunk, other.ID); err != nil {
+		t.Fatal(err)
+	}
+	refused("junk to it, then no-reply", st.SetIncoming(ctx, other.ID, IncomingReject, ""), "gets the junk for reey.ru")
+	// Keeping is always allowed, and so is anything once nothing is sent on.
+	if err := st.SetIncoming(ctx, inbox.ID, IncomingKeep, ""); err != nil {
+		t.Errorf("keeping: %v", err)
+	}
+	if err := st.SetIncoming(ctx, billing.ID, IncomingKeep, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetIncoming(ctx, inbox.ID, IncomingReject, ""); err != nil {
+		t.Errorf("no-reply once nothing is forwarded to it: %v", err)
 	}
 }

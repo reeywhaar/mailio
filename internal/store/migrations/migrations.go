@@ -29,6 +29,7 @@ var all = []Migration{
 	incoming,
 	defaults,
 	accounts,
+	junkPerDomain,
 }
 
 func exec(sqlText string) func(context.Context, *sql.Tx) error {

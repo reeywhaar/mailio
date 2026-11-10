@@ -19,6 +19,8 @@
   --color-brand-ink: #ffffff;
   --color-accent: #b91c1c;
   --color-ok: #15803d;
+  /* Worth reading before changing something; not yet wrong. */
+  --color-warn: #b45309;
 }
 
 /* A plain override rather than a second @theme: @theme is hoisted to the top level whatever it
@@ -37,6 +39,7 @@
     --color-brand-ink: #111113;
     --color-accent: #f87171;
     --color-ok: #4ade80;
+    --color-warn: #fbbf24;
   }
 }
 

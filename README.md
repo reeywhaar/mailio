@@ -13,14 +13,16 @@ live in the database and are managed in its admin interface; mail is read with
   domain can choose another. Failures are retried for five days and reported to the sender.
 - **Plus addresses.** `inbox+shop@example.com` arrives in `inbox@example.com`.
 - **A credential per device.** Each has a label, its own login, `inbox+k3x9@example.com`, and a
-  generated password shown once, and shows when it was last used. Delete the phone's without
+  password, generated or typed and shown once, and shows when it was last used. Delete the phone's without
   touching the laptop's.
 - **Per account:** keep the mail, refuse it (a no-reply address that only sends), or forward it
-  to another account. **Defaults, which a domain can override:** reject, drop or junk mail for
-  addresses nobody has, the DMARC and SPF it publishes, and the relay it sends through.
+  to another account. **Defaults, which a domain can override:** reject or drop mail for
+  addresses nobody has, the DMARC and SPF it publishes, and the relay it sends through. A domain
+  can also send that mail to an account as junk.
 - **Looks after itself** with a DNS API ([doapi](https://github.com/reeywhaar/doapi)): it
   publishes each domain's DKIM, SPF and DMARC, and gets and renews its certificate from Let's
-  Encrypt.
+  Encrypt. With or without one, it checks every record, MX included, against what DNS serves,
+  and marks what is missing or wrong.
 - **Backups** of the whole server, as one file, to a
   [backio](https://github.com/reeywhaar/backio) agent.
 

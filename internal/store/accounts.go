@@ -229,22 +229,7 @@ func (s *Store) DeleteAccount(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	var junkFor string
-	err = tx.QueryRowContext(ctx,
-		`SELECT name FROM domains WHERE unknown_own AND unknown_account_id = ?
-		 UNION ALL SELECT 'every domain by default' FROM settings WHERE unknown_account_id = ?
-		 LIMIT 1`, id, id).Scan(&junkFor)
-	if err == nil {
-		return Conflict("%s gets the junk for %s. Change that first.", u.Address(), junkFor)
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("delete account: %w", err)
-	}
-	from, err := accountWhere(ctx, tx, "u.forward_account_id = ? ORDER BY d.name, u.local_part LIMIT 1", id)
-	if err == nil {
-		return Conflict("%s forwards to %s. Change that first.", from.Address(), u.Address())
-	}
-	if !errors.Is(err, ErrNotFound) {
+	if err := sentOn(ctx, tx, u); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM accounts WHERE id = ?`, id); err != nil {
@@ -259,6 +244,9 @@ func (s *Store) DeleteAccount(ctx context.Context, id string) error {
 
 // SetIncoming decides what mail to an account does. forwardTo names the account it goes to for
 // IncomingForward, and is empty otherwise.
+//
+// Mail is only ever sent on once: a forward goes to an account that keeps its mail, and an account
+// mail is sent on to keeps it. So there are no chains of forwards, and no circles.
 func (s *Store) SetIncoming(ctx context.Context, id string, in Incoming, forwardTo string) error {
 	if !in.valid() {
 		return Invalid("Incoming mail is kept, rejected, or forwarded.")
@@ -269,40 +257,86 @@ func (s *Store) SetIncoming(ctx context.Context, id string, in Incoming, forward
 		}
 		return Invalid("Only forwarded mail goes to another account.")
 	}
+	if forwardTo == id {
+		return Invalid("An account cannot forward to itself.")
+	}
+	// Both rules are read in the transaction that writes, so two saves at once cannot each pass
+	// with the other's change not yet there.
+	tx, err := s.writer.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("set incoming: %w", err)
+	}
+	defer tx.Rollback()
+	u, err := accountWhere(ctx, tx, "u.id = ?", id)
+	if err != nil {
+		return err
+	}
+	if in != IncomingKeep {
+		if err := sentOn(ctx, tx, u); err != nil {
+			return err
+		}
+	}
 	var target any
 	if forwardTo != "" {
-		if forwardTo == id {
-			return Invalid("An account cannot forward to itself.")
+		t, err := accountWhere(ctx, tx, "u.id = ?", forwardTo)
+		if err != nil {
+			return err
 		}
-		// Following the target's own forwards back here would be a circle.
-		next := forwardTo
-		for hops := 0; next != ""; hops++ {
-			t, err := s.AccountByID(ctx, next)
-			if err != nil {
-				return err
-			}
-			if t.ID == id || hops > maxForwards {
-				return Conflict("That would forward in a circle.")
-			}
-			next = t.ForwardAccountID
+		if err := keeps(t, "forwarded mail"); err != nil {
+			return err
 		}
 		target = forwardTo
 	}
-	res, err := s.writer.ExecContext(ctx,
+	res, err := tx.ExecContext(ctx,
 		`UPDATE accounts SET incoming = ?, forward_account_id = ?
 		  WHERE id = ? AND (incoming <> ? OR forward_account_id IS NOT ?)`, in, target, id, in, target)
 	if err != nil {
 		return fmt.Errorf("set incoming: %w", err)
 	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("set incoming: %w", err)
+	}
 	if n, _ := res.RowsAffected(); n > 0 {
 		s.changed()
-		return nil
 	}
-	_, err = s.AccountByID(ctx, id)
-	return err
+	return nil
 }
 
-// maxForwards bounds how far mail follows forwards, so a circle made some other way ends.
+// sentOn refuses while mail is sent on to the account, forwarded or as a domain's junk: it has to
+// keep that mail, so it stays, keeping it.
+func sentOn(ctx context.Context, tx *sql.Tx, u *Account) error {
+	var junkFor string
+	err := tx.QueryRowContext(ctx,
+		`SELECT name FROM domains WHERE unknown_own AND unknown_account_id = ? ORDER BY name LIMIT 1`, u.ID).Scan(&junkFor)
+	if err == nil {
+		return Conflict("%s gets the junk for %s. Change that first.", u.Address(), junkFor)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("mail sent on: %w", err)
+	}
+	from, err := accountWhere(ctx, tx, "u.forward_account_id = ? ORDER BY d.name, u.local_part LIMIT 1", u.ID)
+	if err == nil {
+		return Conflict("%s forwards to %s. Change that first.", from.Address(), u.Address())
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	return nil
+}
+
+// keeps refuses sending mail on to an account that does not keep its own.
+func keeps(a *Account, what string) error {
+	switch a.Incoming {
+	case IncomingReject:
+		return Conflict("%s is no-reply, and would refuse the %s.", a.Address(), what)
+	case IncomingForward:
+		return Conflict("%s forwards its own mail on. Send the %s straight to the account it ends up at.", a.Address(), what)
+	}
+	return nil
+}
+
+// maxForwards bounds how far delivery follows forwards, for chains saved before forwards had to
+// end where they land.
 const maxForwards = 5
 
 // ValidatePassword refuses what bcrypt would silently truncate.
