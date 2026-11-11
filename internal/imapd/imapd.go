@@ -396,9 +396,22 @@ func (s *session) status(m *store.Mailbox, options *imap.StatusOptions) (*imap.S
 	return data, nil
 }
 
+// fillable refuses a client putting mail in Scheduled: only mail sent to go later is there, put
+// by mailio, and its copy there is what cancels it.
+func fillable(m *store.Mailbox) error {
+	if m.SpecialUse == store.Scheduled {
+		return &imap.Error{Type: imap.StatusResponseTypeNo, Code: imap.ResponseCodeCannot,
+			Text: "Scheduled holds only mail sent to go later; send it with a time to put it here"}
+	}
+	return nil
+}
+
 func (s *session) Append(name string, r imap.LiteralReader, options *imap.AppendOptions) (*imap.AppendData, error) {
 	m, err := s.box(name, imap.ResponseCodeTryCreate)
 	if err != nil {
+		return nil, err
+	}
+	if err := fillable(m); err != nil {
 		return nil, err
 	}
 	if limit := s.limit(); r.Size() > limit {
@@ -723,6 +736,9 @@ func (s *session) copy(numSet imap.NumSet, dest string) (*imap.CopyData, []uint3
 	sel := s.sel
 	to, err := s.box(dest, imap.ResponseCodeTryCreate)
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := fillable(to); err != nil {
 		return nil, nil, err
 	}
 	targets := sel.targets(numSet)

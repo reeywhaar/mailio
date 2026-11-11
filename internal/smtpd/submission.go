@@ -218,7 +218,9 @@ func (s *subSession) Data(r io.Reader) error {
 
 	// Held, every recipient waits in the queue, those here too: the time is the sender's.
 	if !s.hold.IsZero() {
-		if err := s.sub.st.Hold(ctx, s.from, s.account.ID, raw, s.rcpts, s.hold); err != nil {
+		held := store.Held{Sender: s.from, AccountID: s.account.ID, Raw: raw, Recipients: s.rcpts, Release: s.hold,
+			Copy: scheduledCopy(raw, s.rcpts)}
+		if err := s.sub.st.Hold(ctx, held); err != nil {
 			s.sub.log.Error("holding a message failed", "account", s.account.ID, "error", err)
 			return errTemporary
 		}
@@ -246,6 +248,31 @@ func (s *subSession) Data(r io.Reader) error {
 	}
 	s.sub.log.Info("mail submitted", "account", s.account.ID, "local", len(local), "remote", len(remote), "bytes", len(raw))
 	return nil
+}
+
+// scheduledCopy is what a held message's sender sees in Scheduled until it goes, and in Sent after:
+// the message, with a Bcc naming the recipients its headers do not, whom only the envelope knew, so
+// a client that edits it sends to them again.
+func scheduledCopy(raw []byte, rcpts []string) []byte {
+	named := map[string]bool{}
+	if m, err := mail.ReadMessage(bytes.NewReader(raw)); err == nil {
+		for _, h := range []string{"To", "Cc", "Bcc"} {
+			list, _ := m.Header.AddressList(h)
+			for _, a := range list {
+				named[strings.ToLower(a.Address)] = true
+			}
+		}
+	}
+	var bcc []string
+	for _, r := range rcpts {
+		if !named[strings.ToLower(r)] {
+			bcc = append(bcc, r)
+		}
+	}
+	if len(bcc) == 0 {
+		return raw
+	}
+	return append([]byte("Bcc: "+strings.Join(bcc, ", ")+"\r\n"), raw...)
 }
 
 // prepare adds what a client may leave out, stamps Received, and signs with the DKIM key of the

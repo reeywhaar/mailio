@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -544,5 +545,106 @@ func TestAHeldMessageGoesAtItsTime(t *testing.T) {
 	if _, err := r.submitHeld("inbox@example.org", "correct horse", "inbox@example.org", "HOLDFOR=40000000",
 		[]string{"someone@example.com"}, letter); err == nil || !strings.Contains(err.Error(), "501") {
 		t.Errorf("held two years: %v", err)
+	}
+}
+
+// mailbox is what one of an account's mailboxes holds: each message's bytes and arrival.
+func (r *rig) mailbox(addr, name string) ([]string, []time.Time) {
+	r.t.Helper()
+	ctx := context.Background()
+	u, err := r.st.Authenticate(ctx, addr, "correct horse")
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	box, err := r.st.MailboxNamed(ctx, u.ID, name)
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	msgs, _ := r.st.Messages(ctx, box.ID, nil)
+	var raws []string
+	var at []time.Time
+	for _, m := range msgs {
+		raw, _ := r.st.Body(ctx, box.ID, m.UID)
+		raws = append(raws, string(raw))
+		at = append(at, m.ReceivedAt)
+	}
+	return raws, at
+}
+
+// A held message shows in its sender's Scheduled, dated when it goes and naming its Bcc, and when it
+// goes it is filed in Sent; what the recipients get has no Bcc.
+func TestAHeldMessageShowsInScheduledAndIsFiledInSent(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	body := "From: inbox@example.org\r\nTo: someone@example.com\r\nSubject: Later\r\n\r\nHello.\r\n"
+	if _, err := r.submitHeld("inbox@example.org", "correct horse", "inbox@example.org", "HOLDFOR=3600",
+		[]string{"someone@example.com", "hidden@example.com"}, body); err != nil {
+		t.Fatal(err)
+	}
+	shown, at := r.mailbox("inbox@example.org", "Scheduled")
+	if len(shown) != 1 || !strings.HasPrefix(shown[0], "Bcc: hidden@example.com\r\n") || time.Until(at[0]) < 59*time.Minute {
+		t.Fatalf("Scheduled shows %d, dated %v:\n%v", len(shown), at, shown)
+	}
+
+	r.st.SetClock(func() time.Time { return time.Now().Add(time.Hour + time.Minute) })
+	r.sender.runOnce(ctx)
+	if len(r.relay.got) != 1 || strings.Contains(string(r.relay.got[0].data), "hidden@example.com") {
+		t.Fatalf("the relay got %+v", r.relay.got)
+	}
+	if shown, _ := r.mailbox("inbox@example.org", "Scheduled"); len(shown) != 0 {
+		t.Errorf("Scheduled still shows %d", len(shown))
+	}
+	sent, _ := r.mailbox("inbox@example.org", "Sent")
+	if len(sent) != 1 || !strings.Contains(sent[0], "Bcc: hidden@example.com") {
+		t.Errorf("Sent has %v", sent)
+	}
+}
+
+// Deleting a held message's copy in Scheduled cancels it, and so does the admin interface, for
+// held mail only.
+func TestDeletingAHeldMessageInScheduledCancelsIt(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	inbox, _ := r.st.Authenticate(ctx, "inbox@example.org", "correct horse")
+	scheduled, _ := r.st.SpecialMailbox(ctx, inbox.ID, store.Scheduled)
+	for range 2 {
+		if _, err := r.submitHeld("inbox@example.org", "correct horse", "inbox@example.org", "HOLDFOR=3600",
+			[]string{"someone@example.com"}, letter); err != nil {
+			t.Fatal(err)
+		}
+	}
+	uids, _ := r.st.UIDs(ctx, scheduled.ID)
+	if len(uids) != 2 {
+		t.Fatalf("Scheduled holds %d", len(uids))
+	}
+	if err := r.st.Expunge(ctx, scheduled.ID, uids[:1]); err != nil {
+		t.Fatal(err)
+	}
+	q, _ := r.st.Outbound(ctx)
+	if len(q) != 1 {
+		t.Fatalf("the queue holds %d", len(q))
+	}
+	if err := r.st.CancelHeld(ctx, q[0].MessageID); err != nil {
+		t.Fatal(err)
+	}
+	if q, _ := r.st.Outbound(ctx); len(q) != 0 {
+		t.Errorf("the queue holds %d", len(q))
+	}
+	if uids, _ := r.st.UIDs(ctx, scheduled.ID); len(uids) != 0 {
+		t.Errorf("Scheduled holds %d", len(uids))
+	}
+	r.st.SetClock(func() time.Time { return time.Now().Add(2 * time.Hour) })
+	r.sender.runOnce(ctx)
+	if len(r.relay.got) != 0 {
+		t.Errorf("cancelled mail went: %d", len(r.relay.got))
+	}
+
+	// Mail being sent already is not held, and stays.
+	if err := r.submit("inbox@example.org", "correct horse", "inbox@example.org", []string{"someone@example.com"}, letter); err != nil {
+		t.Fatal(err)
+	}
+	q, _ = r.st.Outbound(ctx)
+	if err := r.st.CancelHeld(ctx, q[0].MessageID); !errors.Is(err, store.ErrConflict) {
+		t.Errorf("cancelling mail being sent: %v", err)
 	}
 }

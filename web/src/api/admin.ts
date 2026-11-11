@@ -128,6 +128,8 @@ export type RelayInput = {
 
 export type Queued = {
   id: number;
+  /** The message, which may go to several recipients, each a row. */
+  message_id: number;
   sender: string;
   recipient: string;
   attempts: number;
@@ -271,6 +273,10 @@ export const updateAccount = (id: string, change: AccountChange) =>
 /** Deletes every message in the account's mailboxes; the mailboxes stay. */
 export const clearMail = (id: string) =>
   request<Account>(`/api/accounts/${id}/mail`, { method: "DELETE" });
+
+/** Takes a held message out of the queue, for all its recipients, and out of its sender's Scheduled. */
+export const cancelHeld = (messageID: number) =>
+  request<void>(`/api/queue/${messageID}`, { method: "DELETE" });
 
 export const deleteAccount = (id: string) =>
   request<void>(`/api/accounts/${id}`, { method: "DELETE" });

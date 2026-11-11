@@ -192,7 +192,7 @@ func TestEveryAdminRouteNeedsASession(t *testing.T) {
 	for _, c := range [][2]string{
 		{"GET", "/api/domains"}, {"POST", "/api/domains"}, {"PATCH", "/api/domains/dm_x"}, {"DELETE", "/api/domains/dm_x"},
 		{"GET", "/api/accounts"}, {"POST", "/api/accounts"}, {"PATCH", "/api/accounts/ac_x"}, {"DELETE", "/api/accounts/ac_x"},
-		{"DELETE", "/api/accounts/ac_x/mail"},
+		{"DELETE", "/api/accounts/ac_x/mail"}, {"DELETE", "/api/queue/1"},
 		{"POST", "/api/accounts/ac_x/credentials"}, {"DELETE", "/api/accounts/ac_x/credentials/cr_x"},
 		{"POST", "/api/accounts/ac_x/credentials/cr_x/reset"},
 		{"GET", "/api/admins"}, {"POST", "/api/admins"}, {"PATCH", "/api/admins/ad_x"}, {"DELETE", "/api/admins/ad_x"},
@@ -649,6 +649,42 @@ func TestAnAccountShowsItsMessagesAndHasThemCleared(t *testing.T) {
 	}
 	if _, err := h.st.MailboxNamed(ctx, id, store.Inbox); err != nil {
 		t.Errorf("its INBOX went too: %v", err)
+	}
+}
+
+func TestAHeldMessageIsCancelledFromTheQueue(t *testing.T) {
+	h := signedIn(t)
+	ctx := context.Background()
+	h.do("POST", "/api/domains", map[string]any{"name": "example.org"})
+	_, a := h.do("POST", "/api/accounts", map[string]any{"address": "inbox@example.org"})
+	held := store.Held{Sender: "inbox@example.org", AccountID: a["id"].(string), Raw: []byte("Subject: later\r\n\r\nbody\r\n"),
+		Recipients: []string{"someone@example.com"}, Release: time.Now().Add(time.Hour), Copy: []byte("Subject: later\r\n\r\nbody\r\n")}
+	if err := h.st.Hold(ctx, held); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.st.Enqueue(ctx, "inbox@example.org", a["id"].(string), []byte("Subject: now\r\n\r\nbody\r\n"), []string{"other@example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	queue := h.list("/api/queue")
+	if len(queue) != 2 || queue[0]["release_at"] == nil || queue[1]["release_at"] != nil {
+		t.Fatalf("queued: %v", queue)
+	}
+	heldID := fmt.Sprint(int64(queue[0]["message_id"].(float64)))
+	nowID := fmt.Sprint(int64(queue[1]["message_id"].(float64)))
+	if code, _ := h.do("DELETE", "/api/queue/"+nowID, nil); code != http.StatusConflict {
+		t.Errorf("cancelling mail being sent: %d", code)
+	}
+	if code, _ := h.do("DELETE", "/api/queue/"+heldID, nil); code != http.StatusNoContent {
+		t.Errorf("cancelling held mail: %d", code)
+	}
+	if queue := h.list("/api/queue"); len(queue) != 1 {
+		t.Errorf("queued after: %v", queue)
+	}
+	if code, _ := h.do("DELETE", "/api/queue/later", nil); code != http.StatusBadRequest {
+		t.Errorf("not a number: %d", code)
+	}
+	if code, _ := h.do("DELETE", "/api/queue/"+heldID, nil); code != http.StatusNotFound {
+		t.Errorf("cancelled twice: %d", code)
 	}
 }
 

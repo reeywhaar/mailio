@@ -384,11 +384,25 @@ func (o *OutboundRecipient) Since() time.Time {
 
 // Enqueue queues a message for recipients on other servers. Due at once.
 func (s *Store) Enqueue(ctx context.Context, sender, accountID string, raw []byte, recipients []string) error {
-	return s.Hold(ctx, sender, accountID, raw, recipients, time.Time{})
+	return s.Hold(ctx, Held{Sender: sender, AccountID: accountID, Raw: raw, Recipients: recipients})
 }
 
-// Hold queues a message until release; a zero or past one is at once.
-func (s *Store) Hold(ctx context.Context, sender, accountID string, raw []byte, recipients []string, release time.Time) error {
+// Held is a message queued to send, at Release when that is later than now: its envelope, the
+// bytes that go, and Copy, what its sender's Scheduled shows meanwhile, Bcc included.
+type Held struct {
+	Sender, AccountID string
+	Raw               []byte
+	Recipients        []string
+	Release           time.Time
+	Copy              []byte
+}
+
+// Hold queues a message until its release, a zero or past one being now. Held, its copy goes in
+// the sender's Scheduled, dated the release: deleting it there cancels the message, and when it
+// goes it is filed in Sent.
+func (s *Store) Hold(ctx context.Context, h Held) error {
+	s.appendMu.Lock()
+	defer s.appendMu.Unlock()
 	tx, err := s.writer.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("enqueue: %w", err)
@@ -396,21 +410,44 @@ func (s *Store) Hold(ctx context.Context, sender, accountID string, raw []byte, 
 	defer tx.Rollback()
 	now := s.Now()
 	var account any
-	if accountID != "" {
-		account = accountID
+	if h.AccountID != "" {
+		account = h.AccountID
 	}
-	due, held := now, any(nil)
-	if release.After(now) {
-		due, held = release, unix(release)
+	due, release := now, any(nil)
+	held := h.Release.After(now)
+	if held {
+		due, release = h.Release, unix(h.Release)
+	}
+	var scheduled any
+	var shown struct {
+		box int64
+		uid uint32
+	}
+	if held && h.AccountID != "" && h.Copy != nil {
+		box, err := mailboxWhere(ctx, tx, "account_id = ? AND special_use = ? ORDER BY id LIMIT 1", h.AccountID, Scheduled)
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		if box != nil {
+			uid, err := insertMessage(ctx, tx, box.ID, h.Copy, []string{`\Seen`}, h.Release, now)
+			if err != nil {
+				return err
+			}
+			var id int64
+			if err := tx.QueryRowContext(ctx, `SELECT id FROM messages WHERE mailbox_id = ? AND uid = ?`, box.ID, uid).Scan(&id); err != nil {
+				return fmt.Errorf("enqueue: %w", err)
+			}
+			scheduled, shown.box, shown.uid = id, box.ID, uid
+		}
 	}
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO outbound_messages (sender, account_id, raw, created_at, release_at) VALUES (?, ?, ?, ?, ?)`,
-		sender, account, raw, unix(now), held)
+		`INSERT INTO outbound_messages (sender, account_id, raw, created_at, release_at, scheduled_id) VALUES (?, ?, ?, ?, ?, ?)`,
+		h.Sender, account, h.Raw, unix(now), release, scheduled)
 	if err != nil {
 		return fmt.Errorf("enqueue: %w", err)
 	}
 	id, _ := res.LastInsertId()
-	for _, rcpt := range recipients {
+	for _, rcpt := range h.Recipients {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO outbound_recipients (message_id, recipient, next_at) VALUES (?, ?, ?)`,
 			id, rcpt, unix(due)); err != nil {
@@ -419,6 +456,46 @@ func (s *Store) Hold(ctx context.Context, sender, accountID string, raw []byte, 
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("enqueue: %w", err)
+	}
+	s.changed()
+	if scheduled != nil {
+		s.appended(shown.box, shown.uid)
+	}
+	return nil
+}
+
+// CancelHeld takes a held message out of the queue before its time, and its copy out of its
+// sender's Scheduled. Mail already being sent is not held, and is not cancelled.
+func (s *Store) CancelHeld(ctx context.Context, messageID int64) error {
+	var (
+		release sql.NullInt64
+		box     sql.NullInt64
+		uid     sql.NullInt64
+	)
+	err := s.reader.QueryRowContext(ctx,
+		`SELECT o.release_at, m.mailbox_id, m.uid FROM outbound_messages o LEFT JOIN messages m ON m.id = o.scheduled_id
+		  WHERE o.id = ?`, messageID).Scan(&release, &box, &uid)
+	if errors.Is(err, sql.ErrNoRows) {
+		return NotFound("There is no such message in the queue.")
+	}
+	if err != nil {
+		return fmt.Errorf("cancel: %w", err)
+	}
+	if !release.Valid || release.Int64 <= unix(s.Now()) {
+		return Conflict("That message is being sent already. Only one still held can be cancelled.")
+	}
+	// Expunging the copy cancels it, and tells a client with Scheduled open.
+	if box.Valid {
+		if err := s.Expunge(ctx, box.Int64, []uint32{uint32(uid.Int64)}); err != nil {
+			return err
+		}
+		if s.listener != nil {
+			s.listener.Expunged(box.Int64, []uint32{uint32(uid.Int64)})
+		}
+		return nil
+	}
+	if _, err := s.writer.ExecContext(ctx, `DELETE FROM outbound_messages WHERE id = ?`, messageID); err != nil {
+		return fmt.Errorf("cancel: %w", err)
 	}
 	s.changed()
 	return nil
@@ -498,6 +575,8 @@ func (s *Store) FinishOutbound(ctx context.Context, ids []int64) error {
 	if len(ids) == 0 {
 		return nil
 	}
+	s.appendMu.Lock()
+	defer s.appendMu.Unlock()
 	tx, err := s.writer.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("finish outbound: %w", err)
@@ -508,6 +587,10 @@ func (s *Store) FinishOutbound(ctx context.Context, ids []int64) error {
 		`DELETE FROM outbound_recipients WHERE id IN (SELECT value FROM json_each(?))`, list); err != nil {
 		return fmt.Errorf("finish outbound: %w", err)
 	}
+	moved, err := fileSent(ctx, tx, s.Now())
+	if err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM outbound_messages WHERE id NOT IN (SELECT message_id FROM outbound_recipients)`); err != nil {
 		return fmt.Errorf("finish outbound: %w", err)
@@ -516,7 +599,71 @@ func (s *Store) FinishOutbound(ctx context.Context, ids []int64) error {
 		return fmt.Errorf("finish outbound: %w", err)
 	}
 	s.changed()
+	for _, m := range moved {
+		s.appended(m.sent, m.sentUID)
+		if s.listener != nil {
+			s.listener.Expunged(m.box, []uint32{m.uid})
+		}
+	}
 	return nil
+}
+
+// filed is a held message's copy, moved from Scheduled to Sent.
+type filed struct {
+	box, sent    int64
+	uid, sentUID uint32
+}
+
+// fileSent moves the Scheduled copy of each held message with nobody left to send to into its
+// sender's Sent, as a client files what it sends: the client was not there when it went.
+func fileSent(ctx context.Context, tx *sql.Tx, now time.Time) ([]filed, error) {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT m.id, m.mailbox_id, m.uid, m.flags, b.account_id, d.raw
+		   FROM outbound_messages o JOIN messages m ON m.id = o.scheduled_id
+		   JOIN mailboxes b ON b.id = m.mailbox_id JOIN bodies d ON d.message_id = m.id
+		  WHERE o.id NOT IN (SELECT message_id FROM outbound_recipients)`)
+	if err != nil {
+		return nil, fmt.Errorf("file sent: %w", err)
+	}
+	type copied struct {
+		id         int64
+		box        int64
+		uid        uint32
+		flags, acc string
+		raw        []byte
+	}
+	var found []copied
+	for rows.Next() {
+		var c copied
+		if err := rows.Scan(&c.id, &c.box, &c.uid, &c.flags, &c.acc, &c.raw); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("file sent: %w", err)
+		}
+		found = append(found, c)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("file sent: %w", err)
+	}
+	var out []filed
+	for _, c := range found {
+		sent, err := mailboxWhere(ctx, tx, "account_id = ? AND special_use = ? ORDER BY id LIMIT 1", c.acc, `\Sent`)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		uid, err := insertMessage(ctx, tx, sent.ID, c.raw, splitFlags(c.flags), now, now)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE id = ?`, c.id); err != nil {
+			return nil, fmt.Errorf("file sent: %w", err)
+		}
+		out = append(out, filed{box: c.box, sent: sent.ID, uid: c.uid, sentUID: uid})
+	}
+	return out, nil
 }
 
 // DeferOutbound records a failed attempt and when to try again.

@@ -36,7 +36,8 @@ CSRF defense; the `SameSite=Lax` cookie is the other.
 | `PUT /api/relays/{id}` | the same; an empty password keeps the stored one |
 | `DELETE /api/relays/{id}` | `409` while it is the default, a domain's or an account's |
 | `POST /api/relays/{id}/test` | sign in to the relay and send nothing. `502 relay_failed` with its answer |
-| `GET /api/queue` | what is waiting to be sent, each with `release_at`, the time a held message goes, or null |
+| `GET /api/queue` | what is waiting to be sent, a row per recipient, each with its `message_id` and `release_at`, the time a held message goes, or null |
+| `DELETE /api/queue/{message_id}` | unschedules a held message, for every recipient, and takes it out of its sender's Scheduled. `409` for one being sent |
 | `POST /api/queue/retry` | send the queue now |
 | `GET /api/admins` | every admin |
 | `POST /api/admins` | `{name, password}` |

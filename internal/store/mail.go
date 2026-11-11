@@ -33,6 +33,10 @@ func Megabytes(n int64) string {
 // Delim separates the levels of a mailbox name.
 const Delim = '/'
 
+// Scheduled is the special use (RFC 9979) of the mailbox that shows an account its mail held to
+// send later. mailio fills it and nothing else can: deleting from it cancels.
+const Scheduled = `\Scheduled`
+
 // StandardMailboxes is the set every account starts with, with the special use each announces so a
 // client files sent mail and junk without asking.
 var StandardMailboxes = []struct{ Name, SpecialUse string }{
@@ -42,6 +46,7 @@ var StandardMailboxes = []struct{ Name, SpecialUse string }{
 	{"Archive", `\Archive`},
 	{"Junk", `\Junk`},
 	{"Trash", `\Trash`},
+	{"Scheduled", Scheduled},
 }
 
 // Mailbox is one folder of one account's mail.
@@ -173,6 +178,9 @@ func (s *Store) DeleteMailbox(ctx context.Context, accountID, name string) error
 	name = MailboxName(name)
 	if name == Inbox {
 		return Invalid("INBOX cannot be deleted.")
+	}
+	if m, err := s.MailboxNamed(ctx, accountID, name); err == nil && m.SpecialUse == Scheduled {
+		return Invalid("Scheduled shows mail waiting to be sent, and stays. Delete a message in it to cancel that one.")
 	}
 	res, err := s.writer.ExecContext(ctx, `DELETE FROM mailboxes WHERE account_id = ? AND name = ?`, accountID, name)
 	if err != nil {
@@ -485,10 +493,26 @@ func (s *Store) Expunge(ctx context.Context, mailboxID int64, uids []uint32) err
 	if len(uids) == 0 {
 		return nil
 	}
-	_, err := s.writer.ExecContext(ctx,
-		`DELETE FROM messages WHERE mailbox_id = ? AND uid IN (SELECT value FROM json_each(?))`,
-		mailboxID, uidsJSON(uids))
+	tx, err := s.writer.BeginTx(ctx, nil)
 	if err != nil {
+		return fmt.Errorf("expunge: %w", err)
+	}
+	defer tx.Rollback()
+	list := uidsJSON(uids)
+	// A held message's copy in Scheduled going cancels the message: what its sender deleted is
+	// not sent.
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM outbound_messages WHERE scheduled_id IN
+		   (SELECT id FROM messages WHERE mailbox_id = ? AND uid IN (SELECT value FROM json_each(?)))`,
+		mailboxID, list); err != nil {
+		return fmt.Errorf("expunge: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM messages WHERE mailbox_id = ? AND uid IN (SELECT value FROM json_each(?))`,
+		mailboxID, list); err != nil {
+		return fmt.Errorf("expunge: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("expunge: %w", err)
 	}
 	s.changed()

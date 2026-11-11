@@ -379,6 +379,7 @@ test("held mail in the queue says when it goes, tried mail how often it was trie
       body: [
         {
           id: 1,
+          message_id: 7,
           sender: "inbox@example.org",
           recipient: "someone@example.com",
           attempts: 0,
@@ -389,6 +390,7 @@ test("held mail in the queue says when it goes, tried mail how often it was trie
         },
         {
           id: 2,
+          message_id: 8,
           sender: "inbox@example.org",
           recipient: "nobody@example.com",
           attempts: 2,
@@ -403,6 +405,39 @@ test("held mail in the queue says when it goes, tried mail how often it was trie
   mount();
   expect(await screen.findByText(/^Held until: /)).toBeTruthy();
   expect(screen.getByText("Attempts: 2 · 451 try later")).toBeTruthy();
+  // Only held mail can be unscheduled.
+  expect(screen.getAllByRole("button", { name: "Unschedule…" }).length).toBe(1);
+});
+
+test("held mail is unscheduled from the queue after a confirm", async () => {
+  const { sent } = routes({
+    "GET /api/queue": () => ({
+      body: [
+        {
+          id: 1,
+          message_id: 7,
+          sender: "inbox@example.org",
+          recipient: "someone@example.com",
+          attempts: 0,
+          last_error: "",
+          next_at: 1795000000,
+          created_at: 1,
+          release_at: 1795000000,
+        },
+      ],
+    }),
+    "DELETE /api/queue/7": () => ({ status: 204 }),
+  });
+  mount();
+  fireEvent.click(await screen.findByRole("button", { name: "Unschedule…" }));
+  const d = within(dialog("Unschedule"));
+  await settle();
+  fireEvent.click(d.getByRole("button", { name: "Unschedule" }));
+  await waitFor(() =>
+    expect(writes(sent)).toEqual([
+      { method: "DELETE", path: "/api/queue/7", body: undefined },
+    ]),
+  );
 });
 
 test("a credential is added by its label, and its login and password are shown once", async () => {

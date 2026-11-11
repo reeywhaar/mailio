@@ -110,6 +110,7 @@ func New(cfg *config.Config, log *slog.Logger, st *store.Store, mail Mail, dns D
 	s.mux.Handle("POST /api/relays/{id}/test", s.requireAdmin(s.testRelay))
 	s.mux.Handle("GET /api/queue", s.requireAdmin(s.listQueue))
 	s.mux.Handle("POST /api/queue/retry", s.requireAdmin(s.retryQueue))
+	s.mux.Handle("DELETE /api/queue/{id}", s.requireAdmin(s.cancelHeld))
 
 	s.mux.Handle("GET /api/admins", s.requireAdmin(s.listAdmins))
 	s.mux.Handle("POST /api/admins", s.requireAdmin(s.createAdmin))

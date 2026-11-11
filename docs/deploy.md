@@ -330,6 +330,14 @@ from when it is released. The queue shows it as held, and until when.
 The message is sent as the client wrote it, `Date` included: a client that wants the date it is
 sent at writes that one.
 
+**Its sender sees it in `Scheduled`,** a mailbox every account has, marked `\Scheduled` (RFC 9979)
+so a client finds it whatever it is called. Each held message has a copy there, dated when it
+goes, with a `Bcc` naming the recipients its headers do not, so a client can count them, show them,
+and edit one by deleting it and sending the edit with a time again. Deleting one there, or moving
+it out, cancels it for every recipient; a client cannot put mail there. When a held message goes,
+its copy moves to Sent, as a client files what it sends. The queue in the admin interface
+unschedules held mail too, and deleting an account cancels what it held.
+
 go-smtp's release has no FUTURERELEASE, so mailio builds against it with
 [patches/github.com/emersion/go-smtp+v0.25.1.patch](../patches/github.com/emersion/go-smtp+v0.25.1.patch)
 applied. `sh patch-packages.sh` does that for every patch in `patches/`, as npm's patch-package

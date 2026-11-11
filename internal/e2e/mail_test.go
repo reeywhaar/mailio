@@ -345,10 +345,42 @@ func TestTheStandardMailboxesAreListedWithTheirUse(t *testing.T) {
 			uses[l.Mailbox+" "+string(a)] = true
 		}
 	}
-	for _, want := range []string{`Sent \Sent`, `Junk \Junk`, `Trash \Trash`, `Drafts \Drafts`} {
+	for _, want := range []string{`Sent \Sent`, `Junk \Junk`, `Trash \Trash`, `Drafts \Drafts`, `Scheduled \Scheduled`} {
 		if !uses[want] {
 			t.Errorf("missing %s in %v", want, uses)
 		}
+	}
+}
+
+// Scheduled is mailio's to fill, with mail held to send later: a client cannot put mail in it, nor
+// delete it, though it can count what is there.
+func TestAClientCannotFillOrDeleteScheduled(t *testing.T) {
+	r := newRig(t)
+	c := r.client(nil)
+	app := c.Append("Scheduled", int64(len(letter)), nil)
+	app.Write([]byte(letter))
+	app.Close()
+	if _, err := app.Wait(); err == nil || !strings.Contains(err.Error(), "only mail sent to go later") {
+		t.Errorf("APPEND: %v", err)
+	}
+	if _, err := c.Select("INBOX", nil).Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.send("anna@example.com", "inbox@example.org", letter); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Noop().Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Copy(imap.SeqSetNum(1), "Scheduled").Wait(); err == nil {
+		t.Error("COPY into Scheduled was taken")
+	}
+	if err := c.Delete("Scheduled").Wait(); err == nil {
+		t.Error("Scheduled was deleted")
+	}
+	st, err := c.Status("Scheduled", &imap.StatusOptions{NumMessages: true}).Wait()
+	if err != nil || *st.NumMessages != 0 {
+		t.Errorf("STATUS: %v %v", st, err)
 	}
 }
 

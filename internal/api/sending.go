@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 
 	"mailio/internal/ids"
 	"mailio/internal/store"
@@ -203,12 +204,28 @@ func (s *Server) listQueue(w http.ResponseWriter, r *http.Request) {
 			release = o.ReleaseAt.Unix()
 		}
 		out[i] = map[string]any{
-			"id": o.ID, "sender": o.Sender, "recipient": o.Recipient, "attempts": o.Attempts,
+			"id": o.ID, "message_id": o.MessageID, "sender": o.Sender, "recipient": o.Recipient, "attempts": o.Attempts,
 			"last_error": o.LastError, "next_at": o.NextAt.Unix(), "created_at": o.CreatedAt.Unix(),
 			"release_at": release,
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// cancelHeld takes a message held to send later out of the queue, for every recipient, and its copy
+// out of its sender's Scheduled.
+func (s *Server) cancelHeld(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		refuse(w, http.StatusBadRequest, CodeInvalid, "That is not a queued message.")
+		return
+	}
+	if err := s.st.CancelHeld(r.Context(), id); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.log.Info("held mail cancelled", "message", id, "by", adminOf(r).ID)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // retryQueue makes everything due now: the relay was just fixed.

@@ -309,6 +309,11 @@ func (s *Store) DeleteAccount(ctx context.Context, id string) error {
 	if err := sentOn(ctx, tx, u); err != nil {
 		return err
 	}
+	// What it held to send later goes with it: nobody is left to have wanted it sent.
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM outbound_messages WHERE account_id = ? AND release_at > ?`, id, unix(s.Now())); err != nil {
+		return fmt.Errorf("delete account: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM accounts WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("delete account: %w", err)
 	}

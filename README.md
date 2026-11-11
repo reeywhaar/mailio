@@ -7,8 +7,8 @@ live in the database and are managed in its admin interface; mail is read with
 - **Receives on 25.** SPF, DKIM and DMARC are checked; mail its sender's DMARC policy rejects is
   refused, and what it quarantines goes to Junk.
 - **Serves IMAP on 993** to every client, with the standard mailboxes: Inbox, Sent, Drafts,
-  Archive, Junk, Trash. Trash and Junk empty themselves after 30 days, or what a domain or an
-  account says.
+  Archive, Junk, Trash, and Scheduled, where mail held to send later waits and is cancelled.
+  Trash and Junk empty themselves after 30 days, or what a domain or an account says.
 - **Sends on 465 and 587,** signed with each domain's DKIM key, directly or through a relay such
   as Gmail when the host may not send on 25 itself; relays are a list, one is the default, and a
   domain can choose another. Failures are retried for five days and reported to the sender. A
