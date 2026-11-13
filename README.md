@@ -4,29 +4,38 @@ A mail server in one static Go binary and one SQLite file. Domains, accounts and
 live in the database and are managed in its admin interface; mail is read with
 [emguio](https://github.com/reeywhaar/emguio) or any mail client over IMAP.
 
-- **Receives on 25.** SPF, DKIM and DMARC are checked; mail its sender's DMARC policy rejects is
-  refused, and what it quarantines goes to Junk.
-- **Serves IMAP on 993** to every client, with the standard mailboxes: Inbox, Sent, Drafts,
-  Archive, Junk, Trash, and Scheduled, where mail held to send later waits and is cancelled.
-  Trash and Junk empty themselves after 30 days, or what a domain or an account says.
-- **Sends on 465 and 587,** signed with each domain's DKIM key, directly or through a relay such
-  as Gmail when the host may not send on 25 itself; relays are a list, one is the default, and a
-  domain can choose another. Failures are retried for five days and reported to the sender. A
-  client can have a message held and sent later, up to a year on (FUTURERELEASE).
+- **Checks what arrives.** SPF, DKIM and DMARC, which say which servers send a domain's mail and
+  prove a message comes from it, are checked on every message: what its sender's domain says to
+  refuse is refused, and what it says to quarantine goes to Junk.
+- **The standard mailboxes:** Inbox, Sent, Drafts, Archive, Junk and Trash. Trash and Junk empty
+  themselves after 30 days, or what a domain or an account says.
+- **Signs what it sends** with each domain's DKIM key. Failures are retried for five days and
+  reported to the sender.
+- **Relays,** such as Gmail, for a host whose provider blocks sending mail out directly: a list,
+  one the default, and a domain or an account can choose another, or send directly.
+- **Scheduled sending.** A mail client can have a message held and sent later, up to a year on
+  (FUTURERELEASE). It waits in the Scheduled mailbox, where deleting it cancels it, and is filed
+  in Sent when it goes.
+- **Aliases.** Another address of an account, at any domain: its mail arrives in the account,
+  which sends as it too.
+- **Forwarding.** An account can pass its mail on to another account, or refuse it, as a no-reply
+  address that only sends.
 - **Plus addresses.** `inbox+shop@example.com` arrives in `inbox@example.com`.
-- **A credential per device.** Each has a label, its own login, `inbox+k3x9@example.com`, and a
-  password, generated or typed and shown once, and shows when it was last used. Delete the phone's without
-  touching the laptop's.
-- **Per account:** keep the mail, refuse it (a no-reply address that only sends), or forward it
-  to another account. **Aliases:** another address of an account, at any domain, whose mail goes
-  there and which the account sends as. **Defaults, which a domain can override:** reject or drop mail for
-  addresses nobody has, the DMARC and SPF it publishes, the relay it sends through, and the
-  largest message, 50 MB until changed; an account can override the last two as well. A domain
-  can also forward mail for addresses nobody has to an account, into its INBOX or its Junk.
-- **Looks after itself** with a DNS API ([doapi](https://github.com/reeywhaar/doapi)): it
-  publishes each domain's DKIM, SPF and DMARC, and gets and renews its certificate from Let's
-  Encrypt. With or without one, it checks every record, MX included, against what DNS serves,
-  and marks what is missing or wrong.
+- **Catch-all.** Mail for addresses nobody has is refused or dropped, or delivered to an account,
+  into its Inbox or its Junk.
+- **A password per device.** Each credential has a label, its own login,
+  `inbox+k3x9@example.com`, and a password, generated or typed and shown once, and shows when it
+  was last used. Delete the phone's without touching the laptop's.
+- **Defaults, which a domain can override:** the catch-all, the DMARC and SPF it publishes, the
+  relay, the largest message, 50 MB until changed, and how long Trash and Junk keep mail. An
+  account can override the relay, the largest message and how long its Trash and Junk keep mail.
+- **Automatic TLS.** The mail ports' certificate comes from Let's Encrypt and is renewed before
+  it runs out, through a DNS API ([doapi](https://github.com/reeywhaar/doapi)).
+- **DNS records.** Through the same DNS API, each domain's DKIM, SPF and DMARC are published.
+  With or without one, every record, MX included, is checked against what DNS serves, and what
+  is missing or wrong is marked.
+- **Messages and their size,** for each account, each domain and the whole server. An account's
+  mail can be cleared from its danger zone.
 - **Backups** of the whole server, as one file, to a
   [backio](https://github.com/reeywhaar/backio) agent.
 
@@ -70,13 +79,26 @@ docker compose logs mailio
 The log has a link. Open it and choose the first admin's name and password: a sign-in for the
 admin interface, not a mailbox. Then, in the admin interface:
 
+[![The admin interface](docs/screenshots/admin.png)](docs/screenshots/admin.png)
+
 1. **Add a domain,** and point its MX at the mail host. A click on its row opens its settings,
    and the records mailio keeps for it: SPF, DMARC and its DKIM key.
+
+   [![A domain's settings](docs/screenshots/domain.png)](docs/screenshots/domain.png)
+
 2. **Add an account** under its domain, with the name before the `@`. Each domain's accounts are
-   listed under it. Its first credential is labelled `default`, its login is the address itself,
-   and its password is generated and shown once.
+   listed under it, each with its aliases. Its first credential is labelled `default`, its login
+   is the address itself, and its password is generated and shown once.
+
+   [![An account's settings](docs/screenshots/account.png)](docs/screenshots/account.png)
+
 3. **Add a relay** under Sending → Configure sending…, if the host's provider blocks outbound
    port 25, press Test, and make it the default.
+
+   [![Sending](docs/screenshots/sending.png)](docs/screenshots/sending.png)
+
+Invented domains and mail, captured from the real thing by `npm --prefix web run screenshots`;
+see [docs/screenshots](docs/screenshots/).
 
 Locked out later:
 
@@ -165,8 +187,8 @@ internal/
   api/              the admin interface's JSON
   backup/           snapshots to backio
 patches/            fixes to dependencies, as diffs: FUTURERELEASE for go-smtp
-web/                the admin interface: React, Tailwind
-docs/               decisions: deploy, addresses, storage, API, conventions
+web/                the admin interface: React, Tailwind; scripts/screenshots, the README's pictures
+docs/               decisions: deploy, addresses, storage, API, conventions; the screenshots
 ```
 
 Where mail to an address goes is decided in [docs/addresses.md](docs/addresses.md), how it is
