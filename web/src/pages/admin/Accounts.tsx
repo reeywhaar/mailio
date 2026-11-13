@@ -55,8 +55,9 @@ import {
 } from "@app/pages/admin/shared";
 
 /**
- * A domain's accounts and aliases, as rows under the domain's own, each saying what its mail does;
- * a click opens its settings. The last row adds one at the domain.
+ * A domain's accounts, as rows under the domain's own, each saying what its mail does, with its
+ * aliases, at any domain, under it; a click opens one's settings. The last row adds one at the
+ * domain.
  */
 export function DomainAccounts({
   domain,
@@ -79,7 +80,7 @@ export function DomainAccounts({
   return (
     <>
       {accounts
-        .filter((a) => a.domain_id === domain.id)
+        .filter((a) => a.domain_id === domain.id && a.kind !== "alias")
         .map((a) => (
           <Row
             key={a.id}
@@ -89,7 +90,14 @@ export function DomainAccounts({
               <AccountSummary account={a} accounts={accounts} relays={relays} />
             }
             onOpen={() => setOpen(a.id)}
-          />
+          >
+            <AliasPills
+              aliases={accounts.filter(
+                (x) => x.kind === "alias" && x.forward_account_id === a.id,
+              )}
+              onOpen={setOpen}
+            />
+          </Row>
         ))}
       <li>
         <button
@@ -129,6 +137,32 @@ export function DomainAccounts({
   );
 }
 
+/** An account's aliases, under its summary, a pill each; a click opens one. */
+function AliasPills({
+  aliases,
+  onOpen,
+}: {
+  aliases: Account[];
+  onOpen: (id: string) => void;
+}) {
+  if (!aliases.length) return null;
+  return (
+    <div className="-mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 pr-3 pb-2 pl-8 text-sm text-muted">
+      <span className="mr-0.5">Aliases:</span>
+      {aliases.map((a) => (
+        <button
+          key={a.id}
+          type="button"
+          onClick={() => onOpen(a.id)}
+          className="rounded-full border border-line bg-bg px-2 py-px text-fg hover:border-muted focus-visible:border-muted focus-visible:outline-none pointer-coarse:py-1"
+        >
+          {a.address}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /** What its mail does, and its own settings where it has them. */
 function AccountSummary({
   account,
@@ -139,18 +173,6 @@ function AccountSummary({
   accounts: Account[];
   relays: Relay[];
 }) {
-  if (account.kind === "alias") {
-    return (
-      <Summary
-        parts={[
-          {
-            label: "Alias of",
-            value: addressOf(account.forward_account_id, accounts),
-          },
-        ]}
-      />
-    );
-  }
   const incoming =
     account.incoming === "forward" ? (
       <Toward

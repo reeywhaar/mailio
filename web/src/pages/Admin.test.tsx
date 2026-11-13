@@ -298,7 +298,7 @@ test("a new account is added under its domain by its name alone, and shows its g
   );
 });
 
-test("an alias is added of an account that keeps its mail, shows no password, and is a row of its own", async () => {
+test("an alias is added of an account that keeps its mail, shows no password, and is a pill under the account, which opens it", async () => {
   const shop: Account = {
     ...inbox,
     id: "ac_3",
@@ -339,9 +339,21 @@ test("an alias is added of an account that keeps its mail, shows no password, an
       body: { address: "shop@example.org", alias_of: "ac_1" },
     },
   ]);
+  const alias = await screen.findByRole("button", { name: "shop@example.org" });
+  const row = screen
+    .getByRole("button", { name: /^inbox@example\.org.*Incoming/ })
+    .closest("li")!;
+  expect(row.contains(alias)).toBe(true);
+  expect(within(row).getByText("Aliases:")).toBeTruthy();
+
+  fireEvent.click(alias);
   expect(
-    await screen.findByRole("button", { name: /^shop@example\.org.*Alias of/ }),
-  ).toBeTruthy();
+    (
+      within(dialog("shop@example.org")).getByLabelText(
+        "Alias of",
+      ) as HTMLSelectElement
+    ).value,
+  ).toBe("ac_1");
 });
 
 test("an account's mail is cleared from its danger zone, after a confirm saying how much", async () => {

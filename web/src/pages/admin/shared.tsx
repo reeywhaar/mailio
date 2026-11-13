@@ -100,6 +100,7 @@ export function Row({
   summary,
   nested = false,
   onOpen,
+  children,
 }: {
   title: string;
   aside?: ReactNode;
@@ -107,9 +108,11 @@ export function Row({
   /** Under the row before it, as an account is under its domain. */
   nested?: boolean;
   onOpen: () => void;
+  /** Under the summary with clicks of their own, so outside the button; the row lights as one. */
+  children?: ReactNode;
 }) {
   return (
-    <li>
+    <li className="has-[>button:focus-visible]:bg-fill has-[>button:hover]:bg-fill">
       <button
         type="button"
         onClick={onOpen}
@@ -123,6 +126,7 @@ export function Row({
         </span>
         {summary ? <span className="text-sm text-muted">{summary}</span> : null}
       </button>
+      {children}
     </li>
   );
 }
