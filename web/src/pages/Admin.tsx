@@ -29,7 +29,9 @@ import { Sending } from "@app/pages/admin/Sending";
  * One column on a phone, the page scrolling as one. On a wide screen the page is the window's
  * height: the server's own sections are a narrow column and the domains, the longest and most
  * used, the rest, each column scrolling on its own. Each scrollbar has a lane of its own beside
- * its column, outside the cards, rather than drawn over their edge.
+ * its column, outside the cards, rather than drawn over their edge. Each column is positioned, so
+ * what sits in it absolutely, the words a row has for screen readers alone, scrolls with it rather
+ * than lengthening the page.
  */
 export function Admin() {
   const me = useQuery({ queryKey: ["me"], queryFn: getMe });
@@ -81,7 +83,7 @@ export function Admin() {
         <div className="flex flex-col gap-10 lg:grid lg:min-h-0 lg:flex-1 lg:grid-cols-[24rem_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] lg:gap-x-3">
           {/* Only a box on a wide screen: on a phone its sections are the page's own, the
               queue and the admins after the domains. */}
-          <div className="contents lg:flex lg:min-h-0 lg:flex-col lg:gap-10 lg:overflow-y-auto lg:pr-3 lg:[scrollbar-gutter:stable]">
+          <div className="contents lg:flex lg:relative lg:min-h-0 lg:flex-col lg:gap-10 lg:overflow-y-auto lg:pr-3 lg:[scrollbar-gutter:stable]">
             <MailServer mail={mail.data} accounts={accounts.data} />
             <Sending settings={settings.data} relays={relays.data} />
             <Defaults settings={settings.data} />
@@ -90,7 +92,7 @@ export function Admin() {
               <Admins admins={admins.data} me={me.data} />
             </div>
           </div>
-          <div className="lg:-mr-3 lg:min-h-0 lg:overflow-y-auto lg:pr-3 lg:[scrollbar-gutter:stable]">
+          <div className="lg:relative lg:-mr-3 lg:min-h-0 lg:overflow-y-auto lg:pr-3 lg:[scrollbar-gutter:stable]">
             <Domains
               domains={domains.data}
               settings={settings.data}
