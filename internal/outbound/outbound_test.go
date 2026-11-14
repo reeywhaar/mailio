@@ -451,6 +451,54 @@ func TestAnAccountSendsAsItsAliasSignedForTheAliasesDomain(t *testing.T) {
 	}
 }
 
+// An account that sends as another goes out as it: its address in From and the envelope, the name
+// kept, signed for its domain, through its relay rather than the one the account's own domain uses.
+func TestAnAccountSendingAsAnotherGoesOutAsIt(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	other, _ := r.st.Authenticate(ctx, "other@example.org", "correct horse")
+	net, err := r.st.CreateDomain(ctx, "example.net")
+	if err != nil {
+		t.Fatal(err)
+	}
+	as, err := r.st.CreateAccount(ctx, "inbox@example.net", "correct horse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Its own domain's mail would go out directly, and fail; the one it sends as uses the relay.
+	if err := r.st.SetDomainVia(ctx, r.domain.ID, store.ViaBuiltIn); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.st.SetAccountSendAs(ctx, other.ID, as.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	body := "From: Robert Langdon\r\n <other@example.org>\r\nTo: someone@example.com\r\nSubject: Hi\r\n\r\nHello.\r\n"
+	if err := r.submit("other@example.org", "correct horse", "other@example.org", []string{"someone@example.com"}, body); err != nil {
+		t.Fatal(err)
+	}
+	r.sender.runOnce(ctx)
+
+	if len(r.relay.got) != 1 {
+		t.Fatalf("the relay got %d messages", len(r.relay.got))
+	}
+	got := r.relay.got[0]
+	if got.from != "inbox@example.net" {
+		t.Errorf("sent from %s", got.from)
+	}
+	if !strings.Contains(string(got.data), "\r\nFrom: \"Robert Langdon\" <inbox@example.net>\r\nTo: someone@example.com\r\n") ||
+		strings.Contains(string(got.data), "other@example.org") {
+		t.Errorf("headers:\n%s", got.data)
+	}
+	record, _ := dkimkey.Record(net.DKIMKey)
+	vs, err := dkim.VerifyWithOptions(bytes.NewReader(got.data), &dkim.VerifyOptions{
+		LookupTXT: func(string) ([]string, error) { return []string{record}, nil },
+	})
+	if err != nil || len(vs) != 1 || vs[0].Err != nil || vs[0].Domain != "example.net" {
+		t.Errorf("dkim: %v %+v", err, vs)
+	}
+}
+
 // submitHeld sends as an account over 465 by hand, MAIL FROM carrying hold, an argument such as
 // HOLDFOR=3600, which net/smtp cannot send. It returns the EHLO answer and the first refusal.
 func (r *rig) submitHeld(login, password, from, hold string, to []string, body string) (string, error) {

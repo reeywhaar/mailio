@@ -189,9 +189,16 @@ function AccountSummary({
         { label: "Incoming", value: incoming },
         { label: "Messages", value: account.messages.toLocaleString() },
         { label: "Size", value: sizeText(account.bytes) },
-        ...(account.relay
-          ? [{ label: "Sending", value: relayName(account.relay, relays) }]
-          : []),
+        ...(account.send_as_account_id
+          ? [
+              {
+                label: "Sends as",
+                value: addressOf(account.send_as_account_id, accounts),
+              },
+            ]
+          : account.relay
+            ? [{ label: "Sending", value: relayName(account.relay, relays) }]
+            : []),
         ...(account.max_message_bytes
           ? [
               {
@@ -337,9 +344,12 @@ function AddAccountDialog({
   );
 }
 
+/** In the Sending choice, before the id of an account to send as, which is not a relay. */
+const AS = "as:";
+
 /**
- * An account's settings as its dialog holds them until Save: relay "" is its domain's, and limit
- * in MB and trash and junk in days are as typed.
+ * An account's settings as its dialog holds them until Save: relay "" is its domain's, AS and an
+ * id another account's, and limit in MB and trash and junk in days are as typed.
  */
 type Draft = {
   incoming: Incoming;
@@ -377,12 +387,19 @@ function AccountDialog({
   const [draft, setDraft] = useDraft<Draft>(open, () => ({
     incoming: account.incoming,
     forwardTo: account.forward_account_id ?? others.find(keepsMail)?.id ?? "",
-    relay: account.relay ?? "",
+    relay: account.send_as_account_id
+      ? AS + account.send_as_account_id
+      : (account.relay ?? ""),
     limit: mbText(account.max_message_bytes),
     trash: daysText(account.trash_days),
     junk: daysText(account.junk_days),
   }));
   const blocked = senders.length > 0 && draft.incoming !== "keep";
+  // Whom it can send as: an account that sends as itself, while nobody sends as this one.
+  const sentAs = accounts.some((a) => a.send_as_account_id === account.id);
+  const sendAs = sentAs
+    ? []
+    : others.filter((a) => a.kind === "account" && !a.send_as_account_id);
   // The credential being added (null) or given a new password; undefined is no dialog.
   const [credential, setCredential] = useState<Credential | null | undefined>(
     undefined,
@@ -396,7 +413,9 @@ function AccountDialog({
         forward_account_id:
           draft.incoming === "forward" ? draft.forwardTo : null,
         max_message_bytes: toBytes(draft.limit),
-        relay: draft.relay,
+        ...(draft.relay.startsWith(AS)
+          ? { send_as_account_id: draft.relay.slice(AS.length) }
+          : { relay: draft.relay, send_as_account_id: "" }),
         trash_days: toDays(draft.trash),
         junk_days: toDays(draft.junk),
       }),
@@ -496,6 +515,15 @@ function AccountDialog({
                 {r.label}
               </option>
             ))}
+            {sendAs.length ? (
+              <optgroup label="As another account">
+                {sendAs.map((a) => (
+                  <option key={a.id} value={AS + a.id}>
+                    {a.address}
+                  </option>
+                ))}
+              </optgroup>
+            ) : null}
           </Select>
         </Field>
         <LimitField

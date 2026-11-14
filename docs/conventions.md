@@ -13,6 +13,7 @@ One name per thing, in identifiers, the API, the docs and the interface.
 | account | an address mail is delivered to, and the credentials that sign in as it | `Account`, `accounts`, `account_id` |
 | credential | one of an account's sign-ins: a label, a login and a generated password | `Credential`, `credentials` |
 | alias | another address of an account, which holds its mail, signs in for it and sends as it | `Account.Alias`, `accounts.alias` |
+| send as | an account's mail leaving as another account's, its address, key and relay | `Account.SendAs`, `accounts.send_as_account_id` |
 | login | what signs in with one credential: the address, tagged unless it is the default | `Login` |
 | mailbox | an IMAP folder inside an account: INBOX, Sent, Junk | `mailboxes` |
 | relay | a server mail is sent through instead of straight to the recipient's, with a unique label | `Relay`, `relays` |

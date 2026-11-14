@@ -6,9 +6,9 @@
 // imports the mail as a Maildir, the way mail is brought over from the Postfix-based mailio.
 //
 // An account is { address, incoming?, forward?, credentials?, max_message_bytes?, relay?,
-// trash_days?, junk_days? }: credentials are labels, after the `default` every account starts
-// with; forward is an account's address, for incoming "forward"; relay is a relay's label or
-// "builtin".
+// send_as?, trash_days?, junk_days? }: credentials are labels, after the `default` every account
+// starts with; forward is an account's address, for incoming "forward"; relay is a relay's label or
+// "builtin"; send_as is the address of the account what it sends leaves as.
 //
 // A message is { to, folder?, from, subject, ago, body, unread?, attachment? }:
 //   to          the account it is in; for Sent, the one that sent it
@@ -57,6 +57,7 @@ export const accounts = [
     credentials: ["iPhone", "MacBook", "Harvard office"],
   },
   { address: "sophie@example.org", credentials: ["Phone"] },
+  { address: "info@example.org", send_as: "langdon@example.org" },
   { address: "noreply@example.org", incoming: "reject", relay: "builtin" },
   { address: "katherine@example.net", trash_days: 7 },
   {

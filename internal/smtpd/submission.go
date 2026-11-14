@@ -74,8 +74,12 @@ type subSession struct {
 	sub     *Submission
 	ip      net.IP
 	account *store.Account
-	from    string
-	rcpts   []string
+	// from is the envelope's sender: the address the client gave, or the account it sends as.
+	from string
+	// as is the address that goes in From in place of the client's, for an account that sends as
+	// another, or "".
+	as    string
+	rcpts []string
 	// size is what the client said the message is, or 0. limit is the smallest of the account's
 	// own and those of the local recipients, and limitFor that recipient, or "" for the account.
 	size     int64
@@ -118,7 +122,7 @@ func (s *subSession) Auth(mech string) (sasl.Server, error) {
 }
 
 func (s *subSession) Reset() {
-	s.from = ""
+	s.from, s.as = "", ""
 	s.rcpts = nil
 	s.size, s.limit, s.limitFor = 0, 0, ""
 	s.hold = time.Time{}
@@ -139,6 +143,14 @@ func (s *subSession) Mail(from string, opts *smtp.MailOptions) error {
 	}
 	s.Reset()
 	s.from = a.String()
+	// An account that sends as another sends everything as it, bounces coming back to it too.
+	if s.account.SendAs != "" {
+		as, err := s.sub.st.AccountByID(context.Background(), s.account.SendAs)
+		if err != nil {
+			return errTemporary
+		}
+		s.from, s.as = as.Address(), as.Address()
+	}
 	s.limit = s.account.MessageLimit
 	if opts != nil {
 		s.size = opts.Size
@@ -210,7 +222,11 @@ func (s *subSession) Data(r io.Reader) error {
 		return s.tooBig()
 	}
 	ctx := context.Background()
-	raw, err := s.sub.prepare(ctx, s.from, NormalizeCRLF(body))
+	body = NormalizeCRLF(body)
+	if s.as != "" {
+		body = withFrom(body, s.as)
+	}
+	raw, err := s.sub.prepare(ctx, s.from, body)
 	if err != nil {
 		s.sub.log.Error("preparing a message failed", "account", s.account.ID, "error", err)
 		return errTemporary
@@ -273,6 +289,54 @@ func scheduledCopy(raw []byte, rcpts []string) []byte {
 		return raw
 	}
 	return append([]byte("Bcc: "+strings.Join(bcc, ", ")+"\r\n"), raw...)
+}
+
+// withFrom puts addr in a message's From in place of the address there, keeping the name beside
+// it, or adds a From when there is none. The message's lines end in CRLF.
+func withFrom(msg []byte, addr string) []byte {
+	var head, rest []byte
+	switch end := bytes.Index(msg, []byte("\r\n\r\n")); {
+	case bytes.HasPrefix(msg, []byte("\r\n")):
+		rest = msg
+	case end < 0:
+		head = msg
+	default:
+		head, rest = msg[:end+2], msg[end+2:]
+	}
+	var out bytes.Buffer
+	done := false
+	for len(head) > 0 {
+		// A field and the lines folded under it.
+		n := 0
+		for {
+			eol := bytes.Index(head[n:], []byte("\r\n"))
+			if eol < 0 {
+				n = len(head)
+				break
+			}
+			n += eol + 2
+			if n >= len(head) || (head[n] != ' ' && head[n] != '\t') {
+				break
+			}
+		}
+		field := head[:n]
+		head = head[n:]
+		name, value, ok := bytes.Cut(field, []byte(":"))
+		if ok && !done && strings.EqualFold(string(bytes.TrimSpace(name)), "From") {
+			done = true
+			from := mail.Address{Address: addr}
+			unfolded := strings.NewReplacer("\r\n", "").Replace(string(value))
+			if was, err := mail.ParseAddress(strings.TrimSpace(unfolded)); err == nil {
+				from.Name = was.Name
+			}
+			field = []byte("From: " + from.String() + "\r\n")
+		}
+		out.Write(field)
+	}
+	if !done {
+		return append([]byte("From: "+(&mail.Address{Address: addr}).String()+"\r\n"), append(out.Bytes(), rest...)...)
+	}
+	return append(out.Bytes(), rest...)
 }
 
 // prepare adds what a client may leave out, stamps Received, and signs with the DKIM key of the

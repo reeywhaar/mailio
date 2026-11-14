@@ -309,11 +309,19 @@ for (const a of accounts) {
     });
 }
 // Once every account is there, since one forwards to another.
-for (const { address, forward, credentials, relay, ...own } of accounts) {
+for (const {
+  address,
+  forward,
+  credentials,
+  relay,
+  send_as,
+  ...own
+} of accounts) {
   const change = {
     ...own,
     ...(forward ? { forward_account_id: accountID[forward] } : {}),
     ...(relay ? { relay: relayID[relay] ?? relay } : {}),
+    ...(send_as ? { send_as_account_id: accountID[send_as] } : {}),
   };
   if (Object.keys(change).length)
     await api("PATCH", `/api/accounts/${accountID[address]}`, change);

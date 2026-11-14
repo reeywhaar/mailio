@@ -54,6 +54,9 @@ type Account struct {
 	// Alias is only an address: its mail always goes to ForwardAccountID, which signs in for it,
 	// holds its mail and sends as it.
 	Alias bool
+	// SendAs is the account whatever this one sends leaves as, or "" for itself: from that one's
+	// address, signed with its domain's key and through its relay. Its own mail still comes to it.
+	SendAs string
 }
 
 // Incoming is what an account does with mail sent to it.
@@ -78,7 +81,8 @@ func (u *Account) Address() string { return u.Local + "@" + u.Domain }
 const accountColumns = `u.id, u.local_part, d.name, u.domain_id, u.created_at, u.incoming, coalesce(u.forward_account_id, ''),
 	coalesce(u.max_message_bytes, 0),
 	coalesce(u.max_message_bytes, d.max_message_bytes, (SELECT max_message_bytes FROM settings WHERE id = 1)),
-	coalesce(u.send_via, ''), coalesce(u.relay_id, ''), u.trash_days, u.junk_days, u.alias`
+	coalesce(u.send_via, ''), coalesce(u.relay_id, ''), u.trash_days, u.junk_days, u.alias,
+	coalesce(u.send_as_account_id, '')`
 const accountFrom = ` FROM accounts u JOIN domains d ON d.id = u.domain_id`
 
 func scanAccount(row interface{ Scan(...any) error }) (*Account, error) {
@@ -86,7 +90,7 @@ func scanAccount(row interface{ Scan(...any) error }) (*Account, error) {
 		u       Account
 		created int64
 	)
-	if err := row.Scan(&u.ID, &u.Local, &u.Domain, &u.DomainID, &created, &u.Incoming, &u.ForwardAccountID, &u.MaxMessageBytes, &u.MessageLimit, &u.Via, &u.RelayID, &u.TrashDays, &u.JunkDays, &u.Alias); err != nil {
+	if err := row.Scan(&u.ID, &u.Local, &u.Domain, &u.DomainID, &created, &u.Incoming, &u.ForwardAccountID, &u.MaxMessageBytes, &u.MessageLimit, &u.Via, &u.RelayID, &u.TrashDays, &u.JunkDays, &u.Alias, &u.SendAs); err != nil {
 		return nil, err
 	}
 	u.CreatedAt = fromUnix(created)
@@ -448,6 +452,13 @@ func sentOn(ctx context.Context, tx *sql.Tx, u *Account) error {
 	}
 	if err == nil {
 		return Conflict("%s forwards to %s. Change that first.", from.Address(), u.Address())
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	as, err := accountWhere(ctx, tx, "u.send_as_account_id = ? ORDER BY d.name, u.local_part LIMIT 1", u.ID)
+	if err == nil {
+		return Conflict("%s sends as %s. Change that first.", as.Address(), u.Address())
 	}
 	if !errors.Is(err, ErrNotFound) {
 		return err

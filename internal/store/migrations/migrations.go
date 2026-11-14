@@ -45,6 +45,7 @@ var all = []Migration{
 	junkDays,
 	heldMail,
 	scheduled,
+	sendAs,
 }
 
 func exec(sqlText string) func(context.Context, *sql.Tx) error {

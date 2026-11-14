@@ -31,6 +31,7 @@ const inbox: Account = {
   forward_account_id: null,
   max_message_bytes: null,
   relay: null,
+  send_as_account_id: null,
   trash_days: null,
   junk_days: null,
   credentials: [
@@ -578,12 +579,57 @@ test("forwarding an account's mail is held until Save", async () => {
           forward_account_id: "ac_2",
           max_message_bytes: 0,
           relay: "",
+          send_as_account_id: "",
           trash_days: null,
           junk_days: null,
         },
       },
     ]),
   );
+});
+
+test("an account sends as another, chosen with the relays, and its row says so", async () => {
+  let accounts = [inbox, misha];
+  const { sent } = routes({
+    "GET /api/accounts": () => ({ body: accounts }),
+    "PATCH /api/accounts/ac_1": () => {
+      accounts = [{ ...inbox, send_as_account_id: "ac_2" }, misha];
+      return { body: accounts[0] };
+    },
+  });
+  mount();
+  await open(/^inbox@example\.org/);
+  const d = within(dialog("inbox@example.org"));
+  const sending = d.getByLabelText("Sending") as HTMLSelectElement;
+  expect(
+    within(within(sending).getByRole("group", { name: "As another account" }))
+      .getAllByRole("option")
+      .map((o) => o.textContent),
+  ).toEqual(["misha@example.org"]);
+  fireEvent.change(sending, { target: { value: "as:ac_2" } });
+  fireEvent.click(d.getByRole("button", { name: "Save" }));
+
+  await waitFor(() =>
+    expect(writes(sent)).toEqual([
+      {
+        method: "PATCH",
+        path: "/api/accounts/ac_1",
+        body: {
+          incoming: "keep",
+          forward_account_id: null,
+          max_message_bytes: 0,
+          send_as_account_id: "ac_2",
+          trash_days: null,
+          junk_days: null,
+        },
+      },
+    ]),
+  );
+  expect(
+    await screen.findByRole("button", {
+      name: /^inbox@example\.org.*Sends as: misha@example\.org/,
+    }),
+  ).toBeTruthy();
 });
 
 test("an account's largest message is typed in MB, and empty is its domain's", async () => {
@@ -616,6 +662,7 @@ test("an account's largest message is typed in MB, and empty is its domain's", a
           forward_account_id: null,
           max_message_bytes: 10 * 1024 * 1024,
           relay: "",
+          send_as_account_id: "",
           trash_days: null,
           junk_days: null,
         },
@@ -920,7 +967,7 @@ test("mail is sent on only to an account that keeps it, and that account keeps i
   expect(
     d.getByText("Keeps its mail while mail is sent on here from:"),
   ).toBeTruthy();
-  expect(d.getByText("billing@example.org")).toBeTruthy();
+  expect(d.getByText("billing@example.org", { selector: "li" })).toBeTruthy();
   const incoming = (name: string) =>
     (d.getByRole("option", { name }) as HTMLOptionElement).disabled;
   expect(incoming("Keep")).toBe(false);
@@ -940,7 +987,11 @@ test("mail is sent on only to an account that keeps it, and that account keeps i
     target: { value: "forward" },
   });
   const target = (name: string) =>
-    (m.getByRole("option", { name }) as HTMLOptionElement).disabled;
+    (
+      within(m.getByLabelText("Who gets the mail")).getByRole("option", {
+        name,
+      }) as HTMLOptionElement
+    ).disabled;
   expect(target("inbox@example.org")).toBe(false);
   expect(target("billing@example.org · forwards")).toBe(true);
   expect(

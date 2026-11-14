@@ -565,6 +565,35 @@ func TestAnAccountSendsThroughItsOwnRelay(t *testing.T) {
 	}
 }
 
+func TestAnAccountSendsAsAnother(t *testing.T) {
+	h := signedIn(t)
+	h.do("POST", "/api/domains", map[string]any{"name": "example.org"})
+	_, info := h.do("POST", "/api/accounts", map[string]any{"address": "info@example.org"})
+	_, inbox := h.do("POST", "/api/accounts", map[string]any{"address": "inbox@example.org"})
+	id := info["id"].(string)
+	if info["send_as_account_id"] != nil {
+		t.Errorf("a new account: %v", info["send_as_account_id"])
+	}
+	code, a := h.do("PATCH", "/api/accounts/"+id, map[string]any{"relay": "builtin"})
+	if code != http.StatusOK || a["relay"] != "builtin" {
+		t.Fatalf("built-in: %d %v", code, a)
+	}
+	code, a = h.do("PATCH", "/api/accounts/"+id, map[string]any{"send_as_account_id": inbox["id"]})
+	if code != http.StatusOK || a["send_as_account_id"] != inbox["id"] || a["relay"] != nil {
+		t.Errorf("as inbox: %d %v", code, a)
+	}
+	if code, _ := h.do("DELETE", "/api/accounts/"+inbox["id"].(string), nil); code != http.StatusConflict {
+		t.Errorf("deleting the account sent as: %d", code)
+	}
+	if code, _ := h.do("PATCH", "/api/accounts/"+id, map[string]any{"relay": "builtin", "send_as_account_id": inbox["id"]}); code != http.StatusBadRequest {
+		t.Errorf("a relay and an account: %d", code)
+	}
+	code, a = h.do("PATCH", "/api/accounts/"+id, map[string]any{"relay": "", "send_as_account_id": ""})
+	if code != http.StatusOK || a["send_as_account_id"] != nil || a["relay"] != nil {
+		t.Errorf("as itself again: %d %v", code, a)
+	}
+}
+
 func TestAnAliasIsMadeOfAnAccountAndHasNoPassword(t *testing.T) {
 	h := signedIn(t)
 	h.do("POST", "/api/domains", map[string]any{"name": "example.org"})

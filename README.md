@@ -20,6 +20,8 @@ live in the database and are managed in its admin interface; mail is read with
   which sends as it too.
 - **Forwarding.** An account can pass its mail on to another account, or refuse it, as a no-reply
   address that only sends.
+- **Sending as another account.** An account keeps its own mail, and what it sends leaves as
+  another account: from its address, signed with its domain's key, through its relay.
 - **Plus addresses.** `inbox+shop@example.com` arrives in `inbox@example.com`.
 - **Catch-all.** Mail for addresses nobody has is refused or dropped, or delivered to an account,
   into its Inbox or its Junk.

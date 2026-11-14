@@ -275,14 +275,15 @@ func (s *Store) SetDomainVia(ctx context.Context, domainID, choice string) error
 }
 
 // SetAccountVia chooses how an account's mail goes out: "" follows its domain's, ViaBuiltIn
-// delivers directly, and a relay's id goes through that relay.
+// delivers directly, and a relay's id goes through that relay. The account sends as itself again.
 func (s *Store) SetAccountVia(ctx context.Context, accountID, choice string) error {
 	via, relay, err := s.via(ctx, choice)
 	if err != nil {
 		return err
 	}
 	res, err := s.writer.ExecContext(ctx,
-		`UPDATE accounts SET send_via = ?, relay_id = ? WHERE id = ? AND (send_via IS NOT ? OR relay_id IS NOT ?)`,
+		`UPDATE accounts SET send_via = ?, relay_id = ?, send_as_account_id = NULL
+		  WHERE id = ? AND (send_via IS NOT ? OR relay_id IS NOT ? OR send_as_account_id IS NOT NULL)`,
 		via, relay, accountID, via, relay)
 	if err != nil {
 		return fmt.Errorf("set account relay: %w", err)
@@ -293,6 +294,74 @@ func (s *Store) SetAccountVia(ctx context.Context, accountID, choice string) err
 	}
 	_, err = s.AccountByID(ctx, accountID)
 	return err
+}
+
+// SetAccountSendAs has whatever an account sends leave as another account's: from that one's
+// address, signed with its domain's key and through its relay, which replaces the account's own
+// choice of relay. "" sends as itself.
+//
+// One step only: an account that others send as sends as itself, so what leaves is always the
+// account it names.
+func (s *Store) SetAccountSendAs(ctx context.Context, accountID, asID string) error {
+	tx, err := s.writer.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("set send as: %w", err)
+	}
+	defer tx.Rollback()
+
+	a, err := accountWhere(ctx, tx, "u.id = ?", accountID)
+	if err != nil {
+		return err
+	}
+	if a.SendAs == asID {
+		return nil
+	}
+	if asID != "" {
+		if err := sendsAsOK(ctx, tx, a, asID); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE accounts SET send_as_account_id = ?, send_via = NULL, relay_id = NULL WHERE id = ?`,
+		orNull(asID), accountID); err != nil {
+		return fmt.Errorf("set send as: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("set send as: %w", err)
+	}
+	s.changed()
+	return nil
+}
+
+// sendsAsOK refuses having a send as asID that would not leave as a real account's.
+func sendsAsOK(ctx context.Context, tx *sql.Tx, a *Account, asID string) error {
+	if a.Alias {
+		return Invalid("%s is an alias: what it sends, its account sends.", a.Address())
+	}
+	if asID == a.ID {
+		return Invalid("An account sends as itself without being told to.")
+	}
+	as, err := accountWhere(ctx, tx, "u.id = ?", asID)
+	if errors.Is(err, ErrNotFound) {
+		return Invalid("There is no such account to send as.")
+	}
+	if err != nil {
+		return err
+	}
+	if as.Alias {
+		return Invalid("%s is an alias. Send as the account it belongs to.", as.Address())
+	}
+	if as.SendAs != "" {
+		return Conflict("%s sends as another account itself. Send as that one.", as.Address())
+	}
+	other, err := accountWhere(ctx, tx, "u.send_as_account_id = ? ORDER BY d.name, u.local_part LIMIT 1", a.ID)
+	if err == nil {
+		return Conflict("%s sends as %s. Change that first.", other.Address(), a.Address())
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	return nil
 }
 
 // via is a choice of how mail goes out as the columns hold it: both null for "", which follows
@@ -311,12 +380,16 @@ func (s *Store) via(ctx context.Context, choice string) (via, relay any, err err
 }
 
 // RelayFor is the relay an account's mail goes through, or nil to deliver directly: the
-// account's own choice, else its domain's, else the default. Mail with no account follows the
-// sending domain's, and a domain mailio does not receive for follows the default.
+// account's own choice, else its domain's, else the default; and an account that sends as another
+// goes the way that one does. Mail with no account follows the sending domain's, and a domain
+// mailio does not receive for follows the default.
 func (s *Store) RelayFor(ctx context.Context, accountID, domain string) (*Relay, error) {
 	via, relayID := "", ""
 	if accountID != "" {
 		a, err := s.AccountByID(ctx, accountID)
+		if err == nil && a.SendAs != "" {
+			a, err = s.AccountByID(ctx, a.SendAs)
+		}
 		switch {
 		case err == nil:
 			via, relayID, domain = a.Via, a.RelayID, a.Domain

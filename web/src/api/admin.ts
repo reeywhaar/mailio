@@ -175,6 +175,11 @@ export type Account = {
   max_message_bytes: number | null;
   /** BUILT_IN, a relay's id, or null for its domain's. */
   relay: string | null;
+  /**
+   * The account whatever it sends leaves as, from that one's address and through its relay, or
+   * null for itself.
+   */
+  send_as_account_id: string | null;
   /** Its Trash and Junk days, 0 forever, or null for its domain's. */
   trash_days: number | null;
   junk_days: number | null;
@@ -195,6 +200,8 @@ export type AccountChange = {
   forward_account_id?: string | null;
   max_message_bytes?: number;
   relay?: string;
+  /** The account to send as, or "" for itself; not with a relay. */
+  send_as_account_id?: string;
   trash_days?: number | null;
   junk_days?: number | null;
 };

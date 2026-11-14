@@ -31,6 +31,7 @@ func accountJSON(u *store.Account, passwords []store.Credential, stored store.St
 		"forward_account_id": forwardTo,
 		"max_message_bytes":  ownLimit(u.MaxMessageBytes),
 		"relay":              relayChoice(u.Via, u.RelayID),
+		"send_as_account_id": orNull(u.SendAs),
 		"trash_days":         u.TrashDays,
 		"junk_days":          u.JunkDays,
 		"credentials":        list,
@@ -50,6 +51,14 @@ func relayChoice(via, relayID string) any {
 		return relayID
 	}
 	return nil
+}
+
+// orNull is null for "".
+func orNull(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // ownLimit is a largest message of a domain's or an account's own, or null where it follows the
@@ -423,10 +432,16 @@ func (s *Server) updateAccount(w http.ResponseWriter, r *http.Request) {
 		ForwardAccountID *string         `json:"forward_account_id"`
 		MaxMessageBytes  *int64          `json:"max_message_bytes"`
 		Relay            *string         `json:"relay"`
+		SendAs           *string         `json:"send_as_account_id"`
 		TrashDays        optional[int]   `json:"trash_days"`
 		JunkDays         optional[int]   `json:"junk_days"`
 	}
 	if !decode(w, r, &req) {
+		return
+	}
+	// The other account's relay is what sends as it, so it takes no relay of its own as well.
+	if req.Relay != nil && req.SendAs != nil && *req.SendAs != "" {
+		refuse(w, http.StatusBadRequest, CodeInvalid, "An account sends through a relay or as another account, not both.")
 		return
 	}
 	for _, k := range []struct {
@@ -456,6 +471,13 @@ func (s *Server) updateAccount(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.log.Info("account changed", "account", id, "relay", *req.Relay, "by", adminOf(r).ID)
+	}
+	if req.SendAs != nil {
+		if err := s.st.SetAccountSendAs(r.Context(), id, *req.SendAs); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		s.log.Info("account changed", "account", id, "send_as_account_id", *req.SendAs, "by", adminOf(r).ID)
 	}
 	if req.Incoming != nil {
 		var to string

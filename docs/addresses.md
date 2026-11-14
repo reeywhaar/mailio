@@ -59,6 +59,19 @@ refuses its mail from then on; what it brought stays with the account.
 A forwarding account is the other way to send mail on: it keeps credentials and mailboxes of its
 own, and signs in and sends as itself.
 
+## An account can send as another
+
+It is the other way round from an alias: the account keeps or forwards its own mail as before,
+and whatever it sends leaves as another account's. Its Sending is set to that account, under As
+another account, and then a message it sends goes out with that account's address in `From`, the
+name beside it kept, and in `MAIL FROM`, so bounces go there too; signed with that account's
+domain's DKIM key, and through that account's relay, which takes the place of a relay of its own.
+Its own mail client keeps the copy it filed in Sent as it wrote it.
+
+One step only. The account sent as is a real account that sends as itself: not an alias, and not
+one that sends as another in turn; and while somebody sends as an account, that account cannot
+send as another or be deleted. Choosing a relay sends as itself again.
+
 ## The largest message is a default, a domain's own, or an account's own
 
 The default is 50 MB, set under Defaults. A domain's own wins over it, and an account's own over
