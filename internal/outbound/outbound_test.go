@@ -499,6 +499,23 @@ func TestAnAccountSendingAsAnotherGoesOutAsIt(t *testing.T) {
 	}
 }
 
+// An account that does not send signs in and is refused at MAIL, with its address in the answer.
+func TestAnAccountThatDoesNotSendIsRefused(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	inbox, _ := r.st.Authenticate(ctx, "inbox@example.org", "correct horse")
+	if err := r.st.SetAccountVia(ctx, inbox.ID, store.ViaNone); err != nil {
+		t.Fatal(err)
+	}
+	err := r.submit("inbox@example.org", "correct horse", "inbox@example.org", []string{"other@example.org"}, letter)
+	if err == nil || !strings.Contains(err.Error(), "550") || !strings.Contains(err.Error(), "inbox@example.org does not send") {
+		t.Errorf("sending: %v", err)
+	}
+	if len(r.inbox("other@example.org")) != 0 {
+		t.Error("it was delivered")
+	}
+}
+
 // submitHeld sends as an account over 465 by hand, MAIL FROM carrying hold, an argument such as
 // HOLDFOR=3600, which net/smtp cannot send. It returns the EHLO answer and the first refusal.
 func (r *rig) submitHeld(login, password, from, hold string, to []string, body string) (string, error) {

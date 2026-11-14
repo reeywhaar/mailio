@@ -72,6 +72,14 @@ One step only. The account sent as is a real account that sends as itself: not a
 one that sends as another in turn; and while somebody sends as an account, that account cannot
 send as another or be deleted. Choosing a relay sends as itself again.
 
+## An account can only receive
+
+Its Sending set to Doesn't send, an account's logins still read its mail over IMAP, and whatever
+they try to send is refused at `MAIL FROM` with `550 5.7.1 info@example.org does not send`, which
+is what a mail client set up to send anyway shows. What it queued before goes out as its domain's
+mail does. Choosing a relay, or an account to send as, has it send again. Another account can
+still send as it: the choice is about its own logins.
+
 ## The largest message is a default, a domain's own, or an account's own
 
 The default is 50 MB, set under Defaults. A domain's own wins over it, and an account's own over

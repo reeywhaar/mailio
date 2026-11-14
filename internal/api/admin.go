@@ -42,11 +42,11 @@ func accountJSON(u *store.Account, passwords []store.Credential, stored store.St
 }
 
 // relayChoice is how a domain's or an account's mail goes out, as the API writes it: "builtin", a
-// relay's id, or null where it follows the one above.
+// relay's id, "none" for an account that does not send, or null where it follows the one above.
 func relayChoice(via, relayID string) any {
 	switch via {
-	case store.ViaBuiltIn:
-		return store.ViaBuiltIn
+	case store.ViaBuiltIn, store.ViaNone:
+		return via
 	case store.ViaRelay:
 		return relayID
 	}

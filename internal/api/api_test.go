@@ -559,6 +559,10 @@ func TestAnAccountSendsThroughItsOwnRelay(t *testing.T) {
 	if code != http.StatusOK || a["relay"] != "builtin" {
 		t.Errorf("built-in: %d %v", code, a["relay"])
 	}
+	code, a = h.do("PATCH", "/api/accounts/"+id, map[string]any{"relay": "none"})
+	if code != http.StatusOK || a["relay"] != "none" {
+		t.Errorf("not sending: %d %v", code, a["relay"])
+	}
 	code, a = h.do("PATCH", "/api/accounts/"+id, map[string]any{"relay": ""})
 	if code != http.StatusOK || a["relay"] != nil {
 		t.Errorf("back to its domain's: %d %v", code, a["relay"])

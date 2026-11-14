@@ -46,6 +46,7 @@ var all = []Migration{
 	heldMail,
 	scheduled,
 	sendAs,
+	receiveOnly,
 }
 
 func exec(sqlText string) func(context.Context, *sql.Tx) error {

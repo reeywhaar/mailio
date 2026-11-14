@@ -632,6 +632,45 @@ test("an account sends as another, chosen with the relays, and its row says so",
   ).toBeTruthy();
 });
 
+test("an account that doesn't send is chosen with the relays, and its row says so", async () => {
+  let accounts = [inbox];
+  const { sent } = routes({
+    "GET /api/accounts": () => ({ body: accounts }),
+    "PATCH /api/accounts/ac_1": () => {
+      accounts = [{ ...inbox, relay: "none" }];
+      return { body: accounts[0] };
+    },
+  });
+  mount();
+  await open(/^inbox@example\.org/);
+  const d = within(dialog("inbox@example.org"));
+  fireEvent.change(d.getByLabelText("Sending"), { target: { value: "none" } });
+  fireEvent.click(d.getByRole("button", { name: "Save" }));
+
+  await waitFor(() =>
+    expect(writes(sent)).toEqual([
+      {
+        method: "PATCH",
+        path: "/api/accounts/ac_1",
+        body: {
+          incoming: "keep",
+          forward_account_id: null,
+          max_message_bytes: 0,
+          relay: "none",
+          send_as_account_id: "",
+          trash_days: null,
+          junk_days: null,
+        },
+      },
+    ]),
+  );
+  expect(
+    await screen.findByRole("button", {
+      name: /^inbox@example\.org.*Sending: Doesn't send/,
+    }),
+  ).toBeTruthy();
+});
+
 test("an account's largest message is typed in MB, and empty is its domain's", async () => {
   const { sent } = routes({
     "GET /api/domains": () => ({

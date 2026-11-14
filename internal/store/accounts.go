@@ -43,8 +43,8 @@ type Account struct {
 	// MessageLimit is the one that applies: its own, its domain's, or the default.
 	MaxMessageBytes int64
 	MessageLimit    int64
-	// Via is how its mail goes out: empty follows its domain's, ViaBuiltIn delivers directly, and
-	// ViaRelay goes through RelayID.
+	// Via is how its mail goes out: empty follows its domain's, ViaBuiltIn delivers directly,
+	// ViaRelay goes through RelayID, and ViaNone is an account that sends nothing.
 	Via     string
 	RelayID string
 	// TrashDays and JunkDays are how long its Trash and Junk keep a message, 0 forever, or nil to
@@ -81,7 +81,8 @@ func (u *Account) Address() string { return u.Local + "@" + u.Domain }
 const accountColumns = `u.id, u.local_part, d.name, u.domain_id, u.created_at, u.incoming, coalesce(u.forward_account_id, ''),
 	coalesce(u.max_message_bytes, 0),
 	coalesce(u.max_message_bytes, d.max_message_bytes, (SELECT max_message_bytes FROM settings WHERE id = 1)),
-	coalesce(u.send_via, ''), coalesce(u.relay_id, ''), u.trash_days, u.junk_days, u.alias,
+	CASE WHEN u.sends THEN coalesce(u.send_via, '') ELSE 'none' END, coalesce(u.relay_id, ''),
+	u.trash_days, u.junk_days, u.alias,
 	coalesce(u.send_as_account_id, '')`
 const accountFrom = ` FROM accounts u JOIN domains d ON d.id = u.domain_id`
 

@@ -54,6 +54,8 @@ export type Settings = {
 
 /** A domain's relay that is not one of the list: straight to each recipient's server. */
 export const BUILT_IN = "builtin";
+/** An account's Sending that sends nothing: it only receives. */
+export const NO_SEND = "none";
 
 /** A domain. Each of its own settings is null where it follows the default. */
 export type Domain = {
@@ -173,7 +175,7 @@ export type Account = {
   forward_account_id: string | null;
   /** Its own largest message in bytes, or null for its domain's. */
   max_message_bytes: number | null;
-  /** BUILT_IN, a relay's id, or null for its domain's. */
+  /** BUILT_IN, a relay's id, NO_SEND, or null for its domain's. */
   relay: string | null;
   /**
    * The account whatever it sends leaves as, from that one's address and through its relay, or

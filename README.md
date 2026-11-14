@@ -22,6 +22,8 @@ live in the database and are managed in its admin interface; mail is read with
   address that only sends.
 - **Sending as another account.** An account keeps its own mail, and what it sends leaves as
   another account: from its address, signed with its domain's key, through its relay.
+- **Receive-only accounts.** An account can be set not to send: its logins read its mail, and
+  what they try to send is refused.
 - **Plus addresses.** `inbox+shop@example.com` arrives in `inbox@example.com`.
 - **Catch-all.** Mail for addresses nobody has is refused or dropped, or delivered to an account,
   into its Inbox or its Junk.

@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 
 import {
   BUILT_IN,
+  NO_SEND,
   addCredential,
   clearMail,
   createAccount,
@@ -515,6 +516,7 @@ function AccountDialog({
                 {r.label}
               </option>
             ))}
+            <option value={NO_SEND}>Doesn't send</option>
             {sendAs.length ? (
               <optgroup label="As another account">
                 {sendAs.map((a) => (

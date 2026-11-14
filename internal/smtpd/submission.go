@@ -134,6 +134,11 @@ func (s *subSession) Mail(from string, opts *smtp.MailOptions) error {
 	if s.account == nil {
 		return smtp.ErrAuthRequired
 	}
+	// Its logins read its mail; nothing goes out from them.
+	if s.account.Via == store.ViaNone {
+		return &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 7, 1},
+			Message: s.account.Address() + " does not send"}
+	}
 	a, err := address.Parse(from)
 	// An account sends as itself and as its aliases, tagged or not: from inbox+shop@ as readily
 	// as inbox@.

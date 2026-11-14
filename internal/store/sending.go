@@ -251,6 +251,8 @@ const (
 	ViaBuiltIn = "builtin"
 	// ViaRelay hands it to the domain's chosen relay.
 	ViaRelay = "relay"
+	// ViaNone is an account that does not send at all, only receives.
+	ViaNone = "none"
 )
 
 // SetDomainVia chooses how a domain's mail goes out: "" follows the default, ViaBuiltIn delivers
@@ -275,16 +277,21 @@ func (s *Store) SetDomainVia(ctx context.Context, domainID, choice string) error
 }
 
 // SetAccountVia chooses how an account's mail goes out: "" follows its domain's, ViaBuiltIn
-// delivers directly, and a relay's id goes through that relay. The account sends as itself again.
+// delivers directly, a relay's id goes through that relay, and ViaNone sends nothing. The account
+// sends as itself again.
 func (s *Store) SetAccountVia(ctx context.Context, accountID, choice string) error {
-	via, relay, err := s.via(ctx, choice)
-	if err != nil {
-		return err
+	var via, relay any
+	sends := choice != ViaNone
+	if sends {
+		var err error
+		if via, relay, err = s.via(ctx, choice); err != nil {
+			return err
+		}
 	}
 	res, err := s.writer.ExecContext(ctx,
-		`UPDATE accounts SET send_via = ?, relay_id = ?, send_as_account_id = NULL
-		  WHERE id = ? AND (send_via IS NOT ? OR relay_id IS NOT ? OR send_as_account_id IS NOT NULL)`,
-		via, relay, accountID, via, relay)
+		`UPDATE accounts SET send_via = ?, relay_id = ?, send_as_account_id = NULL, sends = ?
+		  WHERE id = ? AND (send_via IS NOT ? OR relay_id IS NOT ? OR send_as_account_id IS NOT NULL OR sends IS NOT ?)`,
+		via, relay, sends, accountID, via, relay, sends)
 	if err != nil {
 		return fmt.Errorf("set account relay: %w", err)
 	}
@@ -322,7 +329,7 @@ func (s *Store) SetAccountSendAs(ctx context.Context, accountID, asID string) er
 		}
 	}
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE accounts SET send_as_account_id = ?, send_via = NULL, relay_id = NULL WHERE id = ?`,
+		`UPDATE accounts SET send_as_account_id = ?, send_via = NULL, relay_id = NULL, sends = 1 WHERE id = ?`,
 		orNull(asID), accountID); err != nil {
 		return fmt.Errorf("set send as: %w", err)
 	}
@@ -393,6 +400,10 @@ func (s *Store) RelayFor(ctx context.Context, accountID, domain string) (*Relay,
 		switch {
 		case err == nil:
 			via, relayID, domain = a.Via, a.RelayID, a.Domain
+			// What it queued before it stopped sending goes the way its domain's mail does.
+			if via == ViaNone {
+				via = ""
+			}
 		case !errors.Is(err, ErrNotFound):
 			return nil, err
 		}

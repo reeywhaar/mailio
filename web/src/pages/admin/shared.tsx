@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import {
   BUILT_IN,
+  NO_SEND,
   toAccount,
   type Account,
   type DMARC,
@@ -817,6 +818,7 @@ export function addressOf(id: string | null, accounts: Account[]) {
 /** A relay choice by name: a relay's label, or built-in. */
 export function relayName(id: string | null, relays: Relay[]) {
   if (!id || id === BUILT_IN) return "Built-in";
+  if (id === NO_SEND) return "Doesn't send";
   return relays.find((r) => r.id === id)?.label ?? "Deleted relay";
 }
 

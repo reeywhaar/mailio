@@ -267,7 +267,7 @@ can be overridden once more, by an account.
 | catch-all | `reject` or `drop` | `reject`, `drop`, or `forward` or `junk` to an account; see [addresses.md](addresses.md) |
 | DMARC | `reject` | `reject`, `quarantine` or `none` |
 | SPF ending | `~all` | `-all`, `~all` or `?all` |
-| relay | built-in, or one of the relays | built-in, or one of the relays, an account's own too, or another account to send as |
+| relay | built-in, or one of the relays | built-in, or one of the relays, an account's own too, another account to send as, or not sending |
 | largest message | 50 MB | up to 100 MB, an account's own too; see [addresses.md](addresses.md) |
 | Trash kept | 30 days | days, or 0 for forever, an account's own too; see [storage.md](storage.md) |
 | Junk kept | 30 days | the same |
