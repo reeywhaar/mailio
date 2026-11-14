@@ -19,6 +19,7 @@ export function MailServer({
   return (
     <Section title="Mail server">
       <Facts
+        boxed
         items={[
           ["Host", <span className="font-mono">{mail.host}</span>],
           ["IMAP", "993"],

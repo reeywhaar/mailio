@@ -477,10 +477,18 @@ const still = () =>
 const shots = [
   {
     name: "admin",
-    window: [960, 2400],
+    // Wide enough for two columns. The page is the window's height there, each column scrolling
+    // on its own, so the window grows by what the longer one has hidden.
+    window: [1280, 720],
     element: "#root > div",
     margin: 0,
-    go: home,
+    go: async () => {
+      await home();
+      const hidden = await browser.eval(
+        `Math.max(0, ...[...document.querySelectorAll("#root *")].filter((el) => getComputedStyle(el).overflowY === "auto").map((el) => el.scrollHeight - el.clientHeight))`,
+      );
+      await browser.viewport(1280, 720 + hidden, SCALE);
+    },
   },
   {
     name: "domain",

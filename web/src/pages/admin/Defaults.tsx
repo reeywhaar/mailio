@@ -21,11 +21,14 @@ import {
   daysKept,
   dmarcHint,
   dmarcLabels,
+  dmarcWords,
   limitTyped,
   mbText,
   megabytes,
+  Policy,
   spfHint,
   spfLabels,
+  spfWords,
   toBytes,
   unknownLabels,
   useDraft,
@@ -46,10 +49,11 @@ export function Defaults({ settings }: { settings: Settings }) {
       action={<Button onClick={() => setOpen(true)}>Change…</Button>}
     >
       <Facts
+        boxed
         items={[
           ["Catch-all", unknownLabels[settings.unknown]],
-          ["DMARC", dmarcLabels[settings.dmarc]],
-          ["SPF", spfLabels[settings.spf]],
+          ["DMARC", <Policy words={dmarcWords} policy={settings.dmarc} />],
+          ["SPF", <Policy words={spfWords} policy={settings.spf} />],
           ["Largest message", megabytes(settings.max_message_bytes)],
           ["Trash kept", daysKept(settings.trash_days)],
           ["Junk kept", daysKept(settings.junk_days)],

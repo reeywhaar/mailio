@@ -75,7 +75,8 @@ export function Section({
 }) {
   return (
     <section className="flex flex-col gap-3">
-      <div className="flex items-center gap-3">
+      {/* A button's height with or without one, so side-by-side sections' titles line up. */}
+      <div className="flex min-h-10 items-center gap-3">
         <h2 className="caps text-muted">{title}</h2>
         <span className="flex-1" />
         {action}
@@ -482,7 +483,30 @@ export function ShownCredential({
 }
 
 /** Labels and their values, as a section shows what it holds. */
-export function Facts({ items }: { items: [string, ReactNode][] }) {
+export function Facts({
+  items,
+  boxed = false,
+}: {
+  items: [string, ReactNode][];
+  /** A card of its own, a line between rows, as the page's sections are; not inside a dialog. */
+  boxed?: boolean;
+}) {
+  if (boxed) {
+    return (
+      <dl className="grid grid-cols-[auto_1fr] divide-y divide-line rounded-md border border-line bg-bg text-sm">
+        {items.map(([label, value]) => (
+          // A subgrid, so every row's labels share one column.
+          <div
+            key={label}
+            className="col-span-2 grid grid-cols-subgrid gap-x-4 px-3 py-2"
+          >
+            <dt className="text-muted">{label}</dt>
+            <dd className="min-w-0 break-words">{value}</dd>
+          </div>
+        ))}
+      </dl>
+    );
+  }
   return (
     <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
       {items.map(([label, value]) => (
@@ -532,17 +556,44 @@ export const dmarcHint =
 export const spfHint =
   "Tells other mail servers which server sends this domain's mail, and what to think of mail sent from anywhere else.";
 
-export const dmarcLabels: Record<DMARC, string> = {
-  reject: "Refuse forgeries (reject)",
-  quarantine: "Send forgeries to spam (quarantine)",
-  none: "Deliver forgeries, report only (none)",
+/** Each DMARC and SPF policy in plain words; the policy itself goes beside them. */
+export const dmarcWords: Record<DMARC, string> = {
+  reject: "Refuse forgeries",
+  quarantine: "Send forgeries to spam",
+  none: "Deliver forgeries, report only",
 };
 
-export const spfLabels: Record<SPF, string> = {
-  "-all": "Other servers' mail fails (-all)",
-  "~all": "Other servers' mail is suspect (~all)",
-  "?all": "No word on other servers (?all)",
+export const spfWords: Record<SPF, string> = {
+  "-all": "Other servers' mail fails",
+  "~all": "Other servers' mail is suspect",
+  "?all": "No word on other servers",
 };
+
+/** As an option says them, which holds text alone: the words, and the policy in brackets. */
+export const dmarcLabels = bracketed(dmarcWords);
+export const spfLabels = bracketed(spfWords);
+
+function bracketed<K extends string>(words: Record<K, string>) {
+  return Object.fromEntries(
+    Object.entries<string>(words).map(([k, w]) => [k, `${w} (${k})`]),
+  ) as Record<K, string>;
+}
+
+/** The words, and the policy as a badge beside them. */
+export function Policy<K extends string>({
+  words,
+  policy,
+}: {
+  words: Record<K, string>;
+  policy: K;
+}) {
+  return (
+    <>
+      {words[policy]}
+      <Tag>{policy}</Tag>
+    </>
+  );
+}
 
 export const incomingLabels: Record<Incoming, string> = {
   keep: "Keep",

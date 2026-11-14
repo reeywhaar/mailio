@@ -39,6 +39,7 @@ export function Sending({
       action={<Button onClick={() => setOpen(true)}>Configure sending…</Button>}
     >
       <Facts
+        boxed
         items={[
           ["Default", relayName(settings.relay_id, relays)],
           ["Relays", relays.map((r) => r.label).join(", ") || "None"],
