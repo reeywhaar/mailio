@@ -15,6 +15,10 @@ CSRF defense; the `SameSite=Lax` cookie is the other.
 | `POST /api/session` | `{name, password}` → signs an admin in |
 | `DELETE /api/session` | signs out |
 | `GET /api/me` | the signed-in admin |
+| `PUT /api/me/password` | `{current, password}` → `204`, the signed-in admin's own, signed out everywhere but here. A wrong `current` is `400` and a refused password, as at sign-in |
+| `GET /api/sessions` | where the signed-in admin is signed in, used last first: `{id, current, created_at, last_seen_at, expires_at, device, user_agent}`, `device` a guess from `user_agent` |
+| `DELETE /api/sessions/{id}` | signs out one of them, this one too, whose cookie is cleared; another admin's is `404` |
+| `DELETE /api/sessions` | signs out every one but this |
 | `GET /api/domains` | every domain, each record with `managed` (false for MX), `status` (`ok`, `missing`, `different`, `several`, `failed`, or null before the first check), `found`, and `error` for a failed one, and the domain's `dns_checked_at` |
 | `POST /api/domains` | `{name}` |
 | `PATCH /api/domains/{id}` | `{unknown, unknown_account_id, dmarc, spf, relay, max_message_bytes, trash_days, junk_days}`, each optional; `unknown` is the catch-all, `reject`, `drop`, `forward` or `junk`, the last two with `unknown_account_id`; `""`, `0`, or for the days `null` returns one to the default, the days `0` keeping Trash or Junk forever, and `relay` is `"builtin"` or a relay's id. See [addresses.md](addresses.md) |
@@ -41,7 +45,7 @@ CSRF defense; the `SameSite=Lax` cookie is the other.
 | `POST /api/queue/retry` | send the queue now |
 | `GET /api/admins` | every admin |
 | `POST /api/admins` | `{name, password}` |
-| `PATCH /api/admins/{id}` | `{password}`. Signs that admin out everywhere but the session sending it |
+| `PATCH /api/admins/{id}` | `{password}`, another admin's, who is signed out everywhere. One's own is `400`: it goes through `PUT /api/me/password`, with the current one |
 | `DELETE /api/admins/{id}` | `409` for the last admin |
 
 ## A token travels in a body, never a URL

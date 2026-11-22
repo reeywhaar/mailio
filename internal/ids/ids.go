@@ -6,6 +6,7 @@ package ids
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"strings"
 )
@@ -25,6 +26,8 @@ const (
 	Credential = "cr_"
 	// Relay is a server outbound mail can be handed to.
 	Relay = "rl_"
+	// Session is one sign-in to the admin interface, named by a hash of what keys it.
+	Session = "se_"
 )
 
 const ulidLen = 26
@@ -36,6 +39,13 @@ func New(prefix string, unixMilli int64) string {
 	binary.BigEndian.PutUint64(b[:8], uint64(unixMilli)<<16)
 	rand.Read(b[6:])
 	return prefix + encode32(b[:], ulidLen)
+}
+
+// Derive names something by a hash of of, as long as a minted id so Valid takes it: for a row keyed
+// by a secret's hash, whose id may be shown where the hash itself should not be.
+func Derive(prefix string, of []byte) string {
+	sum := sha256.Sum256(of)
+	return prefix + encode32(sum[:17], ulidLen)
 }
 
 // Valid reports whether id is a well-formed identifier of the given prefix.

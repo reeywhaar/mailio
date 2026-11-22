@@ -15,7 +15,7 @@ import { ApiError, messageOf } from "@app/api/transport";
 import { Button } from "@app/components/Button";
 import { Wordmark } from "@app/components/Wordmark";
 import { leaveFor } from "@app/leave";
-import { Admins } from "@app/pages/admin/Admins";
+import { Admins, Password, Sessions } from "@app/pages/admin/Admins";
 import { Defaults } from "@app/pages/admin/Defaults";
 import { Domains } from "@app/pages/admin/Domains";
 import { MailServer } from "@app/pages/admin/MailServer";
@@ -91,6 +91,8 @@ export function Admin() {
             <div className="order-1 flex flex-col gap-10 lg:order-none">
               <Queue queue={queue.data} />
               <Admins admins={admins.data} me={me.data} />
+              <Password />
+              <Sessions />
             </div>
           </div>
           <div className="lg:relative lg:-mr-3 lg:min-h-0 lg:overflow-y-auto lg:pt-4 lg:pr-3 lg:pb-6 lg:[scrollbar-gutter:stable]">

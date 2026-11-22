@@ -650,6 +650,11 @@ func (s *Server) updateAdmin(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
+	// One's own goes with the current one, which this route does not ask for.
+	if id == adminOf(r).ID {
+		refuse(w, http.StatusBadRequest, CodeInvalid, "Your own password is changed with the current one, at PUT /api/me/password.")
+		return
+	}
 	if err := s.st.SetAdminPassword(r.Context(), id, req.Password, sessionOf(r)); err != nil {
 		s.fail(w, r, err)
 		return

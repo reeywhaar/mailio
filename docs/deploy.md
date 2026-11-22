@@ -161,7 +161,8 @@ mailio bans nobody itself. Each refused password is logged as
 ```
 
 and fail2ban, reading the container's log as a file, does the banning. `via` says where the
-password was tried: `admin`, `imap`, `submission`, or `admin link` for a link that is used,
+password was tried: `admin`, at sign-in or as the current one when changing one's own, `imap`,
+`submission`, or `admin link` for a link that is used,
 expired or made up, since a token is a password too. Every one is the same line, so one filter and
 one jail cover all of them.
 

@@ -304,14 +304,23 @@ func TestAnAdminManagesAdmins(t *testing.T) {
 }
 
 // Changing your own password keeps you signed in here, and only here.
-func TestYourOwnNewPasswordKeepsThisSession(t *testing.T) {
+func TestYourOwnNewPasswordTakesTheCurrentOneAndKeepsThisSession(t *testing.T) {
 	h := signedIn(t)
 	elsewhere := h.fresh()
 	if code, _ := elsewhere.do("POST", "/api/session", map[string]any{"name": "misha", "password": "correct horse"}); code != http.StatusNoContent {
 		t.Fatalf("sign in elsewhere: %d", code)
 	}
 	_, me := h.do("GET", "/api/me", nil)
-	if code, _ := h.do("PATCH", "/api/admins/"+me["id"].(string), map[string]any{"password": "a new password"}); code != http.StatusOK {
+	if code, _ := h.do("PATCH", "/api/admins/"+me["id"].(string), map[string]any{"password": "a new password"}); code != http.StatusBadRequest {
+		t.Errorf("your own without the current one: %d", code)
+	}
+	if code, _ := h.do("PUT", "/api/me/password", map[string]any{"current": "wrong guess", "password": "a new password"}); code != http.StatusBadRequest {
+		t.Errorf("a wrong current one: %d", code)
+	}
+	if !strings.Contains(h.log.String(), `"msg":"password refused","ip":"127.0.0.1","via":"admin"`) {
+		t.Errorf("no fail2ban line for the wrong one in:\n%s", h.log.String())
+	}
+	if code, _ := h.do("PUT", "/api/me/password", map[string]any{"current": "correct horse", "password": "a new password"}); code != http.StatusNoContent {
 		t.Fatalf("password: %d", code)
 	}
 	if code, _ := h.do("GET", "/api/me", nil); code != http.StatusOK {
@@ -319,6 +328,74 @@ func TestYourOwnNewPasswordKeepsThisSession(t *testing.T) {
 	}
 	if code, _ := elsewhere.do("GET", "/api/me", nil); code != http.StatusUnauthorized {
 		t.Errorf("still signed in elsewhere: %d", code)
+	}
+	if code, _ := elsewhere.do("POST", "/api/session", map[string]any{"name": "misha", "password": "a new password"}); code != http.StatusNoContent {
+		t.Errorf("the new one signs in: %d", code)
+	}
+}
+
+// An admin sees where they are signed in, and signs out one session, all the others, or this one;
+// another admin's sessions are not theirs to name.
+func TestAnAdminSeesAndSignsOutTheirSessions(t *testing.T) {
+	h := signedIn(t)
+	signIn := func(name, password string) *harness {
+		t.Helper()
+		other := h.fresh()
+		if code, _ := other.do("POST", "/api/session", map[string]any{"name": name, "password": password}); code != http.StatusNoContent {
+			t.Fatalf("sign in as %s: %d", name, code)
+		}
+		return other
+	}
+	elsewhere := signIn("misha", "correct horse")
+
+	list := h.list("/api/sessions")
+	if len(list) != 2 {
+		t.Fatalf("sessions: %v", list)
+	}
+	var current, other string
+	for _, s := range list {
+		if s["current"] == true {
+			current = s["id"].(string)
+		} else {
+			other = s["id"].(string)
+		}
+		if s["user_agent"] == "" || s["device"] != "Go-http-client" {
+			t.Errorf("described as %v from %v", s["device"], s["user_agent"])
+		}
+	}
+	if current == "" || other == "" {
+		t.Fatalf("no current one in %v", list)
+	}
+
+	if code, _ := h.do("DELETE", "/api/sessions/"+other, nil); code != http.StatusNoContent {
+		t.Errorf("signing out the other: %d", code)
+	}
+	if code, _ := elsewhere.do("GET", "/api/me", nil); code != http.StatusUnauthorized {
+		t.Errorf("still signed in elsewhere: %d", code)
+	}
+	elsewhere = signIn("misha", "correct horse")
+	if code, _ := h.do("DELETE", "/api/sessions", nil); code != http.StatusNoContent {
+		t.Errorf("signing out everywhere else: %d", code)
+	}
+	if code, _ := elsewhere.do("GET", "/api/me", nil); code != http.StatusUnauthorized {
+		t.Errorf("still signed in elsewhere after everywhere else: %d", code)
+	}
+
+	h.do("POST", "/api/admins", map[string]any{"name": "anna", "password": "another horse"})
+	anna := signIn("anna", "another horse")
+	theirs := anna.list("/api/sessions")[0]["id"].(string)
+	if code, _ := h.do("DELETE", "/api/sessions/"+theirs, nil); code != http.StatusNotFound {
+		t.Errorf("another admin's session: %d", code)
+	}
+	if code, _ := h.do("DELETE", "/api/sessions/nope", nil); code != http.StatusBadRequest {
+		t.Errorf("a malformed id: %d", code)
+	}
+
+	if code, _ := h.do("DELETE", "/api/sessions/"+current, nil); code != http.StatusNoContent {
+		t.Errorf("signing out this one: %d", code)
+	}
+	if code, _ := h.do("GET", "/api/me", nil); code != http.StatusUnauthorized {
+		t.Errorf("still signed in here: %d", code)
 	}
 }
 

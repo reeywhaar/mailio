@@ -325,8 +325,35 @@ export const listAdmins = () => request<Admin[]>("/api/admins");
 export const createAdmin = (name: string, password: string) =>
   request<Admin>("/api/admins", { method: "POST", body: { name, password } });
 
+/** Another admin's password; one's own goes through changePassword, with the current one. */
 export const setAdminPassword = (id: string, password: string) =>
   request<Admin>(`/api/admins/${id}`, { method: "PATCH", body: { password } });
+
+/** The signed-in admin's own password, the current one first. Other sessions are signed out. */
+export const changePassword = (current: string, password: string) =>
+  request<void>("/api/me/password", {
+    method: "PUT",
+    body: { current, password },
+  });
+
+/** One place the signed-in admin is signed in: device is a guess, user_agent what it is from. */
+export type Session = {
+  id: string;
+  current: boolean;
+  created_at: number;
+  last_seen_at: number;
+  expires_at: number;
+  device: string;
+  user_agent: string;
+};
+
+export const listSessions = () => request<Session[]>("/api/sessions");
+
+export const revokeSession = (id: string) =>
+  request<void>(`/api/sessions/${id}`, { method: "DELETE" });
+
+export const revokeOtherSessions = () =>
+  request<void>("/api/sessions", { method: "DELETE" });
 
 export const deleteAdmin = (id: string) =>
   request<void>(`/api/admins/${id}`, { method: "DELETE" });

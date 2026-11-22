@@ -257,6 +257,10 @@ const token = await waitFor(
   () => /\/admin\/password#token=([^"\s]+)/.exec(logs())?.[1],
 ).catch(() => die("mailio printed no admin link", logs()));
 
+/** A browser's own words, fixed, for the one session there is. */
+const agent =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36";
+
 /** What a page load answers with: the session's cookie, once signed in. */
 let session;
 
@@ -265,6 +269,8 @@ async function api(method, path, body) {
   const res = await fetch(BASE + path, {
     method,
     headers: {
+      // The session the page is photographed in is this one, and Sessions shows what signed it in.
+      "User-Agent": agent,
       ...(body ? { "Content-Type": "application/json" } : {}),
       ...(session ? { Cookie: `mailio_session=${session}` } : {}),
     },

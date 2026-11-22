@@ -13,6 +13,7 @@ import type {
   Admin as AdminT,
   Domain,
   Relay,
+  Session,
   Settings,
 } from "@app/api/admin";
 import { Admin } from "@app/pages/Admin";
@@ -119,6 +120,7 @@ function routes(over: Parameters<typeof fakeServer>[0] = {}) {
     }),
     "GET /api/relays": () => ({ body: [] }),
     "GET /api/queue": () => ({ body: [] }),
+    "GET /api/sessions": () => ({ body: [] }),
     "GET /api/settings": () => ({ body: defaults }),
     ...over,
   });
@@ -157,8 +159,9 @@ test("domains, accounts and admins are rows that summarize them", async () => {
     screen.getByRole("button", { name: /^inbox@example\.org/ }),
   ).toBeTruthy();
   // The signed-in admin is marked, and is not an account.
-  expect(screen.getByRole("button", { name: /^misha/ })).toBeTruthy();
-  expect(screen.getByText("you")).toBeTruthy();
+  const admins = within(screen.getByRole("list", { name: "Admins" }));
+  expect(admins.getByText("misha")).toBeTruthy();
+  expect(admins.getByText("you")).toBeTruthy();
   // Each setting a domain follows the default for, dimmed and said so to a screen reader.
   expect(screen.getAllByText("(default)").length).toBe(7);
 });
@@ -867,6 +870,130 @@ test("an admin is added in a dialog with a name and a password", async () => {
       body: { name: "anna", password: "long enough" },
     },
   ]);
+});
+
+const here: Session = {
+  id: "se_1",
+  current: true,
+  created_at: 1,
+  last_seen_at: 1,
+  expires_at: 2,
+  device: "Chrome on a Mac",
+  user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/140.0",
+};
+const phone: Session = {
+  ...here,
+  id: "se_2",
+  current: false,
+  device: "Safari on iPhone",
+  user_agent:
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Safari/604.1",
+};
+
+test("the page lists where you are signed in under the admins, and signs out one or all the others", async () => {
+  let sessions = [here, phone];
+  const { sent } = routes({
+    "GET /api/sessions": () => ({ body: sessions }),
+    "DELETE /api/sessions/se_2": () => {
+      sessions = [here];
+      return { status: 204 };
+    },
+    "DELETE /api/sessions": () => {
+      sessions = [here];
+      return { status: 204 };
+    },
+  });
+  mount();
+  const list = within(await screen.findByRole("list", { name: "Sessions" }));
+  expect(await list.findByText("Chrome on a Mac")).toBeTruthy();
+  expect(list.getByText("This browser")).toBeTruthy();
+  expect(list.getByText(phone.user_agent)).toBeTruthy();
+  expect(
+    screen.getByRole("button", { name: "Sign out everywhere else" }),
+  ).toBeTruthy();
+  // This browser is signed out after a confirm; another at once.
+  expect(list.getByRole("button", { name: "Sign out…" })).toBeTruthy();
+  fireEvent.click(list.getByRole("button", { name: "Sign out" }));
+  await waitFor(() =>
+    expect(writes(sent)).toEqual([
+      { method: "DELETE", path: "/api/sessions/se_2", body: undefined },
+    ]),
+  );
+  // With nobody else signed in, there is nowhere else to sign out of.
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("button", { name: "Sign out everywhere else" }),
+    ).toBeNull(),
+  );
+});
+
+test("your own password takes the current one and the new one twice, from the Password section", async () => {
+  const { sent } = routes({
+    "PUT /api/me/password": () => ({ status: 204 }),
+  });
+  mount();
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Change password…" }),
+  );
+  const d = within(dialog("Change password"));
+  const type = (label: string, value: string) =>
+    fireEvent.change(d.getByLabelText(label), { target: { value } });
+  type("Current password", "correct horse");
+  type("New password", "a new password");
+  type("New password again", "a new pasword");
+  fireEvent.click(d.getByRole("button", { name: "Save" }));
+  expect(
+    await d.findByText("The two new passwords do not match."),
+  ).toBeTruthy();
+  expect(writes(sent)).toEqual([]);
+
+  type("New password again", "a new password");
+  fireEvent.click(d.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("dialog", { name: "Change password" }),
+    ).toBeNull(),
+  );
+  expect(writes(sent)).toEqual([
+    {
+      method: "PUT",
+      path: "/api/me/password",
+      body: { current: "correct horse", password: "a new password" },
+    },
+  ]);
+});
+
+test("each admin's row has its own commands, a new password for another and a delete for each", async () => {
+  const anna: AdminT = { id: "ad_2", name: "anna", created_at: 2 };
+  const { sent } = routes({
+    "GET /api/admins": () => ({ body: [me, anna] }),
+    "PATCH /api/admins/ad_2": () => ({ body: anna }),
+  });
+  mount();
+  const admins = within(await screen.findByRole("list", { name: "Admins" }));
+  const row = (name: string) => within(admins.getByText(name).closest("li")!);
+  // Your own password is the Password section's, and the row opens nothing.
+  expect(
+    row("misha").queryByRole("button", { name: "New password…" }),
+  ).toBeNull();
+  expect(row("misha").getByRole("button", { name: "Delete…" })).toBeTruthy();
+  expect(admins.queryByRole("button", { name: /^misha/ })).toBeNull();
+
+  fireEvent.click(row("anna").getByRole("button", { name: "New password…" }));
+  const d = within(dialog("anna"));
+  fireEvent.change(d.getByPlaceholderText("Password, at least 8 characters"), {
+    target: { value: "long enough" },
+  });
+  fireEvent.click(d.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(writes(sent)).toEqual([
+      {
+        method: "PATCH",
+        path: "/api/admins/ad_2",
+        body: { password: "long enough" },
+      },
+    ]),
+  );
 });
 
 test("a record DNS serves otherwise is marked on the row and in the dialog, with what was found", async () => {

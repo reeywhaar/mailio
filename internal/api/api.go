@@ -84,6 +84,10 @@ func New(cfg *config.Config, log *slog.Logger, st *store.Store, mail Mail, dns D
 	s.mux.HandleFunc("POST /api/session", s.signIn)
 	s.mux.Handle("DELETE /api/session", s.requireAdmin(s.signOut))
 	s.mux.Handle("GET /api/me", s.requireAdmin(s.me))
+	s.mux.Handle("PUT /api/me/password", s.requireAdmin(s.changePassword))
+	s.mux.Handle("GET /api/sessions", s.requireAdmin(s.listSessions))
+	s.mux.Handle("DELETE /api/sessions/{id}", s.requireAdmin(s.revokeSession))
+	s.mux.Handle("DELETE /api/sessions", s.requireAdmin(s.revokeOtherSessions))
 
 	s.mux.Handle("GET /api/domains", s.requireAdmin(s.listDomains))
 	s.mux.Handle("POST /api/domains", s.requireAdmin(s.createDomain))

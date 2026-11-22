@@ -116,6 +116,38 @@ func (s *Server) signOut(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// changePassword replaces the signed-in admin's own password, the current one first. Being signed
+// in is not knowing it, and that is what keeps a borrowed session from becoming a taken admin.
+// Every other session is signed out; this one stays.
+func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Current  string `json:"current"`
+		Password string `json:"password"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	a := adminOf(r)
+	if !s.signInName.allow(a.Name) {
+		refuse(w, http.StatusTooManyRequests, CodeRateLimited, "Too many tries. Wait a minute.")
+		return
+	}
+	if _, err := s.st.AuthenticateAdmin(r.Context(), a.Name, req.Current); errors.Is(err, store.ErrNotFound) {
+		s.log.Warn(app.PasswordRefused, "ip", s.clientIP(r), "via", "admin")
+		refuse(w, http.StatusBadRequest, CodeInvalid, "That is not your current password.")
+		return
+	} else if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if err := s.st.SetAdminPassword(r.Context(), a.ID, req.Password, sessionOf(r)); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.log.Info("admin password changed", "admin", a.ID, "by", a.ID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, adminJSON(adminOf(r)))
 }
