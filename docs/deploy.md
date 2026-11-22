@@ -161,8 +161,9 @@ mailio bans nobody itself. Each refused password is logged as
 ```
 
 and fail2ban, reading the container's log as a file, does the banning. `via` says where the
-password was tried; the mail ports log the same line when they arrive, so one filter and one jail
-cover all of them.
+password was tried: `admin`, `imap`, `submission`, or `admin link` for a link that is used,
+expired or made up, since a token is a password too. Every one is the same line, so one filter and
+one jail cover all of them.
 
 ```ini
 # filter.d/mailio.local
@@ -188,6 +189,43 @@ a guesser refused on IMAP should not get to carry on at submission or the admin 
 
 **The line names neither the address tried nor the password.** A password typed into the address
 field is common enough that logging the address would log passwords.
+
+### Port 25 logs every recipient it refuses
+
+Other servers deliver on 25 without signing in, so there is no password to get wrong there. What
+a harvester or a relay probe does instead is name address after address, and each one refused is
+a line:
+
+```
+{"time":"…","level":"WARN","msg":"recipient refused","ip":"198.51.100.4","via":"smtp","why":"unknown"}
+```
+
+`why` is `unknown` for an address nobody has at a domain mailio receives for, with the catch-all
+refusing, and `relay` for a domain it does not receive for. A no-reply address refusing its mail is
+not one: it exists.
+
+A real server sends to the odd mistyped or long-gone address too, a mailing list to a few, so
+this gets a jail of its own: more refusals before a ban, and a ban that closes port 25 alone.
+
+```ini
+# filter.d/mailio-recipients.local
+[Definition]
+failregex = ^\{.*"msg":"recipient refused".*"ip":"<ADDR>"
+ignoreregex =
+```
+
+```ini
+# jail.d/mailio-recipients.local
+[mailio-recipients]
+enabled   = true
+filter    = mailio-recipients
+logpath   = /remotelogs/docker/mailio.log
+port      = smtp
+banaction = iptables-multiport[chain=DOCKER-USER]
+findtime  = 600
+bantime   = 1d
+maxretry  = 20
+```
 
 ## The caller is the first `X-Forwarded-For` hop that is not a trusted proxy
 

@@ -231,6 +231,12 @@ func TestMailForNobodyOrSomebodyElseIsRefused(t *testing.T) {
 	if err := r.send("anna@example.com", "someone@gmail.com", letter); err == nil || !strings.Contains(err.Error(), "550") {
 		t.Errorf("relaying: %v", err)
 	}
+	// Each is a line fail2ban can ban a harvester or a relay probe on.
+	for _, why := range []string{"unknown", "relay"} {
+		if line := `"msg":"recipient refused","ip":"127.0.0.1","via":"smtp","why":"` + why + `"`; !strings.Contains(r.log.String(), line) {
+			t.Errorf("no %s line in:\n%s", why, r.log.String())
+		}
+	}
 }
 
 // The catch-all junks, forwards to the INBOX, or drops, as the domain says.

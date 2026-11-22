@@ -30,6 +30,7 @@ func (s *Server) adminLink(w http.ResponseWriter, r *http.Request) {
 	}
 	expires, err := s.st.AdminLinkExpiry(r.Context(), req.Token)
 	if err != nil {
+		s.linkRefused(r, err)
 		s.fail(w, r, err)
 		return
 	}
@@ -52,6 +53,7 @@ func (s *Server) useAdminLink(w http.ResponseWriter, r *http.Request) {
 	}
 	a, err := s.st.UseAdminLink(r.Context(), req.Token, req.Name, req.Password)
 	if err != nil {
+		s.linkRefused(r, err)
 		s.fail(w, r, err)
 		return
 	}
@@ -61,6 +63,14 @@ func (s *Server) useAdminLink(w http.ResponseWriter, r *http.Request) {
 	}
 	s.log.Info("admin link used", "admin", a.ID)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// linkRefused logs a dead admin link as a wrong password: a token is one, and fail2ban bans the
+// caller who guesses at them on the same line.
+func (s *Server) linkRefused(r *http.Request, err error) {
+	if errors.Is(err, store.ErrNotFound) {
+		s.log.Warn(app.PasswordRefused, "ip", s.clientIP(r), "via", "admin link")
+	}
 }
 
 func (s *Server) signIn(w http.ResponseWriter, r *http.Request) {

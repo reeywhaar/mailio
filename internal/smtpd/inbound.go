@@ -16,6 +16,7 @@ import (
 	"github.com/emersion/go-smtp"
 
 	"mailio/internal/address"
+	"mailio/internal/app"
 	"mailio/internal/store"
 )
 
@@ -100,13 +101,13 @@ func (s *inSession) Rcpt(to string, _ *smtp.RcptOptions) error {
 	}
 	switch {
 	case !r.Ours:
-		s.in.log.Info("mail refused: not a domain mailio receives for", "ip", s.ip.String())
+		s.in.log.Warn(app.RecipientRefused, "ip", s.ip.String(), "via", "smtp", "why", "relay")
 		return &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 7, 1}, Message: "Relaying denied"}
 	case r.Refused:
 		s.in.log.Info("mail refused: the address takes no mail", "ip", s.ip.String())
 		return errNoMail
 	case r.Account == nil && !r.Drop:
-		s.in.log.Info("mail refused: no such account", "ip", s.ip.String())
+		s.in.log.Warn(app.RecipientRefused, "ip", s.ip.String(), "via", "smtp", "why", "unknown")
 		return &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 1, 1}, Message: "No such user here"}
 	case s.size > r.Limit:
 		s.in.log.Info("mail refused: larger than the address takes", "ip", s.ip.String(), "bytes", s.size, "limit", r.Limit)

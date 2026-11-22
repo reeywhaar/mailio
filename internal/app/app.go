@@ -27,6 +27,12 @@ const (
 var Version = "dev"
 
 // PasswordRefused is the message of the one line logged for every wrong password, with the
-// caller's "ip" and "via": admin, imap or submission. fail2ban matches it, so it is a contract:
-// see docs/deploy.md.
+// caller's "ip" and "via": admin, admin link, imap or submission. fail2ban matches it, so it is a
+// contract: see docs/deploy.md.
 const PasswordRefused = "password refused"
+
+// RecipientRefused is the message of the line logged on port 25 for every address nobody has
+// here, and every domain mailio does not receive for, with the sending server's "ip", "via" smtp,
+// and "why": unknown or relay. A harvester or a relay probe makes many of them, a real server the
+// odd one; fail2ban can match it as it does PasswordRefused, so it is a contract too.
+const RecipientRefused = "recipient refused"

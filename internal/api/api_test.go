@@ -14,6 +14,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,6 +36,25 @@ type harness struct {
 	st  *store.Store
 	srv *httptest.Server
 	c   *http.Client
+	log *logs
+}
+
+// logs is what the server logged, as JSON lines, read while it writes.
+type logs struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *logs) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *logs) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
 }
 
 func newHarness(t *testing.T) *harness {
@@ -58,16 +78,17 @@ func newHarnessWith(t *testing.T, dns func(*store.Store) DNS) *harness {
 	if dns != nil {
 		d = dns(st)
 	}
-	srv := httptest.NewServer(New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), st, nil, d, nil))
+	logged := &logs{}
+	srv := httptest.NewServer(New(cfg, slog.New(slog.NewJSONHandler(logged, nil)), st, nil, d, nil))
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
-	return &harness{t: t, st: st, srv: srv, c: &http.Client{Jar: jar}}
+	return &harness{t: t, st: st, srv: srv, c: &http.Client{Jar: jar}, log: logged}
 }
 
 // fresh is another browser: the same server, no cookies.
 func (h *harness) fresh() *harness {
 	jar, _ := cookiejar.New(nil)
-	return &harness{t: h.t, st: h.st, srv: h.srv, c: &http.Client{Jar: jar}}
+	return &harness{t: h.t, st: h.st, srv: h.srv, c: &http.Client{Jar: jar}, log: h.log}
 }
 
 func (h *harness) do(method, path string, body any) (int, map[string]any) {
@@ -150,6 +171,11 @@ func TestAnAdminLinkIsCheckedThenSpentAndSignsIn(t *testing.T) {
 	}
 	if code, _ := h.do("POST", "/api/admin-link/check", map[string]any{"token": token}); code != http.StatusNotFound {
 		t.Errorf("a spent link checks as %d", code)
+	}
+	// The dead link is a wrong password to fail2ban, and the live one was not.
+	line := `"msg":"password refused","ip":"127.0.0.1","via":"admin link"`
+	if n := strings.Count(h.log.String(), line); n != 1 {
+		t.Errorf("%d fail2ban lines in:\n%s", n, h.log.String())
 	}
 }
 
